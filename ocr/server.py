@@ -5,7 +5,7 @@ Local OCR bridge for fill-blank-expense.
 POST multipart invoice image → Xiaomi-OCR via Ollama OpenAI-compatible API
 → JSON fields for the web app.
 
-Stdlib only. Bind: 127.0.0.1:8788
+Stdlib only. Bind: 127.0.0.1:18790
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 HOST = "127.0.0.1"
-PORT = 8788
+PORT = int(os.environ.get("OCR_PORT", "18790"))
 
 DEFAULT_OLLAMA = "http://127.0.0.1:11434/v1"
 DEFAULT_MODEL = "longwayxu/xiaomi-ocr-0:bf16"
