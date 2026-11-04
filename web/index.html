@@ -10,86 +10,123 @@
   <header class="app-header">
     <div class="header-inner">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">填</div>
-        <div>
+        <div class="brand-mark" aria-hidden="true">空</div>
+        <div class="brand-text">
           <h1>填空报销</h1>
-          <p>按天填发票，一目了然缺什么</p>
+          <p>按天填发票 · 一眼看出缺什么</p>
         </div>
       </div>
       <div class="header-actions">
         <button type="button" class="btn btn-ghost" id="btn-reset">清空行程</button>
-        <button type="button" class="btn btn-primary" id="btn-draft">一键生成报销草稿</button>
       </div>
     </div>
   </header>
 
-  <main class="layout">
-    <aside class="sidebar">
-      <section class="panel">
-        <h2>行程设置</h2>
-        <div class="date-row">
-          <div class="field">
-            <label for="start-date">开始日期</label>
-            <input type="date" id="start-date" />
-          </div>
-          <div class="field">
-            <label for="end-date">结束日期</label>
-            <input type="date" id="end-date" />
-          </div>
+  <main class="page">
+    <!-- Flow: 1 行程 → 2 按天填空 → 3 缺口/汇总 → 4 生成草稿 -->
+    <nav class="flow-steps" aria-label="操作流程">
+      <ol>
+        <li class="flow-step is-active"><span class="flow-num">1</span>行程</li>
+        <li class="flow-step"><span class="flow-num">2</span>按天填空</li>
+        <li class="flow-step"><span class="flow-num">3</span>缺口 / 汇总</li>
+        <li class="flow-step"><span class="flow-num">4</span>生成草稿</li>
+      </ol>
+    </nav>
+
+    <section class="panel trip-panel" aria-labelledby="trip-heading">
+      <div class="panel-head">
+        <h2 id="trip-heading">行程设置</h2>
+        <p class="panel-sub" id="day-count-hint">请选择起止日期以生成按天时间轴</p>
+      </div>
+      <div class="trip-grid">
+        <div class="field">
+          <label for="start-date">开始日期</label>
+          <input type="date" id="start-date" />
         </div>
-        <p class="hint" id="day-count-hint">请选择起止日期以生成按天时间轴</p>
+        <div class="field">
+          <label for="end-date">结束日期</label>
+          <input type="date" id="end-date" />
+        </div>
         <div class="field">
           <label for="city">出差城市</label>
           <input type="text" id="city" placeholder="例如：上海 / 北京" autocomplete="off" />
         </div>
-        <div class="field">
+        <div class="field field-span">
           <label for="reason">事由简述</label>
-          <textarea id="reason" placeholder="例如：拜访客户、参加会议"></textarea>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2>金额汇总</h2>
-        <div class="stat-grid" id="totals-panel">
-          <div class="stat">
-            <div class="label">住宿</div>
-            <div class="value" id="total-lodging">¥0.00</div>
-          </div>
-          <div class="stat">
-            <div class="label">餐饮</div>
-            <div class="value" id="total-meal">¥0.00</div>
-          </div>
-          <div class="stat">
-            <div class="label">交通·其他</div>
-            <div class="value" id="total-other">¥0.00</div>
-          </div>
-          <div class="stat total">
-            <div class="label">行程合计（CNY）</div>
-            <div class="value" id="total-all">¥0.00</div>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2>缺口提示</h2>
-        <div class="gap-summary" id="gap-summary">
-          <div class="gap-item ok">
-            <span class="gap-dot"></span>
-            <span>设置行程后，将显示缺少住宿或餐饮的日期</span>
-          </div>
-        </div>
-      </section>
-    </aside>
-
-    <section>
-      <div class="day-list" id="day-timeline">
-        <div class="empty-state">
-          <strong>还没有行程天数</strong>
-          在左侧选择开始与结束日期，系统会按天生成「住宿 / 餐饮 / 交通·其他」填空槽位。
+          <textarea id="reason" rows="2" placeholder="例如：拜访客户、参加会议"></textarea>
         </div>
       </div>
     </section>
+
+    <div class="workspace">
+      <section class="timeline-col" aria-labelledby="timeline-heading">
+        <div class="section-label">
+          <h2 id="timeline-heading">按天填空</h2>
+          <p class="section-hint">每天三个槽位：住宿、餐饮必填；交通·其他可选。拖入 PDF / 图片或点「上传」。</p>
+        </div>
+        <div class="day-list" id="day-timeline">
+          <div class="empty-state">
+            <strong>还没有行程天数</strong>
+            <span>在上方选择开始与结束日期后，会按天生成「住宿 / 餐饮 / 交通·其他」填空槽位。</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="rail" aria-label="汇总与操作">
+        <div class="rail-sticky">
+          <section class="panel rail-panel">
+            <h2>缺口提示</h2>
+            <div class="gap-summary" id="gap-summary">
+              <div class="gap-item ok">
+                <span class="gap-dot"></span>
+                <span>设置行程后，将显示缺少住宿或餐饮的日期</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel rail-panel">
+            <h2>金额汇总</h2>
+            <div class="stat-grid" id="totals-panel">
+              <div class="stat">
+                <div class="label">住宿</div>
+                <div class="value" id="total-lodging">¥0.00</div>
+              </div>
+              <div class="stat">
+                <div class="label">餐饮</div>
+                <div class="value" id="total-meal">¥0.00</div>
+              </div>
+              <div class="stat">
+                <div class="label">交通·其他</div>
+                <div class="value" id="total-other">¥0.00</div>
+              </div>
+              <div class="stat total">
+                <div class="label">行程合计（CNY）</div>
+                <div class="value" id="total-all">¥0.00</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel rail-panel cta-panel">
+            <p class="cta-copy">检查缺口后，导出结构化 JSON 与可读摘要。飞书审批仍为 stub，不会真实提交。</p>
+            <button type="button" class="btn btn-primary btn-block" id="btn-draft">
+              一键生成报销草稿
+            </button>
+          </section>
+        </div>
+      </aside>
+    </div>
   </main>
+
+  <div class="sticky-cta" id="sticky-cta" hidden>
+    <div class="sticky-cta-inner">
+      <div class="sticky-cta-meta">
+        <span id="sticky-total">合计 ¥0.00</span>
+        <span class="sticky-sep" aria-hidden="true">·</span>
+        <span id="sticky-gaps">缺口 —</span>
+      </div>
+      <button type="button" class="btn btn-primary" id="btn-draft-sticky">一键生成报销草稿</button>
+    </div>
+  </div>
 
   <div class="modal-backdrop" id="draft-modal" role="dialog" aria-modal="true" aria-labelledby="draft-title">
     <div class="modal">
