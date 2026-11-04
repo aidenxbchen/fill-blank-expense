@@ -52,7 +52,7 @@ ollama serve
 ```bash
 # 仓库根目录
 python3 ocr/server.py
-# → http://127.0.0.1:8788
+# → http://127.0.0.1:8790
 # GET  /api/health
 # POST /api/parse-invoice  (multipart field: file= 图片)
 ```
@@ -69,7 +69,7 @@ python3 -m http.server 5173
 `web/ocr-bridge.js` 在 `app.js` 之前加载，设置：
 
 ```js
-window.__invoiceOCR = async (file, opts) => { /* → 8788 /api/parse-invoice */ }
+window.__invoiceOCR = async (file, opts) => { /* → 8790 /api/parse-invoice */ }
 ```
 
 返回形状：`{ amount, merchant, date, category, confidence, source: 'xiaomi-ocr-0', raw? }`。健康检查或识别失败时 **throw**，由上层提示；不要依赖桥接静默 mock 金额。
