@@ -96,15 +96,31 @@ function toast(msg) {
 
 // ---------------------------------------------------------------------------
 /**
- * Mock invoice parser.
- * TODO: Replace with real AI OCR / invoice model (vision LLM or dedicated
- * invoice-assistant API). Should extract amount, merchant, date, category
- * from PDF/image bytes and return confidence.
+ * Invoice OCR entry point.
+ *
+ * Swap to a real engine (e.g. Xiaomi-OCR) without touching the rest of the app:
+ *
+ *   window.__invoiceOCR = async (file, opts) => {
+ *     // opts: { categoryHint?: string, dayDate?: string }
+ *     // return shape MUST match mock below:
+ *     //   { amount, merchant, date, category, confidence, source }
+ *     return await myXiaomiOCR(file, opts);
+ *   };
+ *
+ * If __invoiceOCR is set, it is used; otherwise the built-in mock runs.
  *
  * @param {File} file
  * @param {{ categoryHint?: string, dayDate?: string }} [opts]
  */
 async function parseInvoice(file, opts = {}) {
+  if (typeof window.__invoiceOCR === "function") {
+    return window.__invoiceOCR(file, opts);
+  }
+  return parseInvoiceMock(file, opts);
+}
+
+/** Built-in mock — keep return shape stable for OCR adapters. */
+async function parseInvoiceMock(file, opts = {}) {
   // Simulate network / model latency
   await new Promise((r) => setTimeout(r, 280 + Math.random() * 420));
 
@@ -272,7 +288,7 @@ async function handleFiles(dayDate, category, fileList) {
   }
   saveState();
   render();
-  toast(`已添加 ${files.length} 张发票（mock 识别）`);
+  toast(`已添加 ${files.length} 张发票（${typeof window.__invoiceOCR === "function" ? "OCR" : "mock 识别"}）`);
 }
 
 function removeInvoice(dayDate, category, invoiceId) {
@@ -417,6 +433,20 @@ function downloadJSON(payload) {
   URL.revokeObjectURL(url);
 }
 
+function openDraftModal() {
+  if (!state.days.length) {
+    toast("请先设置行程日期");
+    return;
+  }
+  const payload = buildDraftPayload();
+  state.lastDraft = payload;
+  const summary = buildHumanSummary(payload);
+  document.getElementById("draft-summary").textContent = summary;
+  document.getElementById("draft-modal").classList.add("open");
+  downloadJSON(payload);
+  toast("已下载 JSON 草稿");
+}
+
 // ---------------------------------------------------------------------------
 // Render
 // ---------------------------------------------------------------------------
@@ -448,7 +478,57 @@ function render() {
   document.getElementById("total-all").textContent = formatCNY(totals.tripTotal);
 
   renderGaps();
+  renderStickyBar(totals);
   renderTimeline(totals);
+  updateFlowSteps();
+}
+
+function updateFlowSteps() {
+  const steps = document.querySelectorAll(".flow-step");
+  if (!steps.length) return;
+  const hasTrip = Boolean(state.startDate && state.endDate && state.days.length);
+  const gaps = getGaps();
+  const hasAnyInvoice = state.days.some(
+    (d) => d.lodging.length || d.meal.length || d.other.length
+  );
+  // Mark progress: 1 always "active" base; highlight current furthest
+  steps.forEach((el) => el.classList.remove("is-active", "is-done"));
+  steps[0].classList.add(hasTrip ? "is-done" : "is-active");
+  if (hasTrip) {
+    steps[1].classList.add(hasAnyInvoice ? "is-done" : "is-active");
+  }
+  if (hasAnyInvoice) {
+    steps[2].classList.add(gaps.length === 0 ? "is-done" : "is-active");
+  }
+  if (hasTrip && gaps.length === 0 && hasAnyInvoice) {
+    steps[3].classList.add("is-active");
+  }
+}
+
+function renderStickyBar(totals) {
+  const bar = document.getElementById("sticky-cta");
+  const totalEl = document.getElementById("sticky-total");
+  const gapsEl = document.getElementById("sticky-gaps");
+  if (!bar || !totalEl || !gapsEl) return;
+
+  const hasDays = state.days.length > 0;
+  bar.hidden = !hasDays;
+
+  totalEl.textContent = `合计 ${formatCNY(totals.tripTotal)}`;
+  const gaps = getGaps();
+  gapsEl.textContent = gaps.length
+    ? `缺口 ${gaps.length} 天`
+    : hasDays
+      ? "缺口 0"
+      : "缺口 —";
+
+  const draftBtns = [
+    document.getElementById("btn-draft"),
+    document.getElementById("btn-draft-sticky"),
+  ];
+  draftBtns.forEach((btn) => {
+    if (btn) btn.disabled = !hasDays;
+  });
 }
 
 function renderGaps() {
@@ -487,7 +567,7 @@ function renderTimeline(totals) {
     root.innerHTML = `
       <div class="empty-state">
         <strong>还没有行程天数</strong>
-        在左侧选择开始与结束日期，系统会按天生成「住宿 / 餐饮 / 交通·其他」填空槽位。
+        <span>在上方选择开始与结束日期后，会按天生成「住宿 / 餐饮 / 交通·其他」填空槽位。</span>
       </div>`;
     return;
   }
@@ -508,7 +588,7 @@ function renderTimeline(totals) {
               ${
                 hasGap
                   ? `<span class="day-badge gap">缺 ${missing.join("、")}</span>`
-                  : `<span class="day-badge">齐全</span>`
+                  : `<span class="day-badge ok">齐全</span>`
               }
             </div>
             <div class="day-meta">当日小计 ${formatCNY(sub.total)}</div>
@@ -557,28 +637,32 @@ function renderTimeline(totals) {
 function renderSlot(day, def) {
   const list = day[def.key] || [];
   const sum = sumInvoices(list);
-  const missingHint =
-    (def.key === "lodging" || def.key === "meal") && !list.length
-      ? `<div class="slot-missing">尚未填入${def.label}</div>`
-      : "";
+  const required = def.key === "lodging" || def.key === "meal";
+  const isMissing = required && !list.length;
+  const isFilled = list.length > 0;
+  const stateClass = isFilled ? "is-filled" : isMissing ? "is-missing" : "";
+
+  const missingHint = isMissing
+    ? `<div class="slot-missing">尚未填入${def.label}</div>`
+    : "";
 
   const body = list.length
     ? `<div class="invoice-list">${list.map((inv) => renderInvoice(day.date, def.key, inv)).join("")}</div>`
     : `<div class="slot-empty">
-         <div class="icon">${def.icon}</div>
-         <div>拖拽 PDF / 图片到此处</div>
-         <div>或点击上方「上传」</div>
+         <div class="icon" aria-hidden="true">${def.icon}</div>
+         <div class="drop-hint">拖入 PDF / 图片</div>
+         <div>或点上方上传</div>
        </div>`;
 
   return `
-    <div class="slot" data-date="${day.date}" data-category="${def.key}">
+    <div class="slot ${stateClass}" data-date="${day.date}" data-category="${def.key}">
       <div class="slot-head">
-        <span class="slot-label">${def.label}</span>
+        <span class="slot-label">${def.label}${required ? "" : " · 可选"}</span>
         <span class="slot-sum">${list.length ? formatCNY(sum) : "—"}</span>
       </div>
-      <div style="margin-bottom:8px">
+      <div class="slot-upload">
         <label class="btn btn-secondary upload-btn">
-          上传
+          上传发票
           <input class="file-input-hidden" type="file" accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp,.gif" multiple />
         </label>
       </div>
@@ -661,19 +745,9 @@ function bindEvents() {
     toast("已清空");
   });
 
-  document.getElementById("btn-draft").addEventListener("click", () => {
-    if (!state.days.length) {
-      toast("请先设置行程日期");
-      return;
-    }
-    const payload = buildDraftPayload();
-    state.lastDraft = payload;
-    const summary = buildHumanSummary(payload);
-    document.getElementById("draft-summary").textContent = summary;
-    document.getElementById("draft-modal").classList.add("open");
-    downloadJSON(payload);
-    toast("已下载 JSON 草稿");
-  });
+  document.getElementById("btn-draft").addEventListener("click", openDraftModal);
+  const stickyDraft = document.getElementById("btn-draft-sticky");
+  if (stickyDraft) stickyDraft.addEventListener("click", openDraftModal);
 
   document.getElementById("btn-close-modal").addEventListener("click", () => {
     document.getElementById("draft-modal").classList.remove("open");
