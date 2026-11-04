@@ -13,27 +13,39 @@
         <div class="brand-mark" aria-hidden="true">空</div>
         <div class="brand-text">
           <h1>填空报销</h1>
-          <p>按天填发票 · 一眼看出缺什么</p>
+          <p id="brand-tagline">选场景 · 填发票 · 一眼看出缺什么</p>
         </div>
       </div>
       <div class="header-actions">
-        <button type="button" class="btn btn-ghost" id="btn-reset">清空行程</button>
+        <button type="button" class="btn btn-ghost" id="btn-reset">清空当前草稿</button>
       </div>
     </div>
   </header>
 
   <main class="page">
-    <!-- Flow: 1 行程 → 2 按天填空 → 3 缺口/汇总 → 4 生成草稿 -->
+    <!-- Scenario switcher (before flow steps) -->
+    <nav class="scenario-switcher" aria-label="报销场景">
+      <div class="scenario-switcher-label">报销场景</div>
+      <div class="scenario-tabs" role="tablist">
+        <button type="button" class="scenario-tab is-active" role="tab" aria-selected="true" data-scenario="travel">差旅</button>
+        <button type="button" class="scenario-tab" role="tab" aria-selected="false" data-scenario="purchase">日常采购</button>
+        <button type="button" class="scenario-tab" role="tab" aria-selected="false" data-scenario="local_transit">市内交通</button>
+        <button type="button" class="scenario-tab" role="tab" aria-selected="false" data-scenario="entertainment">招待宴请</button>
+      </div>
+      <p class="scenario-hint" id="scenario-hint">按天填住宿 / 餐饮 / 交通发票；各场景草稿在本地分开保存。</p>
+    </nav>
+
     <nav class="flow-steps" aria-label="操作流程">
-      <ol>
-        <li class="flow-step is-active"><span class="flow-num">1</span>行程</li>
-        <li class="flow-step"><span class="flow-num">2</span>按天填空</li>
-        <li class="flow-step"><span class="flow-num">3</span>缺口 / 汇总</li>
-        <li class="flow-step"><span class="flow-num">4</span>生成草稿</li>
+      <ol id="flow-steps-list">
+        <li class="flow-step is-active"><span class="flow-num">1</span><span class="flow-label">设置</span></li>
+        <li class="flow-step"><span class="flow-num">2</span><span class="flow-label">填空</span></li>
+        <li class="flow-step"><span class="flow-num">3</span><span class="flow-label">缺口 / 汇总</span></li>
+        <li class="flow-step"><span class="flow-num">4</span><span class="flow-label">生成草稿</span></li>
       </ol>
     </nav>
 
-    <section class="panel trip-panel" aria-labelledby="trip-heading">
+    <!-- Scenario meta panels (one visible at a time) -->
+    <section class="panel meta-panel" id="meta-travel" data-scenario-panel="travel" aria-labelledby="trip-heading">
       <div class="panel-head">
         <h2 id="trip-heading">行程设置</h2>
         <p class="panel-sub" id="day-count-hint">请选择起止日期以生成按天时间轴</p>
@@ -52,19 +64,74 @@
           <input type="text" id="city" placeholder="例如：上海 / 北京" autocomplete="off" />
         </div>
         <div class="field field-span">
-          <label for="reason">事由简述</label>
-          <textarea id="reason" rows="2" placeholder="例如：拜访客户、参加会议"></textarea>
+          <label for="reason-travel">事由简述</label>
+          <textarea id="reason-travel" rows="2" placeholder="例如：拜访客户、参加会议"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel meta-panel" id="meta-purchase" data-scenario-panel="purchase" hidden aria-labelledby="purchase-heading">
+      <div class="panel-head">
+        <h2 id="purchase-heading">采购说明</h2>
+        <p class="panel-sub">按品名逐条登记；可按行上传发票，或把发票挂到整单。</p>
+      </div>
+      <div class="trip-grid">
+        <div class="field field-span">
+          <label for="reason-purchase">采购事由 / 用途</label>
+          <textarea id="reason-purchase" rows="2" placeholder="例如：办公耗材、活动物料"></textarea>
+        </div>
+      </div>
+      <div class="claim-attach" id="purchase-claim-attach">
+        <div class="claim-attach-head">
+          <strong>整单附件发票</strong>
+          <span class="muted-sm">可选 · 不归属某一行时挂在这里</span>
+        </div>
+        <div class="claim-attach-body" id="purchase-claim-invoices"></div>
+        <label class="btn btn-secondary btn-sm upload-btn claim-upload-btn">
+          上传整单发票
+          <input class="file-input-hidden" type="file" id="purchase-claim-file" accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp,.gif" multiple />
+        </label>
+      </div>
+    </section>
+
+    <section class="panel meta-panel" id="meta-local_transit" data-scenario-panel="local_transit" hidden aria-labelledby="transit-heading">
+      <div class="panel-head">
+        <h2 id="transit-heading">市内交通说明</h2>
+        <p class="panel-sub">按每次出行登记；请为每次行程附上票据 / 发票。</p>
+      </div>
+      <div class="trip-grid">
+        <div class="field field-span">
+          <label for="reason-local_transit">事由简述</label>
+          <textarea id="reason-local_transit" rows="2" placeholder="例如：客户拜访往返、临时外出办事"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel meta-panel" id="meta-entertainment" data-scenario-panel="entertainment" hidden aria-labelledby="ent-heading">
+      <div class="panel-head">
+        <h2 id="ent-heading">招待说明</h2>
+        <p class="panel-sub">按场次登记；每场可填「餐费 / 礼品·其他」发票槽位。</p>
+      </div>
+      <div class="trip-grid">
+        <div class="field field-span">
+          <label for="reason-entertainment">整体事由（可选）</label>
+          <textarea id="reason-entertainment" rows="2" placeholder="例如：客户答谢宴、合作洽谈"></textarea>
         </div>
       </div>
     </section>
 
     <div class="workspace">
-      <section class="timeline-col" aria-labelledby="timeline-heading">
-        <div class="section-label">
-          <h2 id="timeline-heading">按天填空</h2>
-          <p class="section-hint">每天三个槽位：住宿、餐饮必填；交通·其他可选。拖入 PDF / 图片或点「上传」。</p>
+      <section class="timeline-col" aria-labelledby="content-heading">
+        <div class="section-label section-label-row">
+          <div>
+            <h2 id="content-heading">按天填空</h2>
+            <p class="section-hint" id="content-hint">每天三个槽位：住宿、餐饮必填；交通·其他可选。拖入 PDF / 图片或点「上传」。</p>
+          </div>
+          <div class="section-actions" id="content-actions">
+            <!-- scenario-specific add buttons injected by JS -->
+          </div>
         </div>
-        <div class="day-list" id="day-timeline">
+        <div class="day-list" id="main-content">
           <div class="empty-state">
             <strong>还没有行程天数</strong>
             <span>在上方选择开始与结束日期后，会按天生成「住宿 / 餐饮 / 交通·其他」填空槽位。</span>
@@ -79,7 +146,7 @@
             <div class="gap-summary" id="gap-summary">
               <div class="gap-item ok">
                 <span class="gap-dot"></span>
-                <span>设置行程后，将显示缺少住宿或餐饮的日期</span>
+                <span>选择场景并填写后，将显示缺口</span>
               </div>
             </div>
           </section>
@@ -87,27 +154,12 @@
           <section class="panel rail-panel">
             <h2>金额汇总</h2>
             <div class="stat-grid" id="totals-panel">
-              <div class="stat">
-                <div class="label">住宿</div>
-                <div class="value" id="total-lodging">¥0.00</div>
-              </div>
-              <div class="stat">
-                <div class="label">餐饮</div>
-                <div class="value" id="total-meal">¥0.00</div>
-              </div>
-              <div class="stat">
-                <div class="label">交通·其他</div>
-                <div class="value" id="total-other">¥0.00</div>
-              </div>
-              <div class="stat total">
-                <div class="label">行程合计（CNY）</div>
-                <div class="value" id="total-all">¥0.00</div>
-              </div>
+              <!-- filled by JS per scenario -->
             </div>
           </section>
 
           <section class="panel rail-panel cta-panel">
-            <p class="cta-copy">检查缺口后，导出结构化 JSON 与可读摘要。飞书审批仍为 stub，不会真实提交。</p>
+            <p class="cta-copy">检查缺口后，导出结构化 JSON 与可读摘要（含场景类型）。飞书审批仍为 stub，不会真实提交。</p>
             <button type="button" class="btn btn-primary btn-block" id="btn-draft">
               一键生成报销草稿
             </button>
@@ -146,6 +198,7 @@
 
   <div class="toast" id="toast" role="status"></div>
 
+  <script src="./ocr-bridge.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
