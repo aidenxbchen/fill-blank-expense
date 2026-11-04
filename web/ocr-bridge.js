@@ -2,14 +2,14 @@
  * Local Xiaomi-OCR bridge for fill-blank-expense.
  * Sets window.__invoiceOCR so app.js uses the local OCR server instead of mock.
  *
- * Requires: python3 ocr/server.py  (http://127.0.0.1:8788)
+ * Requires: python3 ocr/server.py  (http://127.0.0.1:8790)
  * On failure this throws — app.js will surface the error; leave __invoiceOCR
  * unset (or omit this script) to keep the built-in mock fallback.
  */
 (function () {
   "use strict";
 
-  var OCR_BASE = "http://127.0.0.1:8788";
+  var OCR_BASE = "http://127.0.0.1:8790";
 
   async function checkHealth() {
     var res = await fetch(OCR_BASE + "/api/health", {
