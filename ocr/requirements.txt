@@ -1,0 +1,5 @@
+# Stdlib only — no pip packages required for ocr/server.py
+# (urllib, http.server, email, json, base64)
+#
+# Optional future deps (not used):
+# # pillow>=10  # if adding PDF first-page rasterize
