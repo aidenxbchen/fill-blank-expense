@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>填空报销 · Fill Blank Expense</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">填</div>
+        <div>
+          <h1>填空报销</h1>
+          <p>按天填发票，一目了然缺什么</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="btn btn-ghost" id="btn-reset">清空行程</button>
+        <button type="button" class="btn btn-primary" id="btn-draft">一键生成报销草稿</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="panel">
+        <h2>行程设置</h2>
+        <div class="date-row">
+          <div class="field">
+            <label for="start-date">开始日期</label>
+            <input type="date" id="start-date" />
+          </div>
+          <div class="field">
+            <label for="end-date">结束日期</label>
+            <input type="date" id="end-date" />
+          </div>
+        </div>
+        <p class="hint" id="day-count-hint">请选择起止日期以生成按天时间轴</p>
+        <div class="field">
+          <label for="city">出差城市</label>
+          <input type="text" id="city" placeholder="例如：上海 / 北京" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="reason">事由简述</label>
+          <textarea id="reason" placeholder="例如：拜访客户、参加会议"></textarea>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>金额汇总</h2>
+        <div class="stat-grid" id="totals-panel">
+          <div class="stat">
+            <div class="label">住宿</div>
+            <div class="value" id="total-lodging">¥0.00</div>
+          </div>
+          <div class="stat">
+            <div class="label">餐饮</div>
+            <div class="value" id="total-meal">¥0.00</div>
+          </div>
+          <div class="stat">
+            <div class="label">交通·其他</div>
+            <div class="value" id="total-other">¥0.00</div>
+          </div>
+          <div class="stat total">
+            <div class="label">行程合计（CNY）</div>
+            <div class="value" id="total-all">¥0.00</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>缺口提示</h2>
+        <div class="gap-summary" id="gap-summary">
+          <div class="gap-item ok">
+            <span class="gap-dot"></span>
+            <span>设置行程后，将显示缺少住宿或餐饮的日期</span>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <section>
+      <div class="day-list" id="day-timeline">
+        <div class="empty-state">
+          <strong>还没有行程天数</strong>
+          在左侧选择开始与结束日期，系统会按天生成「住宿 / 餐饮 / 交通·其他」填空槽位。
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="draft-modal" role="dialog" aria-modal="true" aria-labelledby="draft-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="draft-title">报销草稿</h3>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-close-modal">关闭</button>
+      </div>
+      <div class="modal-body">
+        <pre id="draft-summary"></pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-copy-summary">复制摘要</button>
+        <button type="button" class="btn btn-primary" id="btn-download-json">下载 JSON</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
