@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "name": "典型中国初创团队报销规范（演示）",
+  "locale": "zh-CN",
+  "requirePurpose": true,
+  "categories": {
+    "lodging": {
+      "label": "住宿",
+      "dailyCapOptional": 500,
+      "requireDate": true,
+      "askPrivatePublic": false
+    },
+    "meal": {
+      "label": "餐饮",
+      "dailyCapOptional": 120,
+      "askAttendees": true,
+      "askAlcohol": true,
+      "askPrivatePublic": true,
+      "requireDate": true
+    },
+    "entertainment": {
+      "label": "招待宴请",
+      "requireGuestCompany": true,
+      "askAttendees": true,
+      "askAlcohol": true,
+      "askPrivatePublic": true
+    },
+    "purchase": {
+      "label": "采购",
+      "requireProject": true,
+      "requirePurposeDetail": true
+    },
+    "transit": {
+      "label": "交通",
+      "askRoute": true,
+      "requireDate": true
+    },
+    "gift": {
+      "label": "礼品",
+      "requireGuestCompany": true,
+      "requirePurposeDetail": true
+    },
+    "other": {
+      "label": "其他",
+      "requirePurposeDetail": true
+    }
+  },
+  "global": {
+    "askCashNoInvoice": true,
+    "askCostCenter": true,
+    "softWarnOverCap": true
+  }
+}

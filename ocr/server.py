@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 import os
 import re
 import subprocess
@@ -582,7 +583,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "service": "fill-blank-expense OCR bridge",
-                    "endpoints": ["GET /api/health", "POST /api/parse-invoice"],
+                    "endpoints": ["GET /api/health", "POST /api/parse-invoice", "POST /api/feishu-expense"],
                 },
             )
             return
@@ -596,6 +597,27 @@ class Handler(BaseHTTPRequestHandler):
         if "fallback" in qs and qs["fallback"] and qs["fallback"][0] == "mock":
             # Still do not invent amounts — document via error that mock is app-side only
             pass
+
+        if path == "/api/feishu-expense":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except Exception as e:
+                self._json(400, {"ok": False, "error": f"invalid JSON: {e}"})
+                return
+            approval_id = "STUB-FS-" + str(int(time.time()))
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "stub": True,
+                    "message": "Feishu expense stub accepted; no real approval created",
+                    "feishuApprovalId": approval_id,
+                    "echo": body,
+                },
+            )
+            return
 
         if path != "/api/parse-invoice":
             self._json(404, {"ok": False, "error": "not found"})
@@ -722,7 +744,8 @@ def main() -> None:
         f"  model={ollama_model()}\n"
         f"  ollama={ollama_base()}\n"
         f"  GET  /api/health\n"
-        f"  POST /api/parse-invoice (multipart file=...)",
+        f"  POST /api/parse-invoice (multipart file=...)\n"
+        f"  POST /api/feishu-expense (JSON stub)",
         flush=True,
     )
     try:

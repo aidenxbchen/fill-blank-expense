@@ -2,207 +2,137 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>填空报销 · Fill Blank Expense</title>
-  <link rel="stylesheet" href="./styles.css?v=20261105b" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>填空报销 · 丢发票就问完</title>
+  <link rel="stylesheet" href="./styles.css?v=20261105c" />
 </head>
-<body>
+<body class="delight-body">
   <header class="app-header">
     <div class="header-inner">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">空</div>
         <div class="brand-text">
           <h1>填空报销</h1>
-          <p id="brand-tagline">选场景 · 填发票 · 一眼看出缺什么</p>
+          <p id="brand-tagline">丢发票 · AI 逐句问 · 一键交飞书</p>
         </div>
       </div>
       <div class="header-actions">
-        <button type="button" class="btn btn-ghost" id="btn-reset">清空当前草稿</button>
+        <a class="btn btn-ghost" href="./classic/index.html" title="旧版按场景填空">经典填空</a>
+        <button type="button" class="btn btn-ghost" id="btn-reset">清空会话</button>
       </div>
     </div>
   </header>
 
-  <main class="page">
-    <!-- Scenario switcher (before flow steps) -->
-    <nav class="scenario-switcher" aria-label="报销场景">
-      <div class="scenario-switcher-label">报销场景</div>
-      <div class="scenario-tabs" role="tablist">
-        <button type="button" class="scenario-tab is-active" role="tab" aria-selected="true" data-scenario="travel">差旅</button>
-        <button type="button" class="scenario-tab" role="tab" aria-selected="false" data-scenario="purchase">日常采购</button>
-        <button type="button" class="scenario-tab" role="tab" aria-selected="false" data-scenario="local_transit">市内交通</button>
-        <button type="button" class="scenario-tab" role="tab" aria-selected="false" data-scenario="entertainment">招待宴请</button>
-      </div>
-      <p class="scenario-hint" id="scenario-hint">按天填住宿 / 餐饮 / 交通发票；各场景草稿在本地分开保存。</p>
-    </nav>
+  <nav class="stage-rail" aria-label="流程进度">
+    <ol class="stage-list" id="stage-list">
+      <li class="stage-item is-active" data-stage="upload"><span class="stage-dot">1</span><span class="stage-name">丢发票</span></li>
+      <li class="stage-item" data-stage="interview"><span class="stage-dot">2</span><span class="stage-name">问答</span></li>
+      <li class="stage-item" data-stage="draft"><span class="stage-dot">3</span><span class="stage-name">草稿</span></li>
+      <li class="stage-item" data-stage="submit"><span class="stage-dot">4</span><span class="stage-name">提交</span></li>
+    </ol>
+  </nav>
 
-    <nav class="flow-steps" aria-label="操作流程">
-      <ol id="flow-steps-list">
-        <li class="flow-step is-active"><span class="flow-num">1</span><span class="flow-label">设置</span></li>
-        <li class="flow-step"><span class="flow-num">2</span><span class="flow-label">填空</span></li>
-        <li class="flow-step"><span class="flow-num">3</span><span class="flow-label">缺口 / 汇总</span></li>
-        <li class="flow-step"><span class="flow-num">4</span><span class="flow-label">生成草稿</span></li>
-      </ol>
-    </nav>
-
-    <!-- Scenario meta panels (one visible at a time) -->
-    <section class="panel meta-panel" id="meta-travel" data-scenario-panel="travel" aria-labelledby="trip-heading">
-      <div class="panel-head">
-        <h2 id="trip-heading">行程设置</h2>
-        <p class="panel-sub" id="day-count-hint">请选择起止日期以生成按天时间轴</p>
+  <main class="page delight-page">
+    <!-- STAGE: upload -->
+    <section class="stage-panel" id="stage-upload" data-stage-panel="upload">
+      <div class="hero">
+        <h2 class="hero-title">把发票全丢进来</h2>
+        <p class="hero-sub">一次多张 PDF / 图片。我们按团队报销规范一句句问你，然后生成可编辑草稿，确认后提交飞书报销（当前为 stub）。</p>
       </div>
-      <div class="trip-grid">
-        <div class="field">
-          <label for="start-date">开始日期</label>
-          <input type="date" id="start-date" />
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="拖拽或点击上传发票">
+        <div class="dropzone-inner">
+          <div class="dropzone-icon" aria-hidden="true">📎</div>
+          <strong>拖到这里，或点击选择文件</strong>
+          <span class="muted">支持 PDF、JPG、PNG、WebP · 可多选</span>
         </div>
-        <div class="field">
-          <label for="end-date">结束日期</label>
-          <input type="date" id="end-date" />
-        </div>
-        <div class="field">
-          <label for="city">出差城市</label>
-          <input type="text" id="city" placeholder="例如：上海 / 北京" autocomplete="off" />
-        </div>
-        <div class="field field-span">
-          <label for="reason-travel">事由简述</label>
-          <textarea id="reason-travel" rows="2" placeholder="例如：拜访客户、参加会议"></textarea>
-        </div>
+        <input class="file-input-hidden" type="file" id="file-input" accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp,.gif" multiple />
+      </div>
+      <div class="invoice-chip-list" id="invoice-list" hidden></div>
+      <div class="parse-status" id="parse-status" hidden></div>
+      <div class="hero-actions" id="upload-actions" hidden>
+        <button type="button" class="btn btn-secondary" id="btn-add-more">继续添加</button>
+        <button type="button" class="btn btn-primary" id="btn-start-interview" disabled>开始问答</button>
       </div>
     </section>
 
-    <section class="panel meta-panel" id="meta-purchase" data-scenario-panel="purchase" hidden aria-labelledby="purchase-heading">
-      <div class="panel-head">
-        <h2 id="purchase-heading">采购说明</h2>
-        <p class="panel-sub">按品名逐条登记；可按行上传发票，或把发票挂到整单。</p>
-      </div>
-      <div class="trip-grid">
-        <div class="field field-span">
-          <label for="reason-purchase">采购事由 / 用途</label>
-          <textarea id="reason-purchase" rows="2" placeholder="例如：办公耗材、活动物料"></textarea>
-        </div>
-      </div>
-      <div class="claim-attach" id="purchase-claim-attach">
-        <div class="claim-attach-head">
-          <strong>整单附件发票</strong>
-          <span class="muted-sm">可选 · 不归属某一行时挂在这里</span>
-        </div>
-        <div class="claim-attach-body" id="purchase-claim-invoices"></div>
-        <label class="btn btn-secondary btn-sm upload-btn claim-upload-btn">
-          上传整单发票
-          <input class="file-input-hidden" type="file" id="purchase-claim-file" accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp,.gif" multiple />
-        </label>
-      </div>
-    </section>
-
-    <section class="panel meta-panel" id="meta-local_transit" data-scenario-panel="local_transit" hidden aria-labelledby="transit-heading">
-      <div class="panel-head">
-        <h2 id="transit-heading">市内交通说明</h2>
-        <p class="panel-sub">按每次出行登记；请为每次行程附上票据 / 发票。</p>
-      </div>
-      <div class="trip-grid">
-        <div class="field field-span">
-          <label for="reason-local_transit">事由简述</label>
-          <textarea id="reason-local_transit" rows="2" placeholder="例如：客户拜访往返、临时外出办事"></textarea>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel meta-panel" id="meta-entertainment" data-scenario-panel="entertainment" hidden aria-labelledby="ent-heading">
-      <div class="panel-head">
-        <h2 id="ent-heading">招待说明</h2>
-        <p class="panel-sub">按场次登记；每场可填「餐费 / 礼品·其他」发票槽位。</p>
-      </div>
-      <div class="trip-grid">
-        <div class="field field-span">
-          <label for="reason-entertainment">整体事由（可选）</label>
-          <textarea id="reason-entertainment" rows="2" placeholder="例如：客户答谢宴、合作洽谈"></textarea>
-        </div>
-      </div>
-    </section>
-
-    <div class="workspace">
-      <section class="timeline-col" aria-labelledby="content-heading">
-        <div class="section-label section-label-row">
-          <div>
-            <h2 id="content-heading">按天填空</h2>
-            <p class="section-hint" id="content-hint">每天三个槽位：住宿、餐饮必填；交通·其他可选。拖入 PDF / 图片或点「上传」。</p>
+    <!-- STAGE: interview -->
+    <section class="stage-panel" id="stage-interview" data-stage-panel="interview" hidden>
+      <div class="interview-layout">
+        <aside class="invoice-sidebar panel">
+          <div class="panel-head-row">
+            <h2>已识别发票</h2>
+            <span class="pill" id="invoice-count-pill">0</span>
           </div>
-          <div class="section-actions" id="content-actions">
-            <!-- scenario-specific add buttons injected by JS -->
-          </div>
-        </div>
-        <div class="day-list" id="main-content">
-          <div class="empty-state">
-            <strong>还没有行程天数</strong>
-            <span>在上方选择开始与结束日期后，会按天生成「住宿 / 餐饮 / 交通·其他」填空槽位。</span>
-          </div>
-        </div>
-
-        <section class="detail-sheets panel" id="detail-sheets" aria-label="分类明细表">
-          <!-- filled by app.js -->
-        </section>
-      </section>
-
-      <aside class="rail" aria-label="汇总与操作">
-        <div class="rail-sticky">
-          <section class="panel rail-panel">
-            <h2>缺口提示</h2>
-            <div class="gap-summary" id="gap-summary">
-              <div class="gap-item ok">
-                <span class="gap-dot"></span>
-                <span>选择场景并填写后，将显示缺口</span>
-              </div>
+          <ul class="sidebar-inv-list" id="sidebar-invoices"></ul>
+          <button type="button" class="btn btn-ghost btn-sm btn-block" id="btn-back-upload">← 返回添加发票</button>
+        </aside>
+        <div class="chat-panel panel">
+          <div class="chat-progress" id="chat-progress">还差 — 个问题</div>
+          <div class="chat-log" id="chat-log" aria-live="polite"></div>
+          <div class="chat-composer" id="chat-composer">
+            <div class="chip-row" id="chip-row"></div>
+            <div class="composer-row">
+              <input type="text" id="chat-input" placeholder="输入回答，回车发送" autocomplete="off" />
+              <button type="button" class="btn btn-primary" id="btn-send-answer">发送</button>
             </div>
-          </section>
-
-          <section class="panel rail-panel">
-            <h2>金额汇总</h2>
-            <div class="stat-grid" id="totals-panel">
-              <!-- filled by JS per scenario -->
-            </div>
-          </section>
-
-          <section class="panel rail-panel cta-panel">
-            <p class="cta-copy">检查缺口后，导出结构化 JSON 与可读摘要（含场景类型）。飞书审批仍为 stub，不会真实提交。</p>
-            <button type="button" class="btn btn-primary btn-block" id="btn-draft">
-              一键生成报销草稿
-            </button>
-          </section>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-skip-optional" hidden>跳过（可选）</button>
+          </div>
         </div>
-      </aside>
-    </div>
+      </div>
+    </section>
+
+    <!-- STAGE: draft -->
+    <section class="stage-panel" id="stage-draft" data-stage-panel="draft" hidden>
+      <div class="draft-head">
+        <div>
+          <h2>报销草稿</h2>
+          <p class="section-hint" id="draft-summary-line">根据发票与问答生成，可直接改表格。</p>
+        </div>
+        <div class="draft-head-actions">
+          <button type="button" class="btn btn-ghost" id="btn-back-interview">← 继续问答</button>
+          <button type="button" class="btn btn-secondary" id="btn-regen-draft">按当前答案重生成</button>
+        </div>
+      </div>
+      <div class="draft-meta panel" id="draft-meta"></div>
+      <div class="detail-sheets" id="detail-sheets"></div>
+      <div class="draft-footer-actions">
+        <div class="draft-total" id="draft-total">合计 ¥0.00</div>
+        <button type="button" class="btn btn-primary btn-lg" id="btn-goto-submit">确认，去提交飞书</button>
+      </div>
+    </section>
+
+    <!-- STAGE: submit -->
+    <section class="stage-panel" id="stage-submit" data-stage-panel="submit" hidden>
+      <div class="submit-card panel">
+        <h2>提交飞书报销</h2>
+        <p class="section-hint">当前为<strong>明确 stub</strong>：会调用 <code>POST /api/feishu-expense</code>（失败则用前端 stub），展示成功 payload，<em>不会</em>真实创建飞书审批。</p>
+        <div class="submit-preview" id="submit-preview"></div>
+        <div class="submit-actions">
+          <button type="button" class="btn btn-ghost" id="btn-back-draft">← 返回草稿</button>
+          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit">提交飞书报销</button>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <div class="sticky-cta" id="sticky-cta" hidden>
-    <div class="sticky-cta-inner">
-      <div class="sticky-cta-meta">
-        <span id="sticky-total">合计 ¥0.00</span>
-        <span class="sticky-sep" aria-hidden="true">·</span>
-        <span id="sticky-gaps">缺口 —</span>
-      </div>
-      <button type="button" class="btn btn-primary" id="btn-draft-sticky">一键生成报销草稿</button>
-    </div>
-  </div>
-
-  <div class="modal-backdrop" id="draft-modal" role="dialog" aria-modal="true" aria-labelledby="draft-title">
+  <div class="modal-backdrop" id="result-modal" hidden role="dialog" aria-modal="true" aria-labelledby="result-title">
     <div class="modal">
       <div class="modal-header">
-        <h3 id="draft-title">报销草稿</h3>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-close-modal">关闭</button>
+        <h3 id="result-title">飞书提交结果（stub）</h3>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-close-result">关闭</button>
       </div>
-      <div class="modal-body">
-        <pre id="draft-summary"></pre>
-      </div>
+      <div class="modal-body"><pre id="result-payload"></pre></div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" id="btn-copy-summary">复制摘要</button>
-        <button type="button" class="btn btn-primary" id="btn-download-json">下载 JSON</button>
+        <button type="button" class="btn btn-secondary" id="btn-copy-payload">复制 payload</button>
+        <button type="button" class="btn btn-primary" id="btn-close-result-2">完成</button>
       </div>
     </div>
   </div>
 
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="./ocr-bridge.js?v=20261105b"></script>
-  <script src="./app.js?v=20261105b"></script>
+  <script src="./ocr-bridge.js?v=20261105c"></script>
+  <script src="./policy.js?v=20261105c"></script>
+  <script src="./app.js?v=20261105c"></script>
 </body>
 </html>
