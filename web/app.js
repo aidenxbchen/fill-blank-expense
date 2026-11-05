@@ -182,6 +182,24 @@ function sheetKindFromCategory(category) {
   return "other";
 }
 
+/** Prefer upload-slot hint over OCR "other"/unknown so 物品/餐饮 slots get the right sheet. */
+function resolveInvoiceCategory(ocrCategory, categoryHint) {
+  const HINT_KINDS = ["meal", "lodging", "purchase", "transit", "gift"];
+  const ocr = ocrCategory || "";
+  if (HINT_KINDS.includes(categoryHint)) {
+    if (ocr && SHEET_KIND_META[ocr] && ocr !== "other") return ocr;
+    return categoryHint;
+  }
+  if (ocr && SHEET_KIND_META[ocr]) return ocr;
+  return categoryHint || "other";
+}
+
+function scrollDetailSheetsIntoView() {
+  requestAnimationFrame(() => {
+    document.getElementById("detail-sheets")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+}
+
 function ensureDetailSheet(kind, titleOverride) {
   const s = current();
   if (!Array.isArray(s.detailSheets)) s.detailSheets = [];
@@ -442,7 +460,7 @@ async function filesToInvoices(fileList, opts = {}) {
         amount: parsed.amount,
         merchant: parsed.merchant,
         date: parsed.date,
-        category: parsed.category || opts.categoryHint || "other",
+        category: resolveInvoiceCategory(parsed.category, opts.categoryHint),
         confidence: parsed.confidence,
         source: parsed.source || "mock",
         fileName: file.name,
@@ -818,6 +836,7 @@ async function handleTravelFiles(dayDate, category, fileList) {
   ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
+  scrollDetailSheetsIntoView();
   toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）· 已写入明细表`);
 }
 
@@ -845,6 +864,7 @@ async function handlePurchaseLineFiles(itemId, fileList) {
   ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
+  scrollDetailSheetsIntoView();
   toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）· 已写入明细表`);
 }
 
@@ -858,6 +878,7 @@ async function handlePurchaseClaimFiles(fileList) {
   ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
+  scrollDetailSheetsIntoView();
   toast(`已添加 ${invoices.length} 张整单发票（${ocrLabel()}）· 已写入明细表`);
 }
 
@@ -891,6 +912,7 @@ async function handleTransitFiles(tripId, fileList) {
   ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
+  scrollDetailSheetsIntoView();
   toast(`已添加 ${invoices.length} 张票据（${ocrLabel()}）· 已写入明细表`);
 }
 
@@ -920,6 +942,7 @@ async function handleEntFiles(eventId, category, fileList) {
   ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
+  scrollDetailSheetsIntoView();
   toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）· 已写入明细表`);
 }
 
@@ -1493,7 +1516,7 @@ function renderDetailSheets() {
         </div>
       </div>
       <div class="detail-sheets-empty">
-        暂无明细表。上传发票后会出现「餐饮表 / 物品表」等；也可先点「添加明细表」登记无票支出。
+        暂无明细表。上传发票后会按类别自动出现表格（餐饮表 / 物品表等）；也可先点「添加明细表」登记无票支出。
       </div>`;
     host.querySelector("[data-add-sheet]")?.addEventListener("click", addBlankDetailSheet);
     return;

@@ -9,7 +9,11 @@
 (function () {
   "use strict";
 
-  var OCR_BASE = "http://127.0.0.1:18790";
+  // Localhost → direct OCR port; public tunnel hostname → same-origin /api proxy
+  var OCR_BASE =
+    location.hostname === "127.0.0.1" || location.hostname === "localhost"
+      ? "http://127.0.0.1:18790"
+      : "";
 
   async function checkHealth() {
     var res = await fetch(OCR_BASE + "/api/health", {
@@ -73,9 +77,14 @@
       throw new Error("OCR 结果缺少 amount");
     }
 
+    var known = { lodging: 1, meal: 1, other: 1, purchase: 1, transit: 1, gift: 1 };
+    var hintPreferred = { meal: 1, lodging: 1, purchase: 1, transit: 1, gift: 1 };
     var category = data.category;
-    if (category !== "lodging" && category !== "meal" && category !== "other") {
+    if (!known[category]) {
       category = opts.categoryHint || "other";
+    } else if (category === "other" && opts.categoryHint && hintPreferred[opts.categoryHint]) {
+      // User uploaded into a typed slot; don't force 「其他」from vague OCR
+      category = opts.categoryHint;
     }
 
     return {
