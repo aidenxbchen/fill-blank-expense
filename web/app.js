@@ -66,6 +66,16 @@ const CATEGORY_LABEL = {
   transit: "市内交通",
 };
 
+/** Default detail-sheet titles by invoice category (titles are user-editable). */
+const SHEET_KIND_META = {
+  meal: { kind: "meal", title: "餐饮表" },
+  lodging: { kind: "lodging", title: "住宿表" },
+  purchase: { kind: "purchase", title: "物品表" },
+  transit: { kind: "transit", title: "交通表" },
+  gift: { kind: "gift", title: "礼品表" },
+  other: { kind: "other", title: "其他支出表" },
+};
+
 const MOCK_MERCHANTS = {
   lodging: ["如家酒店", "全季酒店", "亚朵酒店", "希尔顿欢朋", "桔子酒店"],
   meal: ["海底捞", "星巴克", "麦当劳", "外婆家", "喜茶"],
@@ -91,19 +101,19 @@ const drafts = {
 let lastDraft = null;
 
 function emptyTravel() {
-  return { startDate: "", endDate: "", city: "", reason: "", days: [] };
+  return { startDate: "", endDate: "", city: "", reason: "", days: [], detailSheets: [] };
 }
 
 function emptyPurchase() {
-  return { reason: "", claimInvoices: [], items: [] };
+  return { reason: "", claimInvoices: [], items: [], detailSheets: [] };
 }
 
 function emptyLocalTransit() {
-  return { reason: "", trips: [] };
+  return { reason: "", trips: [], detailSheets: [] };
 }
 
 function emptyEntertainment() {
-  return { reason: "", events: [] };
+  return { reason: "", events: [], detailSheets: [] };
 }
 
 function newPurchaseItem() {
@@ -143,6 +153,142 @@ function newEntEvent() {
 
 function uid(prefix) {
   return `${prefix || "inv"}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeDetailSheets(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((sheet) => ({
+    id: sheet.id || uid("sheet"),
+    title: sheet.title || "明细表",
+    kind: sheet.kind || "custom",
+    rows: Array.isArray(sheet.rows)
+      ? sheet.rows.map((row) => ({
+          id: row.id || uid("row"),
+          date: row.date || "",
+          description: row.description || "",
+          amount: row.amount === 0 || row.amount ? String(row.amount) : "",
+          hasInvoice: Boolean(row.hasInvoice),
+          invoiceRef: row.invoiceRef || "",
+          note: row.note || "",
+        }))
+      : [],
+  }));
+}
+
+function sheetKindFromCategory(category) {
+  const cat = category || "other";
+  if (SHEET_KIND_META[cat]) return cat;
+  if (cat === "other") return "other";
+  return "other";
+}
+
+function ensureDetailSheet(kind, titleOverride) {
+  const s = current();
+  if (!Array.isArray(s.detailSheets)) s.detailSheets = [];
+  const meta = SHEET_KIND_META[kind] || { kind: kind || "custom", title: titleOverride || "明细表" };
+  let sheet = s.detailSheets.find((x) => x.kind === meta.kind);
+  if (!sheet) {
+    sheet = {
+      id: uid("sheet"),
+      title: titleOverride || meta.title,
+      kind: meta.kind,
+      rows: [],
+    };
+    s.detailSheets.push(sheet);
+  } else if (titleOverride && !sheet.title) {
+    sheet.title = titleOverride;
+  }
+  return sheet;
+}
+
+function newManualSheetRow() {
+  return {
+    id: uid("row"),
+    date: formatYMD(new Date()),
+    description: "",
+    amount: "",
+    hasInvoice: false,
+    invoiceRef: "",
+    note: "无发票",
+  };
+}
+
+function rowFromInvoice(inv) {
+  return {
+    id: uid("row"),
+    date: inv.date || "",
+    description: inv.merchant || inv.fileName || "",
+    amount: inv.amount == null ? "" : String(inv.amount),
+    hasInvoice: true,
+    invoiceRef: inv.id || "",
+    note: inv.fileName ? `发票：${inv.fileName}` : "有发票",
+  };
+}
+
+/** Append OCR/PDF-parsed invoices into category detail sheets (dedupe by invoiceRef). */
+function ingestInvoicesToSheets(invoices) {
+  if (!invoices?.length) return;
+  const s = current();
+  if (!Array.isArray(s.detailSheets)) s.detailSheets = [];
+  for (const inv of invoices) {
+    const kind = sheetKindFromCategory(inv.category);
+    const sheet = ensureDetailSheet(kind);
+    if (inv.id && sheet.rows.some((r) => r.invoiceRef === inv.id)) continue;
+    sheet.rows.push(rowFromInvoice(inv));
+  }
+}
+
+function removeSheetRowsByInvoice(invoiceId) {
+  if (!invoiceId) return;
+  const s = current();
+  if (!Array.isArray(s.detailSheets)) return;
+  for (const sheet of s.detailSheets) {
+    sheet.rows = sheet.rows.filter((r) => r.invoiceRef !== invoiceId);
+  }
+  // Drop empty auto sheets that only existed for removed invoices (keep if titled/custom or any rows)
+  s.detailSheets = s.detailSheets.filter((sheet) => sheet.rows.length > 0 || sheet.kind === "custom");
+}
+
+function sumDetailSheetManual() {
+  const s = current();
+  if (!Array.isArray(s.detailSheets)) return 0;
+  let sum = 0;
+  for (const sheet of s.detailSheets) {
+    for (const row of sheet.rows) {
+      if (row.hasInvoice) continue;
+      const amt = parseAmount(row.amount);
+      if (amt != null) sum += amt;
+    }
+  }
+  return sum;
+}
+
+function sumDetailSheetsAll() {
+  const s = current();
+  if (!Array.isArray(s.detailSheets)) return [];
+  return s.detailSheets.map((sheet) => {
+    let total = 0;
+    for (const row of sheet.rows) {
+      const amt = parseAmount(row.amount);
+      if (amt != null) total += amt;
+    }
+    return { id: sheet.id, title: sheet.title, kind: sheet.kind, total, rowCount: sheet.rows.length };
+  });
+}
+
+function addBlankDetailSheet() {
+  const s = current();
+  if (!Array.isArray(s.detailSheets)) s.detailSheets = [];
+  const n = s.detailSheets.filter((x) => x.kind === "custom").length + 1;
+  s.detailSheets.push({
+    id: uid("sheet"),
+    title: `自定义表 ${n}`,
+    kind: "custom",
+    rows: [newManualSheetRow()],
+  });
+  saveCurrentDraft();
+  render();
+  toast("已添加明细表");
 }
 
 function parseYMD(str) {
@@ -359,6 +505,7 @@ function normalizeTravel(data) {
         other: Array.isArray(day.other) ? day.other : [],
       }))
     : [];
+  s.detailSheets = normalizeDetailSheets(data.detailSheets);
   return s;
 }
 
@@ -377,6 +524,7 @@ function normalizePurchase(data) {
         invoices: Array.isArray(it.invoices) ? it.invoices : [],
       }))
     : [];
+  s.detailSheets = normalizeDetailSheets(data.detailSheets);
   return s;
 }
 
@@ -395,6 +543,7 @@ function normalizeLocalTransit(data) {
         invoices: Array.isArray(t.invoices) ? t.invoices : [],
       }))
     : [];
+  s.detailSheets = normalizeDetailSheets(data.detailSheets);
   return s;
 }
 
@@ -413,6 +562,7 @@ function normalizeEntertainment(data) {
         gift: Array.isArray(e.gift) ? e.gift : [],
       }))
     : [];
+  s.detailSheets = normalizeDetailSheets(data.detailSheets);
   return s;
 }
 
@@ -525,15 +675,18 @@ function computeTravelTotals() {
     byCat.other += other;
     return { date: day.date, lodging, meal, other, total: lodging + meal + other };
   });
+  const manual = sumDetailSheetManual();
+  const rows = [
+    { key: "lodging", label: "住宿", value: byCat.lodging },
+    { key: "meal", label: "餐饮", value: byCat.meal },
+    { key: "other", label: "交通·其他", value: byCat.other },
+  ];
+  if (manual > 0) rows.push({ key: "manual", label: "无票明细", value: manual });
   return {
-    rows: [
-      { key: "lodging", label: "住宿", value: byCat.lodging },
-      { key: "meal", label: "餐饮", value: byCat.meal },
-      { key: "other", label: "交通·其他", value: byCat.other },
-    ],
+    rows,
     byCat,
     byDay,
-    grand: byCat.lodging + byCat.meal + byCat.other,
+    grand: byCat.lodging + byCat.meal + byCat.other + manual,
     grandLabel: "行程合计（CNY）",
   };
 }
@@ -549,12 +702,15 @@ function computePurchaseTotals() {
   const claimSum = sumInvoices(s.claimInvoices);
   const hasLineAmounts = s.items.some((it) => parseAmount(it.amount) != null);
   const grand = hasLineAmounts ? itemsSum : itemsSum + claimSum;
+  const manual = sumDetailSheetManual();
+  const rows = [
+    { key: "items", label: "明细金额", value: itemsSum },
+    { key: "claim", label: "整单发票额", value: claimSum },
+  ];
+  if (manual > 0) rows.push({ key: "manual", label: "无票明细", value: manual });
   return {
-    rows: [
-      { key: "items", label: "明细金额", value: itemsSum },
-      { key: "claim", label: "整单发票额", value: claimSum },
-    ],
-    grand,
+    rows,
+    grand: grand + manual,
     grandLabel: "采购合计（CNY）",
   };
 }
@@ -565,9 +721,12 @@ function computeTransitTotals() {
     const amt = parseAmount(t.amount);
     sum += amt != null ? amt : sumInvoices(t.invoices);
   }
+  const manual = sumDetailSheetManual();
+  const rows = [{ key: "trips", label: "出行次数金额", value: sum }];
+  if (manual > 0) rows.push({ key: "manual", label: "无票明细", value: manual });
   return {
-    rows: [{ key: "trips", label: "出行次数金额", value: sum }],
-    grand: sum,
+    rows,
+    grand: sum + manual,
     grandLabel: "交通合计（CNY）",
   };
 }
@@ -583,19 +742,28 @@ function computeEntTotals() {
   }
   const invTotal = byCat.meal + byCat.gift;
   const grand = declared > 0 ? declared : invTotal;
+  const manual = sumDetailSheetManual();
+  const rows = [
+    { key: "meal", label: "餐费", value: byCat.meal },
+    { key: "gift", label: "礼品·其他", value: byCat.gift },
+    { key: "declared", label: "申报金额", value: declared },
+  ];
+  if (manual > 0) rows.push({ key: "manual", label: "无票明细", value: manual });
   return {
-    rows: [
-      { key: "meal", label: "餐费", value: byCat.meal },
-      { key: "gift", label: "礼品·其他", value: byCat.gift },
-      { key: "declared", label: "申报金额", value: declared },
-    ],
+    rows,
     byCat,
-    grand,
+    grand: grand + manual,
     grandLabel: "招待合计（CNY）",
   };
 }
 
+function hasDetailSheetRows() {
+  const sheets = current()?.detailSheets;
+  return Array.isArray(sheets) && sheets.some((sh) => sh.rows?.length);
+}
+
 function hasContent() {
+  if (hasDetailSheetRows()) return true;
   if (activeScenario === "travel") return drafts.travel.days.length > 0;
   if (activeScenario === "purchase") return drafts.purchase.items.length > 0;
   if (activeScenario === "local_transit") return drafts.local_transit.trips.length > 0;
@@ -647,15 +815,17 @@ async function handleTravelFiles(dayDate, category, fileList) {
   if (!invoices.length) return;
   if (!day[category]) day[category] = [];
   day[category].push(...invoices);
+  ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
-  toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）`);
+  toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）· 已写入明细表`);
 }
 
 function removeTravelInvoice(dayDate, category, invoiceId) {
   const day = drafts.travel.days.find((d) => d.date === dayDate);
   if (!day || !day[category]) return;
   day[category] = day[category].filter((inv) => inv.id !== invoiceId);
+  removeSheetRowsByInvoice(invoiceId);
   saveCurrentDraft();
   render();
 }
@@ -672,9 +842,10 @@ async function handlePurchaseLineFiles(itemId, fileList) {
   if (parseAmount(item.amount) == null && invoices[0]) item.amount = String(invoices[0].amount);
   if (!item.vendor && invoices[0]?.merchant) item.vendor = invoices[0].merchant;
   if (!item.date && invoices[0]?.date) item.date = invoices[0].date;
+  ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
-  toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）`);
+  toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）· 已写入明细表`);
 }
 
 async function handlePurchaseClaimFiles(fileList) {
@@ -684,21 +855,24 @@ async function handlePurchaseClaimFiles(fileList) {
   });
   if (!invoices.length) return;
   drafts.purchase.claimInvoices.push(...invoices);
+  ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
-  toast(`已添加 ${invoices.length} 张整单发票（${ocrLabel()}）`);
+  toast(`已添加 ${invoices.length} 张整单发票（${ocrLabel()}）· 已写入明细表`);
 }
 
 function removePurchaseLineInvoice(itemId, invoiceId) {
   const item = drafts.purchase.items.find((it) => it.id === itemId);
   if (!item) return;
   item.invoices = item.invoices.filter((inv) => inv.id !== invoiceId);
+  removeSheetRowsByInvoice(invoiceId);
   saveCurrentDraft();
   render();
 }
 
 function removePurchaseClaimInvoice(invoiceId) {
   drafts.purchase.claimInvoices = drafts.purchase.claimInvoices.filter((inv) => inv.id !== invoiceId);
+  removeSheetRowsByInvoice(invoiceId);
   saveCurrentDraft();
   render();
 }
@@ -714,15 +888,17 @@ async function handleTransitFiles(tripId, fileList) {
   trip.invoices.push(...invoices);
   if (parseAmount(trip.amount) == null && invoices[0]) trip.amount = String(invoices[0].amount);
   if (!trip.date && invoices[0]?.date) trip.date = invoices[0].date;
+  ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
-  toast(`已添加 ${invoices.length} 张票据（${ocrLabel()}）`);
+  toast(`已添加 ${invoices.length} 张票据（${ocrLabel()}）· 已写入明细表`);
 }
 
 function removeTransitInvoice(tripId, invoiceId) {
   const trip = drafts.local_transit.trips.find((t) => t.id === tripId);
   if (!trip) return;
   trip.invoices = trip.invoices.filter((inv) => inv.id !== invoiceId);
+  removeSheetRowsByInvoice(invoiceId);
   saveCurrentDraft();
   render();
 }
@@ -741,15 +917,17 @@ async function handleEntFiles(eventId, category, fileList) {
     const total = sumInvoices(ev.meal) + sumInvoices(ev.gift);
     if (total > 0) ev.amount = String(Math.round(total * 100) / 100);
   }
+  ingestInvoicesToSheets(invoices);
   saveCurrentDraft();
   render();
-  toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）`);
+  toast(`已添加 ${invoices.length} 张发票（${ocrLabel()}）· 已写入明细表`);
 }
 
 function removeEntInvoice(eventId, category, invoiceId) {
   const ev = drafts.entertainment.events.find((e) => e.id === eventId);
   if (!ev || !ev[category]) return;
   ev[category] = ev[category].filter((inv) => inv.id !== invoiceId);
+  removeSheetRowsByInvoice(invoiceId);
   saveCurrentDraft();
   render();
 }
@@ -797,6 +975,21 @@ function buildDraftPayload() {
       status: "not_submitted",
       note: "Prototype only — see commented stub in app.js buildDraftPayload()",
     },
+    detailSheets: (current().detailSheets || []).map((sheet) => ({
+      id: sheet.id,
+      title: sheet.title,
+      kind: sheet.kind,
+      rows: sheet.rows.map((r) => ({
+        id: r.id,
+        date: r.date,
+        description: r.description,
+        amount: parseAmount(r.amount),
+        hasInvoice: r.hasInvoice,
+        invoiceRef: r.invoiceRef || null,
+        note: r.note || "",
+      })),
+      subtotal: sheet.rows.reduce((acc, r) => acc + (parseAmount(r.amount) || 0), 0),
+    })),
   };
 
   if (activeScenario === "travel") {
@@ -992,6 +1185,20 @@ function buildHumanSummary(payload) {
     lines.push(`招待合计：${formatCNY(payload.totals.grandTotal)} CNY`);
   }
 
+  if (payload.detailSheets?.length) {
+    lines.push("");
+    lines.push("—— 分类明细表 ——");
+    for (const sheet of payload.detailSheets) {
+      lines.push(`■ ${sheet.title}（${sheet.rows.length} 行 · 小计 ${formatCNY(sheet.subtotal)}）`);
+      sheet.rows.forEach((r, i) => {
+        const flag = r.hasInvoice ? "有票" : "无票";
+        lines.push(
+          `  ${i + 1}. ${r.date || "—"} · ${r.description || "（未填）"} · ${formatCNY(r.amount)} · ${flag}${r.note ? ` · ${r.note}` : ""}`
+        );
+      });
+    }
+  }
+
   if (payload.gaps.length) {
     lines.push("");
     lines.push("缺口：");
@@ -1082,6 +1289,7 @@ function render() {
   renderGaps();
   renderStickyBar();
   renderContent();
+  renderDetailSheets();
   updateFlowSteps();
 }
 
@@ -1263,6 +1471,188 @@ function updateFlowSteps() {
   if (ready) steps[1].classList.add(anyInv ? "is-done" : "is-active");
   if (anyInv) steps[2].classList.add(gaps.length === 0 ? "is-done" : "is-active");
   if (ready && gaps.length === 0 && anyInv) steps[3].classList.add("is-active");
+}
+
+function renderDetailSheets() {
+  const host = document.getElementById("detail-sheets");
+  if (!host) return;
+  const s = current();
+  if (!Array.isArray(s.detailSheets)) s.detailSheets = [];
+  const sheets = s.detailSheets;
+
+  host.hidden = false;
+  if (!sheets.length) {
+    host.innerHTML = `
+      <div class="detail-sheets-head">
+        <div>
+          <h2>分类明细表</h2>
+          <p class="section-hint">上传发票后按类别自动生成（如餐饮表、物品表）；也可手动添加无票支出。</p>
+        </div>
+        <div class="detail-sheets-actions">
+          <button type="button" class="btn btn-secondary btn-sm" data-add-sheet>＋ 添加明细表</button>
+        </div>
+      </div>
+      <div class="detail-sheets-empty">
+        暂无明细表。上传发票后会出现「餐饮表 / 物品表」等；也可先点「添加明细表」登记无票支出。
+      </div>`;
+    host.querySelector("[data-add-sheet]")?.addEventListener("click", addBlankDetailSheet);
+    return;
+  }
+
+  host.innerHTML = `
+    <div class="detail-sheets-head">
+      <div>
+        <h2>分类明细表</h2>
+        <p class="section-hint">表名可改；单元格可编辑；「添加行」可登记无发票支出。</p>
+      </div>
+      <div class="detail-sheets-actions">
+        <button type="button" class="btn btn-secondary btn-sm" data-add-sheet>＋ 添加明细表</button>
+      </div>
+    </div>
+    <div class="detail-sheets-stack">
+      ${sheets
+        .map((sheet) => {
+          const subtotal = sheet.rows.reduce((acc, r) => acc + (parseAmount(r.amount) || 0), 0);
+          const rowsHtml = sheet.rows.length
+            ? sheet.rows
+                .map(
+                  (row) => `
+            <tr data-row-id="${row.id}">
+              <td><input type="date" data-sheet-field="date" data-sheet="${sheet.id}" data-row="${row.id}" value="${escapeHtml(row.date)}" /></td>
+              <td><input type="text" data-sheet-field="description" data-sheet="${sheet.id}" data-row="${row.id}" value="${escapeHtml(row.description)}" placeholder="商户 / 品名 / 说明" /></td>
+              <td><input type="number" min="0" step="0.01" data-sheet-field="amount" data-sheet="${sheet.id}" data-row="${row.id}" value="${escapeHtml(row.amount)}" placeholder="0.00" /></td>
+              <td class="sheet-flag">
+                <span class="sheet-badge ${row.hasInvoice ? "has-inv" : "no-inv"}">${row.hasInvoice ? "有发票" : "无发票"}</span>
+              </td>
+              <td><input type="text" data-sheet-field="note" data-sheet="${sheet.id}" data-row="${row.id}" value="${escapeHtml(row.note)}" placeholder="备注" /></td>
+              <td class="sheet-row-actions">
+                <button type="button" class="btn btn-danger btn-sm" data-remove-row data-sheet="${sheet.id}" data-row="${row.id}">删除</button>
+              </td>
+            </tr>`
+                )
+                .join("")
+            : `<tr class="sheet-empty-row"><td colspan="6">暂无行 · 点「添加行」或上传发票</td></tr>`;
+          return `
+        <article class="detail-sheet-card" data-sheet-id="${sheet.id}">
+          <div class="detail-sheet-card-head">
+            <div class="detail-sheet-title-wrap">
+              <label class="sr-only" for="sheet-title-${sheet.id}">表名</label>
+              <input
+                class="detail-sheet-title"
+                id="sheet-title-${sheet.id}"
+                type="text"
+                data-sheet-title="${sheet.id}"
+                value="${escapeHtml(sheet.title)}"
+                placeholder="表名（可改）"
+              />
+              <span class="muted-sm">${sheet.rows.length} 行 · 小计 ${formatCNY(subtotal)}</span>
+            </div>
+            <div class="detail-sheet-card-actions">
+              <button type="button" class="btn btn-secondary btn-sm" data-add-row="${sheet.id}">＋ 添加行</button>
+              <button type="button" class="btn btn-danger btn-sm" data-remove-sheet="${sheet.id}">删除表</button>
+            </div>
+          </div>
+          <div class="detail-sheet-table-wrap">
+            <table class="detail-sheet-table">
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>说明 / 商户</th>
+                  <th>金额</th>
+                  <th>发票</th>
+                  <th>备注</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </article>`;
+        })
+        .join("")}
+    </div>`;
+
+  host.querySelector("[data-add-sheet]")?.addEventListener("click", addBlankDetailSheet);
+
+  host.querySelectorAll("[data-sheet-title]").forEach((input) => {
+    const apply = () => {
+      const sheet = s.detailSheets.find((x) => x.id === input.dataset.sheetTitle);
+      if (!sheet) return;
+      sheet.title = input.value.trim() || sheet.title || "明细表";
+      saveCurrentDraft();
+    };
+    input.addEventListener("change", () => {
+      apply();
+      renderTotals();
+      renderStickyBar();
+    });
+    input.addEventListener("input", apply);
+  });
+
+  host.querySelectorAll("[data-sheet-field]").forEach((input) => {
+    const apply = () => {
+      const sheet = s.detailSheets.find((x) => x.id === input.dataset.sheet);
+      const row = sheet?.rows.find((r) => r.id === input.dataset.row);
+      if (!row) return;
+      row[input.dataset.sheetField] = input.value;
+      saveCurrentDraft();
+    };
+    input.addEventListener("change", () => {
+      apply();
+      renderTotals();
+      renderStickyBar();
+      // refresh subtotal labels without full re-render to keep focus — light re-render ok
+      const active = document.activeElement;
+      const keep =
+        active?.dataset?.sheetField
+          ? { sheet: active.dataset.sheet, row: active.dataset.row, field: active.dataset.sheetField }
+          : null;
+      renderDetailSheets();
+      if (keep) {
+        const el = host.querySelector(
+          `[data-sheet-field="${keep.field}"][data-sheet="${keep.sheet}"][data-row="${keep.row}"]`
+        );
+        if (el) {
+          el.focus();
+          if (typeof el.selectionStart === "number") {
+            const len = el.value.length;
+            el.setSelectionRange(len, len);
+          }
+        }
+      }
+    });
+    input.addEventListener("input", apply);
+  });
+
+  host.querySelectorAll("[data-add-row]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sheet = s.detailSheets.find((x) => x.id === btn.dataset.addRow);
+      if (!sheet) return;
+      sheet.rows.push(newManualSheetRow());
+      saveCurrentDraft();
+      render();
+      toast("已添加无票明细行");
+    });
+  });
+
+  host.querySelectorAll("[data-remove-row]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sheet = s.detailSheets.find((x) => x.id === btn.dataset.sheet);
+      if (!sheet) return;
+      sheet.rows = sheet.rows.filter((r) => r.id !== btn.dataset.row);
+      saveCurrentDraft();
+      render();
+    });
+  });
+
+  host.querySelectorAll("[data-remove-sheet]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      s.detailSheets = s.detailSheets.filter((x) => x.id !== btn.dataset.removeSheet);
+      saveCurrentDraft();
+      render();
+      toast("已删除明细表");
+    });
+  });
 }
 
 function renderContent() {

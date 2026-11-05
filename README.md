@@ -102,3 +102,24 @@ window.__invoiceOCR = async (file, opts) => { /* → 18790 /api/parse-invoice */
 ## 技术说明
 
 纯 HTML / CSS / JS，无框架。入口：`web/index.html`，样式 `web/styles.css`，逻辑 `web/app.js`，OCR 钩子 `web/ocr-bridge.js`。本地桥接：`ocr/server.py`（stdlib）。
+
+
+## 分类明细表（发票后自动生成）
+
+上传发票（OCR / PDF 解析）成功后，会按类别自动写入可编辑明细表，例如：
+
+- **餐饮表** — `meal` 类发票
+- **物品表** — `purchase` 类（表名可改）
+- **住宿表 / 交通表 / 礼品表 / 其他支出表** — 对应类别
+
+### 怎么试
+
+1. 打开 https://baoxiao.xbchen.top （硬刷新）
+2. 任选场景，上传一张发票（或 PDF）
+3. 主内容下方出现「分类明细表」，对应类别表中已有一行
+4. 可改表名、改单元格；点「添加行」登记**无发票**支出（备注默认为「无发票」）
+5. 点「添加明细表」可新建自定义表；金额汇总中无票行会计入「无票明细」
+6. 「一键生成报销草稿」的 JSON / 摘要会带上 `detailSheets`
+
+草稿仍保存在浏览器 localStorage（按场景分 key）。
+
