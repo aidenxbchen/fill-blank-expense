@@ -2,10 +2,12 @@
 """
 Local OCR bridge for fill-blank-expense.
 
-POST multipart invoice image → Xiaomi-OCR via Ollama OpenAI-compatible API
-→ JSON fields for the web app.
+POST multipart invoice image → Xiaomi-OCR via Ollama; PDF prefers native text
+extraction (PyMuPDF / pdftotext), falling back to page-1 rasterize + vision OCR
+when text is empty/sparse.
 
-Stdlib only. Bind: 127.0.0.1:18790
+Mostly stdlib; PDF helpers use PyMuPDF / poppler when present.
+Bind: 127.0.0.1:18790
 """
 
 from __future__ import annotations
@@ -14,7 +16,9 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from email import policy
@@ -82,6 +86,240 @@ def guess_mime(filename: str, content_type: str | None) -> str:
         if name.endswith(ext):
             return mime
     return ct or "application/octet-stream"
+
+
+
+
+
+def _which(cmd: str) -> str:
+    from shutil import which
+
+    return which(cmd) or ""
+
+
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text from PDF. Prefer pdftotext -layout, else PyMuPDF page text."""
+    if not pdf_bytes:
+        return ""
+
+    # 1) pdftotext layout (better column structure for CN e-invoices)
+    pdftotext = "/opt/homebrew/bin/pdftotext"
+    if not os.path.isfile(pdftotext):
+        pdftotext = _which("pdftotext")
+    if pdftotext:
+        with tempfile.TemporaryDirectory(prefix="ocr-pdftxt-") as td:
+            pdf_path = os.path.join(td, "in.pdf")
+            with open(pdf_path, "wb") as f:
+                f.write(pdf_bytes)
+            proc = subprocess.run(
+                [pdftotext, "-layout", "-f", "1", "-l", "1", pdf_path, "-"],
+                capture_output=True,
+                timeout=30,
+            )
+            if proc.returncode == 0:
+                out = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+                if out:
+                    return out
+
+    # 2) PyMuPDF
+    try:
+        import fitz  # type: ignore
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            parts: list[str] = []
+            for i in range(min(doc.page_count, 3)):
+                parts.append(doc.load_page(i).get_text("text") or "")
+            return "\n".join(parts).strip()
+        finally:
+            doc.close()
+    except Exception:
+        return ""
+
+
+def pdf_text_usable(text: str) -> bool:
+    """True when extracted text looks rich enough to skip vision OCR."""
+    t = (text or "").strip()
+    if len(t) < 40:
+        return False
+    # need at least one digit group that could be money/date
+    if not re.search(r"\d", t):
+        return False
+    # CJK or Latin letters present
+    if not re.search(r"[\u4e00-\u9fffA-Za-z]", t):
+        return False
+    return True
+
+
+def parse_invoice_from_text(text: str) -> dict[str, Any]:
+    """Heuristic KIE from PDF text → same shape as vision coerce_fields()."""
+    t = text or ""
+    # normalize fullwidth yen etc.
+    t_norm = t.replace("￥", "¥").replace(",", "")
+
+    amount: float | None = None
+    # 价税合计（小写）¥338.00 / （小写）¥338.00
+    for pat in (
+        r"价税合计[^\n]{0,40}[（(]小写[）)]\s*¥?\s*(\d+(?:\.\d+)?)",
+        r"[（(]小写[）)]\s*¥\s*(\d+(?:\.\d+)?)",
+        r"价税合计[^\n]*?¥\s*(\d+(?:\.\d+)?)",
+        r"合计金额[：:]\s*¥?\s*(\d+(?:\.\d+)?)",
+        r"实付[：:]\s*¥?\s*(\d+(?:\.\d+)?)",
+    ):
+        m = re.search(pat, t_norm, re.S)
+        if m:
+            amount = float(m.group(1))
+            break
+    if amount is None:
+        # largest ¥N.NN as weak fallback
+        amounts = [float(x) for x in re.findall(r"¥\s*(\d+(?:\.\d+)?)", t_norm)]
+        if amounts:
+            amount = max(amounts)
+    if amount is None:
+        raise ValueError("未能从 PDF 文本解析 amount")
+
+    date = ""
+    m = re.search(
+        r"开票日期[：:\s]*(\d{4})\s*[年./-]\s*(\d{1,2})\s*[月./-]\s*(\d{1,2})",
+        t_norm,
+    )
+    if not m:
+        m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日", t_norm)
+    if not m:
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", t_norm)
+    if m:
+        date = f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+
+    merchant = ""
+    # layout: "销 名称：迅销..." or "销售方...名称：..."
+    m = re.search(
+        r"销\s*(?:售\s*方)?[^\n]{0,20}名称[：:]\s*([^\n]+)",
+        t_norm,
+    )
+    if m:
+        merchant = m.group(1).strip()
+    if not merchant:
+        # two 名称： lines — buyer then seller is common; prefer line near 销
+        names = re.findall(r"名称[：:]\s*([^\n]+)", t_norm)
+        names = [n.strip() for n in names if n.strip() and "统一社会信用" not in n]
+        if len(names) >= 2:
+            merchant = names[1]  # usually 销售方
+        elif names:
+            merchant = names[0]
+    if not merchant:
+        # company-like tokens; skip short noise
+        cos = re.findall(
+            r"([\u4e00-\u9fffA-Za-z0-9（）()\-]{2,40}(?:有限责任公司|有限公司|公司)[^\n]{0,30})",
+            t_norm,
+        )
+        cos = [c.strip() for c in cos]
+        if len(cos) >= 2:
+            merchant = cos[1]
+        elif cos:
+            merchant = cos[0]
+    # trim trailing junk on merchant line
+    merchant = re.split(r"\s{2,}|\t|统一社会信用", merchant)[0].strip()
+    merchant = merchant.strip(" ：:|")
+
+    cat = "other"
+    low = t_norm.lower()
+    if any(k in t_norm for k in ("住宿", "酒店", "宾馆", "旅馆")) or "hotel" in low:
+        cat = "lodging"
+    elif any(k in t_norm for k in ("餐饮", "餐费", "饭店", "料理", "火锅", "烧烤")):
+        cat = "meal"
+
+    # confidence: higher when amount+date+merchant all present
+    conf = 0.55
+    if amount is not None:
+        conf += 0.15
+    if date:
+        conf += 0.15
+    if merchant:
+        conf += 0.15
+    conf = min(0.95, conf)
+
+    fields = coerce_fields(
+        {
+            "amount": amount,
+            "merchant": merchant,
+            "date": date,
+            "category": cat,
+            "confidence": conf,
+        }
+    )
+    fields["source"] = "pdf-text"
+    return fields
+
+
+def pdf_to_png_bytes(pdf_bytes: bytes) -> tuple[bytes, str]:
+    """Rasterize PDF page 1 to PNG. Prefer PyMuPDF; fall back to pdftoppm."""
+    if not pdf_bytes:
+        raise ValueError("空 PDF")
+
+    # 1) PyMuPDF (already in anaconda env used by this server)
+    try:
+        import fitz  # type: ignore
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            if doc.page_count < 1:
+                raise ValueError("PDF 无页面")
+            page = doc.load_page(0)
+            # 200 DPI ≈ 200/72 zoom
+            mat = fitz.Matrix(200 / 72, 200 / 72)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            return pix.tobytes("png"), "image/png"
+        finally:
+            doc.close()
+    except ImportError:
+        pass
+    except Exception as e:
+        # fall through to pdftoppm
+        fitz_err = e
+    else:
+        fitz_err = None  # unreachable; kept for clarity
+
+    # 2) poppler pdftoppm
+    pdftoppm = "/opt/homebrew/bin/pdftoppm"
+    if not os.path.isfile(pdftoppm):
+        from shutil import which
+
+        pdftoppm = which("pdftoppm") or ""
+    if not pdftoppm:
+        detail = f"（PyMuPDF 失败: {fitz_err}）" if "fitz_err" in locals() and fitz_err else ""
+        raise RuntimeError(
+            "无法将 PDF 转为 PNG：未安装 PyMuPDF 且找不到 pdftoppm" + detail
+        )
+
+    with tempfile.TemporaryDirectory(prefix="ocr-pdf-") as td:
+        pdf_path = os.path.join(td, "in.pdf")
+        out_prefix = os.path.join(td, "page")
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_bytes)
+        proc = subprocess.run(
+            [pdftoppm, "-png", "-f", "1", "-l", "1", "-r", "200", pdf_path, out_prefix],
+            capture_output=True,
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or b"").decode("utf-8", errors="replace")[:400]
+            raise RuntimeError(f"pdftoppm 失败: {err or proc.returncode}")
+        # pdftoppm names output page-1.png
+        candidates = [
+            os.path.join(td, "page-1.png"),
+            os.path.join(td, "page.png"),
+        ]
+        png_path = next((p for p in candidates if os.path.isfile(p)), None)
+        if not png_path:
+            # any png in td
+            for name in os.listdir(td):
+                if name.lower().endswith(".png"):
+                    png_path = os.path.join(td, name)
+                    break
+        if not png_path:
+            raise RuntimeError("pdftoppm 未生成 PNG")
+        with open(png_path, "rb") as f:
+            return f.read(), "image/png"
 
 
 def parse_multipart(body: bytes, content_type: str) -> list[dict[str, Any]]:
@@ -288,9 +526,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self) -> None:
         origin = self.headers.get("Origin") or "*"
-        # Allow localhost static servers (any port) and file:// often sends null
-        if origin in ("null",) or origin.startswith("http://127.0.0.1") or origin.startswith(
-            "http://localhost"
+        # Allow localhost static servers (any port), public tunnel, and file:// (null)
+        allowed_exact = {
+            "null",
+            "http://127.0.0.1:5173",
+            "https://baoxiao.xbchen.top",
+        }
+        if (
+            origin in allowed_exact
+            or origin.startswith("http://127.0.0.1")
+            or origin.startswith("http://localhost")
         ):
             self.send_header("Access-Control-Allow-Origin", origin)
         else:
@@ -395,18 +640,39 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": f"无法解析上传内容: {e}"})
             return
 
+        used_pdf_ocr_fallback = False
         if mime == "application/pdf" or (filename or "").lower().endswith(".pdf"):
-            self._json(
-                415,
-                {
-                    "ok": False,
-                    "error": (
-                        "当前桥接以图片为主，暂不在 stdlib 内解析 PDF 首页。"
-                        "请先将 PDF 转为 PNG/JPEG（或导出首页图片）后再上传。"
-                    ),
-                },
-            )
-            return
+            # Prefer native text extraction; rasterize + vision only if sparse/empty.
+            try:
+                pdf_text = extract_pdf_text(data)
+            except Exception:
+                pdf_text = ""
+            if pdf_text_usable(pdf_text):
+                try:
+                    fields = parse_invoice_from_text(pdf_text)
+                    out = dict(fields)
+                    out["raw"] = pdf_text[:4000]
+                    out["ok"] = True
+                    out["extract_method"] = "pdf-text"
+                    self._json(200, out)
+                    return
+                except Exception as e:
+                    sys.stderr.write(f"pdf-text parse failed, OCR fallback: {e}\n")
+            try:
+                data, mime = pdf_to_png_bytes(data)
+                filename = (filename or "upload.pdf").rsplit(".", 1)[0] + ".png"
+                used_pdf_ocr_fallback = True
+            except Exception as e:
+                self._json(
+                    415,
+                    {
+                        "ok": False,
+                        "error": (
+                            f"PDF 无可用文本且首页转 PNG 失败: {e}"
+                        ),
+                    },
+                )
+                return
 
         if mime not in ALLOWED_IMAGE_TYPES:
             # still try if looks like image by magic
@@ -444,6 +710,7 @@ class Handler(BaseHTTPRequestHandler):
         out = dict(fields)
         out["raw"] = raw_text
         out["ok"] = True
+        out["extract_method"] = "vision-pdf" if used_pdf_ocr_fallback else "vision"
         self._json(200, out)
 
 
