@@ -6,7 +6,22 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261105c";
+  const ASSET_V = "20261106a";
+
+  function apiBase() {
+    return location.hostname === "127.0.0.1" || location.hostname === "localhost"
+      ? "http://127.0.0.1:18790"
+      : "";
+  }
+
+  function loginHref() {
+    return location.hostname === "127.0.0.1" || location.hostname === "localhost"
+      ? "https://baoxiao.xbchen.top/api/auth/feishu/login"
+      : "/api/auth/feishu/login";
+  }
+
+  let authUser = null;
+  let approvedBudgets = [];
 
   const SHEET_KIND_META = {
     meal: { kind: "meal", title: "餐饮表" },
@@ -40,6 +55,7 @@
       draft: null,
       parseErrors: [],
       lastFeishu: null,
+      selectedBudgetId: null,
     };
   }
 
@@ -62,6 +78,7 @@
         draft: session.draft,
         parseErrors: session.parseErrors,
         lastFeishu: session.lastFeishu,
+        selectedBudgetId: session.selectedBudgetId,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
     } catch (e) {
@@ -615,6 +632,7 @@
         detailSheets: d.detailSheets,
         answers: d.answers,
         policyName: d.policyName,
+        selectedBudget: (session.answers && session.answers.selectedBudget) || null,
       },
     };
   }
@@ -830,6 +848,19 @@
       }
     });
 
+    const logoutBtn = document.getElementById("btn-logout");
+    if (logoutBtn) logoutBtn.addEventListener("click", logout);
+    const loginBtn = document.getElementById("btn-feishu-login");
+    if (loginBtn) loginBtn.href = loginHref();
+    const budgetGrid = document.getElementById("budget-grid");
+    if (budgetGrid) {
+      budgetGrid.addEventListener("click", (e) => {
+        const card = e.target.closest("[data-budget-id]");
+        if (!card) return;
+        selectBudget(card.getAttribute("data-budget-id"));
+      });
+    }
+
     document.getElementById("btn-reset").addEventListener("click", () => {
       if (!confirm("清空当前会话（发票、问答、草稿）？")) return;
       session = emptySession();
@@ -839,9 +870,169 @@
     });
   }
 
+  function selectBudget(id) {
+    const b = approvedBudgets.find((x) => x.instanceId === id || x.instanceCode === id);
+    if (!b) return;
+    session.selectedBudgetId = b.instanceId;
+    session.answers.costCenter = b.project || b.title || "";
+    session.answers.selectedBudgetId = b.instanceId;
+    session.answers.selectedBudget = {
+      instanceId: b.instanceId,
+      approvalName: b.approvalName,
+      project: b.project,
+      title: b.title,
+      totalAmount: b.totalAmount,
+      subjects: b.subjects || [],
+    };
+    if (b.project) session.answers.purchaseProject = b.project;
+    save();
+    renderBudgets();
+    showToast("已选择预算：" + (b.project || b.title || ""));
+  }
+
+  function renderBudgets() {
+    const box = document.getElementById("budget-picker");
+    const grid = document.getElementById("budget-grid");
+    const hint = document.getElementById("budget-picker-hint");
+    const pill = document.getElementById("budget-count-pill");
+    if (!box || !grid) return;
+    box.hidden = false;
+    if (!authUser) {
+      if (pill) pill.textContent = "0";
+      if (hint) hint.textContent = "用飞书登录后，这里会列出你已通过的立项 / 变更预算，点选即可带进问答。";
+      grid.innerHTML = `<a class="btn btn-primary" href="${esc(loginHref())}">用飞书登录</a>`;
+      return;
+    }
+    if (pill) pill.textContent = String(approvedBudgets.length);
+    if (!approvedBudgets.length) {
+      if (hint) hint.textContent = "没有已通过的立项或变更预算，问答时仍可手填项目。";
+      grid.innerHTML = `<p class="budget-empty">暂无已通过的预算</p>`;
+      return;
+    }
+    if (hint) hint.textContent = "点选一条已通过的预算，问答会自动带上项目，不必再手填。";
+    grid.innerHTML = approvedBudgets
+      .map((b) => {
+        const selected = session.selectedBudgetId === b.instanceId;
+        const amt = b.totalAmount != null ? formatMoney(b.totalAmount) : "";
+        const subjects = (b.subjects || [])
+          .map((s) => s.name)
+          .filter(Boolean)
+          .slice(0, 4)
+          .join("、");
+        return `<button type="button" class="budget-card${selected ? " is-selected" : ""}" data-budget-id="${esc(b.instanceId)}">
+        <span class="budget-card-kind">${esc(b.approvalName || "")}</span>
+        <strong class="budget-card-title">${esc(b.project || b.title || "未命名项目")}</strong>
+        <span class="budget-card-meta">${esc([amt, subjects, b.startTime].filter(Boolean).join(" · "))}</span>
+      </button>`;
+      })
+      .join("");
+  }
+
+  function renderAuth() {
+    const loginBtn = document.getElementById("btn-feishu-login");
+    const userEl = document.getElementById("auth-user");
+    const nameEl = document.getElementById("auth-name");
+    const av = document.getElementById("auth-avatar");
+    if (authUser) {
+      if (loginBtn) loginBtn.hidden = true;
+      if (userEl) userEl.hidden = false;
+      if (nameEl) nameEl.textContent = authUser.name || "飞书用户";
+      if (av) {
+        if (authUser.avatar) {
+          av.src = authUser.avatar;
+          av.hidden = false;
+        } else {
+          av.removeAttribute("src");
+          av.hidden = true;
+        }
+      }
+    } else {
+      if (loginBtn) {
+        loginBtn.hidden = false;
+        loginBtn.href = loginHref();
+      }
+      if (userEl) userEl.hidden = true;
+    }
+  }
+
+  async function refreshAuth() {
+    const loginBtn = document.getElementById("btn-feishu-login");
+    if (loginBtn) loginBtn.href = loginHref();
+    try {
+      const res = await fetch(apiBase() + "/api/auth/me", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = await res.json();
+      authUser = data && data.loggedIn ? data.user : null;
+    } catch (e) {
+      authUser = null;
+    }
+    renderAuth();
+    if (authUser) {
+      try {
+        const res = await fetch(apiBase() + "/api/budgets", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const data = await res.json();
+        approvedBudgets = data && Array.isArray(data.budgets) ? data.budgets : [];
+        window.__approvedBudgets = approvedBudgets;
+        if (data && data.error && !approvedBudgets.length) {
+          const hint = document.getElementById("budget-picker-hint");
+          if (hint) hint.textContent = data.error;
+        }
+      } catch (e) {
+        approvedBudgets = [];
+        window.__approvedBudgets = [];
+      }
+    } else {
+      approvedBudgets = [];
+      window.__approvedBudgets = [];
+    }
+    renderBudgets();
+  }
+
+  async function logout() {
+    try {
+      await fetch(apiBase() + "/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (e) {}
+    authUser = null;
+    approvedBudgets = [];
+    window.__approvedBudgets = [];
+    renderAuth();
+    renderBudgets();
+    showToast("已退出飞书登录");
+  }
+
+  function consumeAuthQuery() {
+    const params = new URLSearchParams(location.search);
+    let dirty = false;
+    if (params.get("logged_in") === "1") {
+      showToast("飞书登录成功");
+      params.delete("logged_in");
+      dirty = true;
+    }
+    const authErr = params.get("auth_error");
+    if (authErr) {
+      showToast("飞书登录失败：" + authErr);
+      params.delete("auth_error");
+      dirty = true;
+    }
+    if (dirty) {
+      const q = params.toString();
+      history.replaceState({}, "", location.pathname + (q ? "?" + q : "") + location.hash);
+    }
+  }
+
   function init() {
     load();
     bind();
+    consumeAuthQuery();
+    refreshAuth();
     // restore stage
     const stage = session.stage || "upload";
     if (stage === "interview" && !okInvoices().length) session.stage = "upload";

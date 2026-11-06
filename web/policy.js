@@ -168,7 +168,17 @@
         id: "costCenter",
         text: "费用归属哪个项目 / 成本中心？",
         hint: hasPurchase ? "采购类建议写清项目名" : "没有可写「日常运营」",
-        chips: ["日常运营", "销售项目", "研发项目", "市场活动", "待定"],
+        chips: (function () {
+          const fromBudgets = [];
+          (global.__approvedBudgets || []).forEach(function (b) {
+            const label = (b && (b.project || b.title)) || "";
+            if (label && fromBudgets.indexOf(label) === -1) fromBudgets.push(label);
+          });
+          ["日常运营", "销售项目", "研发项目", "市场活动", "待定"].forEach(function (c) {
+            if (fromBudgets.indexOf(c) === -1) fromBudgets.push(c);
+          });
+          return fromBudgets;
+        })(),
         input: "chips+text",
         required: hasPurchase || Boolean(policy.categories.purchase.requireProject && hasPurchase),
       });

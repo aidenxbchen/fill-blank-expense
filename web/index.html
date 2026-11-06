@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>填空报销 · 丢发票就问完</title>
-  <link rel="stylesheet" href="./styles.css?v=20261105c" />
+  <link rel="stylesheet" href="./styles.css?v=20261106a" />
 </head>
 <body class="delight-body">
   <header class="app-header">
@@ -17,6 +17,14 @@
         </div>
       </div>
       <div class="header-actions">
+        <div class="auth-box" id="auth-box">
+          <a class="btn btn-primary" id="btn-feishu-login" href="/api/auth/feishu/login">用飞书登录</a>
+          <div class="auth-user" id="auth-user" hidden>
+            <img class="auth-avatar" id="auth-avatar" alt="" hidden />
+            <span id="auth-name"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-logout">退出</button>
+          </div>
+        </div>
         <a class="btn btn-ghost" href="./classic/index.html" title="旧版按场景填空">经典填空</a>
         <button type="button" class="btn btn-ghost" id="btn-reset">清空会话</button>
       </div>
@@ -39,6 +47,14 @@
         <h2 class="hero-title">把发票全丢进来</h2>
         <p class="hero-sub">一次多张 PDF / 图片。我们按团队报销规范一句句问你，然后生成可编辑草稿，确认后提交飞书报销（当前为 stub）。</p>
       </div>
+      <section class="budget-picker panel" id="budget-picker">
+        <div class="panel-head-row">
+          <h2>已通过的预算</h2>
+          <span class="pill" id="budget-count-pill">0</span>
+        </div>
+        <p class="section-hint" id="budget-picker-hint">用飞书登录后，点选你已通过的立项 / 变更，问答会自动带上项目。</p>
+        <div class="budget-grid" id="budget-grid"></div>
+      </section>
       <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="拖拽或点击上传发票">
         <div class="dropzone-inner">
           <div class="dropzone-icon" aria-hidden="true">📎</div>
@@ -131,8 +147,8 @@
 
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="./ocr-bridge.js?v=20261105c"></script>
-  <script src="./policy.js?v=20261105c"></script>
-  <script src="./app.js?v=20261105c"></script>
+  <script src="./ocr-bridge.js?v=20261106a"></script>
+  <script src="./policy.js?v=20261106a"></script>
+  <script src="./app.js?v=20261106a"></script>
 </body>
 </html>

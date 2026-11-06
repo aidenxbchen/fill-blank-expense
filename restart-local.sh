@@ -7,6 +7,12 @@ export http_proxy="${http_proxy:-http://127.0.0.1:7897}"
 export HTTPS_PROXY="${HTTPS_PROXY:-$https_proxy}"
 export HTTP_PROXY="${HTTP_PROXY:-$http_proxy}"
 ROOT="$HOME/Code/fill-blank-expense"
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
 PY="$HOME/anaconda3/bin/python3"
 OLLAMA="$HOME/opt/ollama/ollama"
 

@@ -28,6 +28,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from feishu_oauth import (
+    handle_budgets,
+    handle_callback,
+    handle_login,
+    handle_logout,
+    handle_me,
+    load_dotenv as load_feishu_dotenv,
+)
+
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("OCR_PORT", "18790"))
 
@@ -546,13 +555,22 @@ class Handler(BaseHTTPRequestHandler):
             "Access-Control-Allow-Headers",
             "Content-Type, Accept",
         )
+        self.send_header("Access-Control-Allow-Credentials", "true")
         self.send_header("Access-Control-Max-Age", "86400")
         self.send_header("Vary", "Origin")
 
-    def _json(self, status: int, obj: dict[str, Any]) -> None:
+    def _json(
+        self,
+        status: int,
+        obj: dict[str, Any],
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self._cors()
+        if extra_headers:
+            for key, value in extra_headers.items():
+                self.send_header(key, value)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -564,7 +582,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        qs = parse_qs(parsed.query)
+        if path == "/api/auth/feishu/login":
+            handle_login(self)
+            return
+        if path == "/api/auth/feishu/callback":
+            handle_callback(self, qs)
+            return
+        if path == "/api/auth/me":
+            handle_me(self)
+            return
+        if path == "/api/budgets":
+            handle_budgets(self)
+            return
         if path == "/api/health":
             reachable = probe_ollama()
             self._json(
@@ -583,7 +615,16 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "service": "fill-blank-expense OCR bridge",
-                    "endpoints": ["GET /api/health", "POST /api/parse-invoice", "POST /api/feishu-expense"],
+                    "endpoints": [
+                        "GET /api/health",
+                        "GET /api/auth/feishu/login",
+                        "GET /api/auth/feishu/callback",
+                        "GET /api/auth/me",
+                        "POST /api/auth/logout",
+                        "GET /api/budgets",
+                        "POST /api/parse-invoice",
+                        "POST /api/feishu-expense",
+                    ],
                 },
             )
             return
@@ -597,6 +638,10 @@ class Handler(BaseHTTPRequestHandler):
         if "fallback" in qs and qs["fallback"] and qs["fallback"][0] == "mock":
             # Still do not invent amounts — document via error that mock is app-side only
             pass
+
+        if path == "/api/auth/logout":
+            handle_logout(self)
+            return
 
         if path == "/api/feishu-expense":
             length = int(self.headers.get("Content-Length") or 0)
@@ -737,6 +782,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    load_feishu_dotenv()
     addr = (HOST, PORT)
     httpd = ThreadingHTTPServer(addr, Handler)
     print(
@@ -744,8 +790,10 @@ def main() -> None:
         f"  model={ollama_model()}\n"
         f"  ollama={ollama_base()}\n"
         f"  GET  /api/health\n"
+        f"  GET  /api/auth/feishu/login | /api/auth/me | /api/budgets\n"
         f"  POST /api/parse-invoice (multipart file=...)\n"
-        f"  POST /api/feishu-expense (JSON stub)",
+        f"  POST /api/feishu-expense (JSON stub)\n"
+        f"  feishu_oauth={'configured' if os.environ.get('FEISHU_APP_ID') else 'missing FEISHU_*'}",
         flush=True,
     )
     try:

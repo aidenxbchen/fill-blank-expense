@@ -34,7 +34,10 @@
 ```
 
 - 前端：http://127.0.0.1:5173
-- OCR：`GET /api/health` · `POST /api/parse-invoice` · `POST /api/feishu-expense`（stub）
+- OCR / API：`GET /api/health` · `POST /api/parse-invoice` · `POST /api/feishu-expense`（stub）
+- 飞书登录：`GET /api/auth/feishu/login` → 回调 `/api/auth/feishu/callback` · `GET /api/auth/me` · `POST /api/auth/logout` · `GET /api/budgets`（当前用户已通过的立项/变更/出差）
+- 在页面点「用飞书登录」，授权后可点选已通过预算，问答会自动带上项目
+- 凭证放仓库根目录 `.env`（见 `.env.example`，不要提交）。需配置重定向 URL `https://baoxiao.xbchen.top/api/auth/feishu/callback`
 - 隧道：`baoxiao.xbchen.top` 的 `/api` → OCR `:18790`，其余 → web `:5173`
 
 ## 报销政策（mock）
