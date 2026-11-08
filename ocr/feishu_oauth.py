@@ -1,7 +1,9 @@
 """Feishu OAuth (user login) and approved-budget listing for fill-blank-expense.
 
-Uses user_access_token to list approvals the current user initiated
-(GET /approval/v4/instances/initiated) and fetch instance details.
+Login still uses user OAuth so we know who is signed in. Budget listing uses
+tenant_access_token to query approved 立项/变更 instances (including ones
+others initiated) and keeps those where the user is initiator or listed in
+项目负责人 / 项目参与人 contact fields.
 Never logs tokens or app secrets.
 """
 
@@ -28,6 +30,8 @@ FEISHU_TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
 FEISHU_USER_INFO_URL = "https://open.feishu.cn/open-apis/authen/v1/user_info"
 FEISHU_INITIATED_URL = "https://open.feishu.cn/open-apis/approval/v4/instances/initiated"
 FEISHU_INSTANCE_URL = "https://open.feishu.cn/open-apis/approval/v4/instances/{instance_id}"
+FEISHU_QUERY_URL = "https://open.feishu.cn/open-apis/approval/v4/instances/query"
+FEISHU_TENANT_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 
 DEFAULT_SCOPES = (
     "approval:instance:read offline_access auth:user.id:read contact:user.base:readonly"
@@ -40,7 +44,8 @@ STATE_TTL_SEC = 600
 SESSION_COOKIE_MAX_AGE = 30 * 24 * 3600
 REFRESH_SKEW_SEC = 120
 
-# ANEVER 审批定义：立项 / 变更 / 出差
+# Primary budget list: 立项 / 变更 only. 出差 is kept separately and must
+# not appear as "已通过的预算".
 BUDGET_DEFINITIONS = [
     {
         "approval_code": "5FEA33D4-2FC3-4B95-BD5B-37B6F31DD35F",
@@ -54,13 +59,30 @@ BUDGET_DEFINITIONS = [
         "name": "项目预算变更申请",
         "kind": "change",
     },
-    {
-        "approval_code": "87FAB2C0-D271-4ACF-9344-E7608532FA5C",
-        "numeric_id": "7158358316662112257",
-        "name": "出差申请",
-        "kind": "travel",
-    },
 ]
+
+# Optional later; never included in GET /api/budgets.
+TRAVEL_DEFINITION = {
+    "approval_code": "87FAB2C0-D271-4ACF-9344-E7608532FA5C",
+    "numeric_id": "7158358316662112257",
+    "name": "出差申请",
+    "kind": "travel",
+}
+
+KIND_LABELS = {
+    "init": "立项",
+    "change": "变更",
+    "travel": "出差",
+}
+
+SCOPE_FIELD_NAMES = {"项目参与人", "项目负责人"}
+
+MISSING_SCOPE_CODES = {99991672, 99991663, 99991668, 99991679}
+MISSING_SCOPE_WARNING = (
+    "管理员请在飞书开放平台为 baoxiao 应用开通应用身份权限 "
+    "approval:approval.list:readonly 和 approval:approval:readonly，"
+    "并创建版本发布后再试。当前无法列出预算。"
+)
 
 APPROVED_STATUSES = {
     "2",
@@ -78,6 +100,8 @@ APPROVED_STATUSES = {
 _lock = threading.Lock()
 _oauth_states: dict[str, float] = {}
 _option_map: dict[str, str] | None = None
+_tenant_token = ""
+_tenant_token_expires_at = 0.0
 
 
 class FeishuAPIError(RuntimeError):
@@ -605,9 +629,247 @@ def list_initiated(access_token: str, definition_code: str | None = None) -> lis
     return items
 
 
+def is_missing_scope(err: FeishuAPIError) -> bool:
+    code = err.feishu_code
+    try:
+        code_int = int(code) if code is not None else None
+    except (TypeError, ValueError):
+        code_int = None
+    if code_int in MISSING_SCOPE_CODES:
+        return True
+    msg = " ".join(
+        str(x)
+        for x in (
+            err,
+            (err.payload or {}).get("msg"),
+            (err.payload or {}).get("error"),
+            code,
+        )
+        if x
+    )
+    if "99991672" in msg:
+        return True
+    low = msg.lower()
+    return "scope" in low and ("denied" in low or "required" in low or "access denied" in low)
+
+
+def get_tenant_access_token() -> str:
+    global _tenant_token, _tenant_token_expires_at
+    with _lock:
+        if _tenant_token and _tenant_token_expires_at - time.time() > REFRESH_SKEW_SEC:
+            return _tenant_token
+    ok, err = config_ready()
+    if not ok:
+        raise FeishuAPIError(500, {"error": err})
+    obj = http_json(
+        "POST",
+        FEISHU_TENANT_TOKEN_URL,
+        payload={"app_id": app_id(), "app_secret": app_secret()},
+    )
+    token = str(obj.get("tenant_access_token") or "")
+    if obj.get("code") not in (0, None) or not token:
+        raise FeishuAPIError(400, obj if obj else {"error": "获取 tenant_access_token 失败"})
+    expire = int(obj.get("expire") or 7200)
+    with _lock:
+        _tenant_token = token
+        _tenant_token_expires_at = time.time() + max(expire, 60)
+    return token
+
+
+def extract_contact_ids(value: Any) -> set[str]:
+    """Collect open_id / user_id strings from a contact widget value."""
+    ids: set[str] = set()
+
+    def add(raw: Any) -> None:
+        s = str(raw or "").strip()
+        if s:
+            ids.add(s)
+
+    if value is None or value == "":
+        return ids
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped[:1] in ("{", "["):
+            try:
+                return extract_contact_ids(json.loads(stripped))
+            except json.JSONDecodeError:
+                add(stripped)
+                return ids
+        add(stripped)
+        return ids
+    if isinstance(value, dict):
+        for key in ("open_id", "openId", "user_id", "userId", "id"):
+            if value.get(key) not in (None, ""):
+                add(value.get(key))
+        inner = value.get("value")
+        if inner is not None and inner is not value:
+            ids |= extract_contact_ids(inner)
+        return ids
+    if isinstance(value, list):
+        for item in value:
+            ids |= extract_contact_ids(item)
+        return ids
+    add(value)
+    return ids
+
+
+def collect_scope_ids_from_form(form_raw: Any) -> set[str]:
+    form: Any = form_raw
+    if isinstance(form_raw, str) and form_raw.strip():
+        try:
+            form = json.loads(form_raw)
+        except json.JSONDecodeError:
+            return set()
+    ids: set[str] = set()
+    for widget in iter_widgets(form):
+        name = str(widget.get("name") or "").strip()
+        wtype = str(widget.get("type") or "")
+        if name in SCOPE_FIELD_NAMES or (
+            wtype == "contact" and ("负责人" in name or "参与人" in name)
+        ):
+            ids |= extract_contact_ids(widget.get("value"))
+    return ids
+
+
+def initiator_ids(*sources: Any) -> set[str]:
+    ids: set[str] = set()
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for key in ("open_id", "openId", "user_id", "userId"):
+            val = str(src.get(key) or "").strip()
+            if val:
+                ids.add(val)
+    return ids
+
+
+def logged_in_user_ids(user: dict[str, Any] | None) -> set[str]:
+    return initiator_ids(user or {})
+
+
+def user_in_budget_scope(
+    user_ids: set[str],
+    detail: dict[str, Any] | None,
+    inst_node: dict[str, Any] | None = None,
+) -> bool:
+    """True if the logged-in user initiated the instance or is in scope fields."""
+    if not user_ids:
+        return False
+    if user_ids & initiator_ids(detail or {}, inst_node or {}):
+        return True
+    scope_ids = collect_scope_ids_from_form((detail or {}).get("form"))
+    return bool(user_ids & scope_ids)
+
+
+def _is_time_window_error(err: FeishuAPIError) -> bool:
+    msg = " ".join(
+        str(x)
+        for x in (err, (err.payload or {}).get("msg"), (err.payload or {}).get("error"))
+        if x
+    )
+    keys = (
+        "不得大于 30",
+        "不得大于30",
+        "大于 30 天",
+        "大于30天",
+        "时间跨度",
+        "time span",
+        "time window",
+        "instance_start_time",
+    )
+    return any(k in msg for k in keys)
+
+
+def _query_instances_page(
+    token: str,
+    approval_code: str,
+    page_token: str = "",
+    extra_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    query: dict[str, Any] = {"page_size": 100, "user_id_type": "open_id"}
+    if page_token:
+        query["page_token"] = page_token
+    url = FEISHU_QUERY_URL + "?" + urllib.parse.urlencode(query)
+    body: dict[str, Any] = {
+        "approval_code": approval_code,
+        "instance_status": "APPROVED",
+        "locale": "zh-CN",
+    }
+    if extra_body:
+        body.update(extra_body)
+    obj = http_json("POST", url, token=token, payload=body)
+    if obj.get("code") not in (0, None):
+        raise FeishuAPIError(400, obj)
+    return obj.get("data") if isinstance(obj.get("data"), dict) else {}
+
+
+def _paginate_query(
+    token: str,
+    approval_code: str,
+    extra_body: dict[str, Any] | None = None,
+    max_pages: int = 50,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    page_token = ""
+    pages = 0
+    while pages < max_pages:
+        pages += 1
+        data = _query_instances_page(token, approval_code, page_token, extra_body)
+        batch = data.get("instance_list") or []
+        if isinstance(batch, list):
+            items.extend(x for x in batch if isinstance(x, dict))
+        if data.get("has_more") and data.get("page_token"):
+            page_token = str(data.get("page_token"))
+            continue
+        break
+    return items
+
+
+def _query_approved_in_chunks(token: str, approval_code: str, years: int = 2) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    now_ms = int(time.time() * 1000)
+    window_ms = 30 * 24 * 3600 * 1000
+    start_ms = now_ms - years * 365 * 24 * 3600 * 1000
+    cursor = start_ms
+    while cursor <= now_ms:
+        end = min(cursor + window_ms - 1, now_ms)
+        batch = _paginate_query(
+            token,
+            approval_code,
+            {
+                "instance_start_time_from": str(cursor),
+                "instance_start_time_to": str(end),
+            },
+            max_pages=20,
+        )
+        for item in batch:
+            inst = item.get("instance") if isinstance(item.get("instance"), dict) else {}
+            code = str(inst.get("code") or item.get("instance_code") or "")
+            if code and code in seen:
+                continue
+            if code:
+                seen.add(code)
+            items.append(item)
+        cursor = end + 1
+    return items
+
+
+def query_approved_instances(token: str, approval_code: str) -> list[dict[str, Any]]:
+    """List approved instances of one approval definition via tenant query API."""
+    try:
+        return _paginate_query(token, approval_code)
+    except FeishuAPIError as e:
+        if is_missing_scope(e):
+            raise
+        if _is_time_window_error(e):
+            return _query_approved_in_chunks(token, approval_code)
+        raise
+
+
 def fetch_instance(access_token: str, instance_id: str) -> dict[str, Any]:
     url = FEISHU_INSTANCE_URL.format(instance_id=urllib.parse.quote(instance_id, safe=""))
-    url += "?locale=zh-CN"
+    url += "?locale=zh-CN&user_id_type=open_id"
     obj = http_json("GET", url, token=access_token)
     if obj.get("code") not in (0, None):
         raise FeishuAPIError(400, obj)
@@ -638,7 +900,6 @@ def _friendly_item(inst: dict[str, Any], detail: dict[str, Any] | None) -> dict[
     project = (
         fields.get("项目名称")
         or summaries.get("项目名称")
-        or fields.get("出差事由")
         or fields.get("事由")
         or ""
     )
@@ -677,87 +938,91 @@ def _friendly_item(inst: dict[str, Any], detail: dict[str, Any] | None) -> dict[
         "startTime": start,
         "totalAmount": total,
         "subjects": subjects,
+        "kindLabel": KIND_LABELS.get(kind, name or ""),
         "description": str(
             fields.get("项目描述")
             or fields.get("预算变更说明")
-            or fields.get("出差事由")
             or ""
         ),
         "fields": fields,
     }
 
 
-def list_approved_budgets(access_token: str) -> tuple[list[dict[str, Any]], str]:
-    """Return (budgets, warning). Empty list is OK."""
-    warning = ""
+def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, Any]], str]:
+    """Return approved 立项/变更 budgets in the logged-in user's scope.
+
+    Uses tenant_access_token + instances/query. Never falls back to the
+    user-initiated list (which mixed in 出差申请).
+    """
+    user_ids = logged_in_user_ids(user)
+    if not user_ids:
+        return [], "无法识别登录用户的飞书身份，请重新用飞书登录"
+    try:
+        token = get_tenant_access_token()
+    except FeishuAPIError as e:
+        if is_missing_scope(e):
+            return [], MISSING_SCOPE_WARNING
+        return [], f"读取预算失败: {e}"
+
     collected: list[dict[str, Any]] = []
     seen: set[str] = set()
-    last_err = ""
-    for defn in BUDGET_DEFINITIONS:
-        try:
-            batch = list_initiated(access_token, defn["approval_code"])
-        except FeishuAPIError as e:
-            last_err = str(e)
-            sys.stderr.write(f"initiated list failed for {defn['name']}: {e}\n")
-            continue
-        for inst in batch:
-            code = str(inst.get("definition_code") or "")
-            name = str(inst.get("definition_name") or "")
-            if code and code != defn["approval_code"] and name and name != defn["name"]:
-                continue
-            if not is_approved_status(inst.get("instance_status")):
-                # Some tenants only expose status on instance details
-                if str(inst.get("instance_status") or "") not in ("", "None"):
-                    continue
-            instance_code = str(inst.get("instance_code") or "")
-            if not instance_code or instance_code in seen:
-                continue
-            detail = None
+    try:
+        for defn in BUDGET_DEFINITIONS:
             try:
-                detail = fetch_instance(access_token, instance_code)
+                batch = query_approved_instances(token, defn["approval_code"])
             except FeishuAPIError as e:
-                sys.stderr.write(f"instance detail failed {instance_code}: {e}\n")
-            status = inst.get("instance_status")
-            if detail and detail.get("status") is not None:
-                status = detail.get("status")
-            if not is_approved_status(status):
-                continue
-            seen.add(instance_code)
-            collected.append(_friendly_item(inst, detail))
-    if not collected and last_err:
-        # Fallback: unfiltered initiated list (filter by known codes/names)
-        try:
-            batch = list_initiated(access_token, None)
-            known_codes = {d["approval_code"] for d in BUDGET_DEFINITIONS}
-            known_names = {d["name"] for d in BUDGET_DEFINITIONS}
-            for inst in batch:
-                code = str(inst.get("definition_code") or "")
-                name = str(inst.get("definition_name") or "")
-                if code not in known_codes and name not in known_names:
-                    continue
-                if not is_approved_status(inst.get("instance_status")):
-                    if str(inst.get("instance_status") or "") not in ("", "None"):
-                        continue
-                instance_code = str(inst.get("instance_code") or "")
+                if is_missing_scope(e):
+                    return [], MISSING_SCOPE_WARNING
+                raise
+            for item in batch:
+                inst_node = item.get("instance") if isinstance(item.get("instance"), dict) else item
+                approval_node = item.get("approval") if isinstance(item.get("approval"), dict) else {}
+                instance_code = str(
+                    inst_node.get("code")
+                    or inst_node.get("instance_code")
+                    or item.get("instance_code")
+                    or ""
+                )
                 if not instance_code or instance_code in seen:
                     continue
-                detail = None
                 try:
-                    detail = fetch_instance(access_token, instance_code)
-                except FeishuAPIError:
-                    pass
-                status = (detail or {}).get("status") or inst.get("instance_status")
+                    detail = fetch_instance(token, instance_code)
+                except FeishuAPIError as e:
+                    if is_missing_scope(e):
+                        return [], MISSING_SCOPE_WARNING
+                    sys.stderr.write(f"instance detail failed {instance_code}: {e}\n")
+                    continue
+                status = detail.get("status") if detail.get("status") is not None else inst_node.get("status")
                 if not is_approved_status(status):
                     continue
+                if not user_in_budget_scope(user_ids, detail, inst_node):
+                    continue
                 seen.add(instance_code)
+                inst = {
+                    "instance_code": instance_code,
+                    "definition_code": (
+                        approval_node.get("code")
+                        or detail.get("approval_code")
+                        or defn["approval_code"]
+                    ),
+                    "definition_name": (
+                        approval_node.get("name")
+                        or detail.get("approval_name")
+                        or defn["name"]
+                    ),
+                    "instance_status": status,
+                    "serial_id": inst_node.get("serial_id") or detail.get("serial_number"),
+                }
                 collected.append(_friendly_item(inst, detail))
-            if collected:
-                last_err = ""
-        except FeishuAPIError as e:
-            last_err = str(e)
-    if last_err and not collected:
-        warning = last_err
-    return collected, warning
+    except FeishuAPIError as e:
+        if is_missing_scope(e):
+            return [], MISSING_SCOPE_WARNING
+        return [], f"读取预算失败: {e}"
+    collected.sort(
+        key=lambda b: (str(b.get("startTime") or ""), str(b.get("project") or "")),
+        reverse=True,
+    )
+    return collected, ""
 
 
 def cookie_from_headers(headers: Any) -> str:
@@ -911,9 +1176,9 @@ def handle_budgets(handler: Any) -> None:
             extra_headers={"Set-Cookie": clear_set_cookie(request_is_https(handler))},
         )
         return
-    token = sess.get("access_token") or ""
+    user = sess.get("user") if isinstance(sess.get("user"), dict) else {}
     try:
-        budgets, warning = list_approved_budgets(token)
+        budgets, warning = list_approved_budgets(user)
     except FeishuAPIError as e:
         handler._json(
             200,
@@ -927,7 +1192,7 @@ def handle_budgets(handler: Any) -> None:
         )
         return
     body: dict[str, Any] = {
-        "ok": True,
+        "ok": not warning,
         "loggedIn": True,
         "budgets": budgets,
         "user": public_user(sess),
@@ -935,4 +1200,7 @@ def handle_budgets(handler: Any) -> None:
     if warning:
         body["warning"] = warning
         body["error"] = warning
+        body["ok"] = False
+    else:
+        body["ok"] = True
     handler._json(200, body)

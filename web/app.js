@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261106a";
+  const ASSET_V = "20261108a";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -919,8 +919,9 @@
           .filter(Boolean)
           .slice(0, 4)
           .join("、");
+        const kindLabel = b.kindLabel || ({ init: "立项", change: "变更" }[b.kind] || b.approvalName || "");
         return `<button type="button" class="budget-card${selected ? " is-selected" : ""}" data-budget-id="${esc(b.instanceId)}">
-        <span class="budget-card-kind">${esc(b.approvalName || "")}</span>
+        <span class="budget-card-kind">${esc(kindLabel)}</span>
         <strong class="budget-card-title">${esc(b.project || b.title || "未命名项目")}</strong>
         <span class="budget-card-meta">${esc([amt, subjects, b.startTime].filter(Boolean).join(" · "))}</span>
       </button>`;
