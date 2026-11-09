@@ -62,6 +62,13 @@ fi
 curl -sS http://127.0.0.1:18790/api/health; echo
 curl -sS -o /dev/null -w "web=%{http_code}\n" http://127.0.0.1:5173/
 
+# Keep the foreground supervisor alive when invoked by Turnstone's service manager.
+# Ordinary Terminal usage still returns after the health check.
+if [[ "${1:-}" == "--managed" ]]; then
+  trap 'kill $(jobs -p) 2>/dev/null || true; exit 0' TERM INT
+  wait
+fi
+
 # Public tunnel: https://baoxiao.xbchen.top via appointment tunnel (LaunchAgent)
 # Config: ~/.cloudflared/config.yml  (/api → :18790, else → :5173; xbchen.top → :5001)
 # Managed by: ~/Library/LaunchAgents/com.xbchen.cloudflared.plist
