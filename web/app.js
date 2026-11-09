@@ -403,6 +403,11 @@
     el.classList.add("is-visible");
     clearTimeout(showToast._t);
     showToast._t = setTimeout(() => el.classList.remove("is-visible"), ms || 2800);
+    // Login-wall toasts should not leave a stuck focus ring on the trigger.
+    const active = document.activeElement;
+    if (active && active !== document.body && typeof active.blur === "function" && active.closest(".header-actions, .auth-box, .workspace-menu")) {
+      active.blur();
+    }
   }
 
   async function parseInvoice(file, opts) {
