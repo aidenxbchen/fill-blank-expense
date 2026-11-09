@@ -86,18 +86,126 @@ input[type="password"] { letter-spacing: .1em; }
 .section-hint { font-size: 13px; margin-bottom: 16px; max-width: 64em; }
 .muted-sm { font-size: 12px; }
 
-/* Soft cool mesh ambience — luminous gray-blue, no purple sludge */
+/* Crafted cool ambience — mesh + grain + micro geometry (no dual chrome, no purple sludge) */
 .ambient {
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
+  overflow: hidden;
+  isolation: isolate;
+}
+.ambient-mesh,
+.ambient-grid,
+.ambient-rings,
+.ambient-frame,
+.ambient-mark,
+.ambient-grain,
+.ambient-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ambient-mesh {
   background:
-    radial-gradient(ellipse 70% 48% at 8% -8%, rgba(170, 205, 255, 0.42), transparent 55%),
-    radial-gradient(ellipse 55% 42% at 92% 4%, rgba(190, 215, 245, 0.32), transparent 50%),
-    radial-gradient(ellipse 48% 36% at 48% 108%, rgba(200, 220, 245, 0.38), transparent 55%),
-    radial-gradient(ellipse 30% 24% at 70% 40%, rgba(255, 255, 255, 0.35), transparent 60%),
-    linear-gradient(165deg, #e6edf6 0%, #e9eff6 42%, #e4ebf4 100%);
+    radial-gradient(ellipse 72% 50% at 6% -10%, rgba(168, 204, 255, 0.48), transparent 58%),
+    radial-gradient(ellipse 58% 44% at 96% 0%, rgba(186, 214, 246, 0.36), transparent 52%),
+    radial-gradient(ellipse 50% 38% at 50% 112%, rgba(198, 220, 246, 0.42), transparent 56%),
+    radial-gradient(ellipse 34% 28% at 72% 38%, rgba(255, 255, 255, 0.42), transparent 62%),
+    radial-gradient(ellipse 28% 22% at 18% 58%, rgba(210, 226, 248, 0.28), transparent 65%),
+    linear-gradient(165deg, #e5ecf5 0%, #e9eff7 40%, #e3eaf3 100%);
+}
+.ambient-grid {
+  opacity: 0.055;
+  background-image:
+    linear-gradient(rgba(24, 45, 73, 0.55) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(24, 45, 73, 0.55) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, #000 20%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, #000 20%, transparent 78%);
+}
+.ambient-rings::before,
+.ambient-rings::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(31, 86, 201, 0.10);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.ambient-rings::before {
+  width: min(52vw, 520px);
+  height: min(52vw, 520px);
+  top: -12%;
+  right: -8%;
+  border-color: rgba(31, 86, 201, 0.12);
+}
+.ambient-rings::after {
+  width: min(38vw, 360px);
+  height: min(38vw, 360px);
+  bottom: -6%;
+  left: -6%;
+  border-color: rgba(24, 45, 73, 0.08);
+}
+.ambient-frame {
+  margin: 18px;
+  inset: 18px;
+  border: 1px solid rgba(24, 45, 73, 0.06);
+  border-radius: 28px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.ambient-frame::before,
+.ambient-frame::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-color: rgba(31, 86, 201, 0.22);
+  border-style: solid;
+}
+.ambient-frame::before {
+  top: 10px;
+  left: 10px;
+  border-width: 1.5px 0 0 1.5px;
+}
+.ambient-frame::after {
+  right: 10px;
+  bottom: 10px;
+  border-width: 0 1.5px 1.5px 0;
+}
+.ambient-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(96px, 22vw, 280px);
+  font-weight: 650;
+  letter-spacing: -0.06em;
+  color: rgba(31, 86, 201, 0.045);
+  user-select: none;
+  transform: translateY(-4%);
+  white-space: nowrap;
+}
+.ambient-grain {
+  opacity: 0.09;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+.ambient-vignette {
+  background:
+    radial-gradient(ellipse 85% 75% at 50% 42%, transparent 45%, rgba(120, 150, 190, 0.10) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 18%, transparent 78%, rgba(150, 175, 210, 0.12));
+}
+
+@media (max-width: 640px) {
+  .ambient-grid { opacity: 0.035; background-size: 44px 44px; }
+  .ambient-frame { margin: 10px; inset: 10px; border-radius: 20px; }
+  .ambient-mark { font-size: clamp(72px, 28vw, 140px); opacity: 0.9; }
+  .ambient-rings::before { width: 70vw; height: 70vw; }
+  .ambient-rings::after { width: 48vw; height: 48vw; }
 }
 
 .skip-link {
