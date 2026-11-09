@@ -2259,3 +2259,9 @@ button {
     justify-content: flex-end;
   }
 }
+
+/* Native purchase confirmation form */
+#purchase-form select, #purchase-form textarea { font: inherit; border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 8px; background: var(--surface, white); color: inherit; width: 100%; }
+#purchase-form .sheet-table { min-width: 850px; }
+#purchase-form td input, #purchase-form td select { min-width: 130px; }
+#purchase-error { color: #a83c27; }

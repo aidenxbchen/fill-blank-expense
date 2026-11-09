@@ -16,6 +16,31 @@ fi
 PY="$HOME/anaconda3/bin/python3"
 OLLAMA="$HOME/opt/ollama/ollama"
 
+# Explicit reload; never kill another application's listener on these ports.
+if [[ "${1:-}" == "--restart" ]]; then
+  for spec in "18790:$ROOT/ocr/server.py" "5173:$ROOT/web/serve.py"; do
+    port="${spec%%:*}"
+    script="${spec#*:}"
+    pids=$(lsof -t -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+    for pid in $pids; do
+      process_command=$(ps -p "$pid" -o command=)
+      if [[ "$process_command" != *"$script"* ]]; then
+        echo "Refusing to stop unrelated listener on port $port (pid=$pid)" >&2
+        exit 1
+      fi
+      kill "$pid"
+      for attempt in {1..30}; do
+        if ! kill -0 "$pid" 2>/dev/null; then break; fi
+        sleep 0.1
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        echo "Service did not stop on port $port; aborting restart" >&2
+        exit 1
+      fi
+    done
+  done
+fi
+
 if ! lsof -nP -iTCP:11434 -sTCP:LISTEN >/dev/null 2>&1; then
   nohup "$OLLAMA" serve > /tmp/ollama-serve.log 2>&1 &
   echo "started ollama pid=$!"; sleep 2

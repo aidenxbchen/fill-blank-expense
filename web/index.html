@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>填空报销 · 丢发票就问完</title>
-  <link rel="stylesheet" href="./styles.css?v=20261109a" />
+  <link rel="stylesheet" href="./styles.css?v=20261109purchase" />
 </head>
 <body class="delight-body">
   <header class="app-header">
@@ -145,12 +145,12 @@
     <!-- STAGE: submit -->
     <section class="stage-panel" id="stage-submit" data-stage-panel="submit" hidden>
       <div class="submit-card panel">
-        <h2>提交飞书报销</h2>
-        <p class="section-hint">当前为<strong>明确 stub</strong>：会调用 <code>POST /api/feishu-expense</code>（失败则用前端 stub），展示成功 payload，<em>不会</em>真实创建飞书审批。</p>
+        <h2>发起飞书采购申请</h2>
+        <p class="section-hint">确认后将以当前飞书登录用户发起「采购申请」。请核对识别汇总表、采购方式、项目、明细和关联审批。</p>
         <div class="submit-preview" id="submit-preview"></div>
         <div class="submit-actions">
           <button type="button" class="btn btn-ghost" id="btn-back-draft">← 返回草稿</button>
-          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit">提交飞书报销</button>
+          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit">发起飞书采购申请</button>
         </div>
       </div>
     </section>
@@ -159,10 +159,10 @@
   <div class="modal-backdrop" id="result-modal" hidden role="dialog" aria-modal="true" aria-labelledby="result-title">
     <div class="modal">
       <div class="modal-header">
-        <h3 id="result-title">飞书提交结果（stub）</h3>
+        <h3 id="result-title">飞书采购申请结果</h3>
         <button type="button" class="btn btn-ghost btn-sm" id="btn-close-result">关闭</button>
       </div>
-      <div class="modal-body"><pre id="result-payload"></pre></div>
+      <div class="modal-body"><p><a id="result-link" hidden target="_blank" rel="noopener noreferrer">在飞书查看采购申请</a></p><pre id="result-payload"></pre></div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" id="btn-copy-payload">复制 payload</button>
         <button type="button" class="btn btn-primary" id="btn-close-result-2">完成</button>
@@ -172,8 +172,8 @@
 
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="./ocr-bridge.js?v=20261109a"></script>
-  <script src="./policy.js?v=20261109a"></script>
-  <script src="./app.js?v=20261109a"></script>
+  <script src="./ocr-bridge.js?v=20261109purchase"></script>
+  <script src="./policy.js?v=20261109purchase"></script>
+  <script src="./app.js?v=20261109purchase"></script>
 </body>
 </html>

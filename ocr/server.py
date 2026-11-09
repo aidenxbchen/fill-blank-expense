@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import base64
 import json
-import time
 import os
 import sys
 from email import policy
@@ -29,6 +28,7 @@ from feishu_oauth import (
     handle_me,
     load_dotenv as load_feishu_dotenv,
 )
+from feishu_purchase import handle_purchase
 from invoice_extract import (
     ollama_base,
     ollama_model,
@@ -193,6 +193,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/auth/me":
             handle_me(self)
             return
+        if path == "/api/feishu-purchase-definition":
+            handle_purchase(self)
+            return
         if path == "/api/budgets":
             handle_budgets(self)
             return
@@ -223,6 +226,7 @@ class Handler(BaseHTTPRequestHandler):
                         "GET /api/auth/me",
                         "POST /api/auth/logout",
                         "GET /api/budgets",
+                        "GET /api/feishu-purchase-definition",
                         "POST /api/parse-invoice",
                         "POST /api/feishu-expense",
                     ],
@@ -243,24 +247,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/feishu-expense":
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length) if length > 0 else b"{}"
             try:
-                body = json.loads(raw.decode("utf-8") or "{}")
+                length = int(self.headers.get("Content-Length") or 0)
+                if length <= 0 or length > 2 * 1024 * 1024:
+                    self._json(400, {"ok": False, "error": "提交数据为空或超过 2 MB"})
+                    return
+                raw = self.rfile.read(length)
+                body = json.loads(raw.decode("utf-8"))
             except Exception as e:
                 self._json(400, {"ok": False, "error": f"invalid JSON: {e}"})
                 return
-            approval_id = "STUB-FS-" + str(int(time.time()))
-            self._json(
-                200,
-                {
-                    "ok": True,
-                    "stub": True,
-                    "message": "Feishu expense stub accepted; no real approval created",
-                    "feishuApprovalId": approval_id,
-                    "echo": body,
-                },
-            )
+            handle_purchase(self, body)
             return
 
         if path != "/api/parse-invoice":
@@ -346,7 +343,7 @@ def main() -> None:
         f"  GET  /api/health\n"
         f"  GET  /api/auth/feishu/login | /api/auth/me | /api/budgets\n"
         f"  POST /api/parse-invoice (multipart file=...)\n"
-        f"  POST /api/feishu-expense (JSON stub)\n"
+        f"  POST /api/feishu-expense (native purchase approval)\n"
         f"  feishu_oauth={'configured' if os.environ.get('FEISHU_APP_ID') else 'missing FEISHU_*'}",
         flush=True,
     )

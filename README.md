@@ -11,7 +11,7 @@
 3. **汇总表**：识别完成后出现可编辑汇总表（日期 / 商户 / 发票号码 / 金额 / 类别）。用户确认或手改后，**以表格为准**进入问答和草稿。
 4. **问答**：按内置 `POLICY`（典型中国初创规范）**一次只问一个问题**（事由、项目/成本中心、谁吃了、有无酒水、对公/私人、缺日期、类别冲突、无票现金等）。Chips + 自由输入；进度「还差 N 个问题」。
 5. **草稿**：按类别生成可编辑明细表 + 摘要字段（含发票号码）；可改、可加无票行。
-6. **提交飞书**：按钮调用 `POST /api/feishu-expense`（**明确 stub**，弹窗展示 payload；真实飞书审批后续再接）。
+6. **提交飞书**：以当前飞书 OAuth 身份调用原生采购申请 `/instances/initiate`；采购方式、项目、事由和对应明细必填，选中预算写入关联审批。只有飞书返回真实 `instance_code` 才显示成功。详见 [接入与复测](docs/feishu-purchase.md)。
 
 会话落在 `localStorage` 键 `fill-blank-expense:delight:v1`。
 
@@ -22,21 +22,21 @@
 1. 打开 https://baoxiao.xbchen.top 并 **硬刷新**（应看到「把发票全丢进来」英雄区，而不是差旅 Tab）。
 2. 一次拖入 **多张** 发票（可用仓库里的 `test-invoice.pdf` + 任意图片）；等待出现「识别汇总」表。
 3. 在表里核对金额（价税合计）、日期、商户、发票号码，改完点 **确认表格，开始问答**；用 chips 或输入框逐题回答。
-4. 问完后自动进入 **报销草稿**：检查分类表，随便改一行金额，看合计更新。
-5. **确认，去提交飞书** → **提交飞书报销** → 应弹出 stub 成功 payload（含 `feishuApprovalId` / `echo`）。
+4. 问完后自动进入 **报销草稿**：检查分类表；提交所用发票事实以第 3 步识别汇总表为准（含金额、商户、日期和发票号），无票占位行不自动提交。
+5. 先飞书登录并选择已通过的立项 / 变更预算；**确认，去提交飞书** → 选择采购方式、项目，补全科目 / 规格 / 数量等必填明细 → **发起飞书采购申请**。成功显示真实实例 Code 与接口返回的链接；到飞书「我发起的」核对。出差可填实例 Code 替代预算，预付款项不要求关联审批。
 
 ## 本地启动
 
 ```bash
-./restart-local.sh
+./restart-local.sh --restart   # 校验旧进程归属，重载 API / web
 # 或分别：
 # python3 ocr/server.py          → :18790
 # python3 web/serve.py --port 5173
 ```
 
 - 前端：http://127.0.0.1:5173
-- OCR / API：`GET /api/health` · `POST /api/parse-invoice` · `POST /api/feishu-expense`（stub）
-- 飞书登录：`GET /api/auth/feishu/login` → 回调 `/api/auth/feishu/callback` · `GET /api/auth/me` · `POST /api/auth/logout` · `GET /api/budgets`（当前用户已通过的立项/变更/出差）
+- OCR / API：`GET /api/health` · `POST /api/parse-invoice` · `POST /api/feishu-expense`（真实采购申请） · `GET /api/feishu-purchase-definition`
+- 飞书登录：`GET /api/auth/feishu/login` → 回调 `/api/auth/feishu/callback` · `GET /api/auth/me` · `POST /api/auth/logout` · `GET /api/budgets`（当前用户范围内已通过的立项/变更；出差不混入预算列表）
 - 在页面点「用飞书登录」，授权后可点选已通过预算，问答会自动带上项目
 - 凭证放仓库根目录 `.env`（见 `.env.example`，不要提交）。需配置重定向 URL `https://baoxiao.xbchen.top/api/auth/feishu/callback`
 - 隧道：`baoxiao.xbchen.top` 的 `/api` → OCR `:18790`，其余 → web `:5173`
