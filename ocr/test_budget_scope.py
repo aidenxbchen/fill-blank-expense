@@ -11,7 +11,9 @@ from feishu_oauth import (
     TRAVEL_DEFINITION,
     FeishuAPIError,
     collect_scope_ids_from_form,
+    expand_user_ids_with_map,
     extract_contact_ids,
+    harvest_identity_pairs,
     is_missing_scope,
     kind_for_code,
     logged_in_user_ids,
@@ -102,6 +104,67 @@ class ScopeFilterTest(unittest.TestCase):
 
     def test_logged_in_user_ids_accepts_js_camel_case(self):
         self.assertEqual(logged_in_user_ids({"openId": "ou_me", "userId": "uid_me"}), {"ou_me", "uid_me"})
+        self.assertEqual(
+            logged_in_user_ids({"openId": "ou_me", "unionId": "on_me"}),
+            {"ou_me", "on_me"},
+        )
+
+
+class IdentityAliasTest(unittest.TestCase):
+    FORM_USER_IDS = [
+        {"id": "w1", "name": "项目名称", "type": "input", "value": "公共办公"},
+        {
+            "id": "w2",
+            "name": "项目负责人",
+            "type": "contact",
+            "value": ["uid_owner"],
+        },
+        {
+            "id": "w3",
+            "name": "项目参与人",
+            "type": "contact",
+            "value": ["uid_member", "uid_extra"],
+        },
+    ]
+
+    DETAIL = {
+        "form": FORM_USER_IDS,
+        "open_id": "ou_initiator",
+        "user_id": "uid_initiator",
+        "timeline": [
+            {"type": "START", "open_id": "ou_initiator", "user_id": "uid_initiator"},
+            {
+                "type": "CC",
+                "cc_user_list": [
+                    {"open_id": "ou_member", "user_id": "uid_member"},
+                    {"open_id": "ou_owner", "user_id": "uid_owner"},
+                    {"open_id": "ou_cc_only", "user_id": "uid_cc_only"},
+                ],
+            },
+        ],
+    }
+
+    def test_harvest_pairs_open_id_and_user_id(self):
+        id_map = harvest_identity_pairs(self.DETAIL)
+        self.assertIn("uid_member", expand_user_ids_with_map({"ou_member"}, id_map))
+        self.assertIn("ou_owner", expand_user_ids_with_map({"uid_owner"}, id_map))
+        self.assertIn("uid_initiator", expand_user_ids_with_map({"ou_initiator"}, id_map))
+
+    def test_participant_user_id_matches_via_open_id_alias(self):
+        id_map = harvest_identity_pairs(self.DETAIL)
+        expanded = expand_user_ids_with_map({"ou_member"}, id_map)
+        self.assertTrue(user_in_budget_scope(expanded, self.DETAIL))
+        owner_ids = expand_user_ids_with_map({"ou_owner"}, id_map)
+        self.assertTrue(user_in_budget_scope(owner_ids, self.DETAIL))
+
+    def test_cc_only_user_not_treated_as_participant(self):
+        id_map = harvest_identity_pairs(self.DETAIL)
+        expanded = expand_user_ids_with_map({"ou_cc_only"}, id_map)
+        self.assertIn("uid_cc_only", expanded)
+        self.assertFalse(user_in_budget_scope(expanded, self.DETAIL))
+
+    def test_without_alias_open_id_does_not_match_user_id_form(self):
+        self.assertFalse(user_in_budget_scope({"ou_member"}, self.DETAIL))
 
 
 class MissingScopeTest(unittest.TestCase):

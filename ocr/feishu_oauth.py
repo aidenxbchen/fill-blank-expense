@@ -3,7 +3,11 @@
 Login still uses user OAuth so we know who is signed in. Budget listing uses
 tenant_access_token to query approved 立项/变更 instances (including ones
 others initiated) and keeps those where the user is initiator or listed in
-项目负责人 / 项目参与人 contact fields.
+项目负责人 / 项目参与人 contact fields. Being in 项目参与人 alone is enough.
+
+Form contact widgets store tenant user_id strings even when instances are
+fetched with user_id_type=open_id. We expand the logged-in user's open_id
+with user_id aliases harvested from timeline / task / CC payloads.
 Never logs tokens or app secrets.
 """
 
@@ -736,7 +740,7 @@ def initiator_ids(*sources: Any) -> set[str]:
     for src in sources:
         if not isinstance(src, dict):
             continue
-        for key in ("open_id", "openId", "user_id", "userId"):
+        for key in ("open_id", "openId", "user_id", "userId", "union_id", "unionId"):
             val = str(src.get(key) or "").strip()
             if val:
                 ids.add(val)
@@ -745,6 +749,69 @@ def initiator_ids(*sources: Any) -> set[str]:
 
 def logged_in_user_ids(user: dict[str, Any] | None) -> set[str]:
     return initiator_ids(user or {})
+
+
+_IDENTITY_KEY_GROUPS = (
+    ("open_id", "openId"),
+    ("user_id", "userId"),
+    ("union_id", "unionId"),
+)
+
+
+def harvest_identity_pairs(node: Any, id_map: dict[str, set[str]] | None = None) -> dict[str, set[str]]:
+    """Record aliases when a dict lists more than one of open_id / user_id / union_id.
+
+    Approval contact widgets keep tenant user_id values even if the get-instance
+    call asked for open_id. Timeline, task_list and cc_user_list often include
+    both IDs for the same person, which lets a logged-in open_id match
+    项目参与人 / 项目负责人.
+    """
+    if id_map is None:
+        id_map = {}
+
+    def link(ids: list[str]) -> None:
+        uniq = []
+        for item in ids:
+            if item and item not in uniq:
+                uniq.append(item)
+        for a in uniq:
+            bucket = id_map.setdefault(a, set())
+            for b in uniq:
+                if a != b:
+                    bucket.add(b)
+
+    def walk(cur: Any) -> None:
+        if isinstance(cur, dict):
+            found: list[str] = []
+            for group in _IDENTITY_KEY_GROUPS:
+                for key in group:
+                    val = str(cur.get(key) or "").strip()
+                    if val:
+                        found.append(val)
+                        break
+            if len(found) >= 2:
+                link(found)
+            for val in cur.values():
+                walk(val)
+        elif isinstance(cur, list):
+            for item in cur:
+                walk(item)
+
+    walk(node)
+    return id_map
+
+
+def expand_user_ids_with_map(user_ids: set[str], id_map: dict[str, set[str]]) -> set[str]:
+    """Expand a user's known IDs with aliases discovered from instance payloads."""
+    out = {item for item in user_ids if item}
+    queue = list(out)
+    while queue:
+        cur = queue.pop()
+        for alias in id_map.get(cur, ()):
+            if alias and alias not in out:
+                out.add(alias)
+                queue.append(alias)
+    return out
 
 
 def user_in_budget_scope(
@@ -966,6 +1033,8 @@ def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, A
 
     collected: list[dict[str, Any]] = []
     seen: set[str] = set()
+    candidates: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, Any], Any]] = []
+    id_map: dict[str, set[str]] = {}
     try:
         for defn in BUDGET_DEFINITIONS:
             try:
@@ -995,25 +1064,30 @@ def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, A
                 status = detail.get("status") if detail.get("status") is not None else inst_node.get("status")
                 if not is_approved_status(status):
                     continue
-                if not user_in_budget_scope(user_ids, detail, inst_node):
-                    continue
                 seen.add(instance_code)
-                inst = {
-                    "instance_code": instance_code,
-                    "definition_code": (
-                        approval_node.get("code")
-                        or detail.get("approval_code")
-                        or defn["approval_code"]
-                    ),
-                    "definition_name": (
-                        approval_node.get("name")
-                        or detail.get("approval_name")
-                        or defn["name"]
-                    ),
-                    "instance_status": status,
-                    "serial_id": inst_node.get("serial_id") or detail.get("serial_number"),
-                }
-                collected.append(_friendly_item(inst, detail))
+                harvest_identity_pairs(detail, id_map)
+                harvest_identity_pairs(inst_node, id_map)
+                candidates.append((defn, approval_node, inst_node, instance_code, detail, status))
+        user_ids = expand_user_ids_with_map(user_ids, id_map)
+        for defn, approval_node, inst_node, instance_code, detail, status in candidates:
+            if not user_in_budget_scope(user_ids, detail, inst_node):
+                continue
+            inst = {
+                "instance_code": instance_code,
+                "definition_code": (
+                    approval_node.get("code")
+                    or detail.get("approval_code")
+                    or defn["approval_code"]
+                ),
+                "definition_name": (
+                    approval_node.get("name")
+                    or detail.get("approval_name")
+                    or defn["name"]
+                ),
+                "instance_status": status,
+                "serial_id": inst_node.get("serial_id") or detail.get("serial_number"),
+            }
+            collected.append(_friendly_item(inst, detail))
     except FeishuAPIError as e:
         if is_missing_scope(e):
             return [], MISSING_SCOPE_WARNING
