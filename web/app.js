@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261109purchase1";
+  const ASSET_V = "20261109purchase2";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -706,7 +706,7 @@
     syncDraftFromDom();
     const d = session.draft;
     return {claim:{purchaseMethod:d.purchaseMethod, purpose:d.purpose, costCenter:d.costCenter,
-      invoices:okInvoices().map(({id,date,merchant,invoiceNo,amount,category,note,fileName})=>({id,date,merchant,invoiceNo,amount,category,note,fileName})), answers:{...session.answers},
+      invoices:okInvoices().map(({id,date,merchant,invoiceNo,amount,category,note,fileName,source})=>({id,date,merchant,invoiceNo,amount,category,note,fileName,source})), answers:{...session.answers},
       selectedBudget:session.answers.selectedBudget || null}};
   }
 

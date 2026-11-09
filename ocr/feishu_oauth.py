@@ -38,7 +38,8 @@ FEISHU_QUERY_URL = "https://open.feishu.cn/open-apis/approval/v4/instances/query
 FEISHU_TENANT_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 
 DEFAULT_SCOPES = (
-    "approval:instance:read offline_access auth:user.id:read contact:user.base:readonly"
+    "approval:instance:write approval:instance:read "
+    "offline_access auth:user.id:read contact:user.base:readonly"
 )
 DEFAULT_REDIRECT = "https://baoxiao.xbchen.top/api/auth/feishu/callback"
 DEFAULT_WEB_ORIGIN = "https://baoxiao.xbchen.top"
@@ -171,7 +172,8 @@ def web_origin() -> str:
 
 
 def oauth_scopes() -> str:
-    return (os.environ.get("FEISHU_SCOPES") or DEFAULT_SCOPES).strip()
+    return " ".join(dict.fromkeys(((os.environ.get("FEISHU_SCOPES") or DEFAULT_SCOPES)
+                                  + " approval:instance:read approval:instance:write").split()))
 
 
 def _sessions_path() -> Path:

@@ -2259,3 +2259,8 @@ button {
     justify-content: flex-end;
   }
 }
+
+/* Native purchase draft fields */
+#draft-meta select, .sheet-table select { font: inherit; border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 8px; background: var(--surface, white); color: inherit; width: 100%; }
+.sheet-table details label { display: block; margin: 6px 0; }
+.sheet-table details { min-width: 150px; }

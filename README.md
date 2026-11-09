@@ -11,7 +11,7 @@
 3. **汇总表**：识别完成后出现可编辑汇总表（日期 / 商户 / 发票号码 / 金额 / 类别）。用户确认或手改后，**以表格为准**进入问答和草稿。
 4. **问答**：从飞书实时读取采购申请定义，**一次只问一个问题**，收集采购方式、项目、采购事由、关联预算，以及当前方式的科目/规格/数量等必填项。七种方式按定义切换明细；合同/预付多收集收款信息，京东收集采购清单，差旅收集费用类型。
 5. **草稿**：可编辑明细与「识别汇总」同步；金额、日期、商户、发票号均取确认后的表格。采购专用字段在行内「采购明细」展开编辑。
-6. **提交飞书采购申请**：按钮调用 `POST /api/feishu-expense` → 飞书原生 `POST /approval/v4/instances`。服务端验证 OAuth 用户，用应用凭证传入该用户的 `open_id`，创建在登录用户的名下。成功必须有真实 `instance_code`，页面显示审批链接与单号；错误不会回退成成功。
+6. **提交飞书采购申请**：按钮调用 `POST /api/feishu-expense` → 飞书原生 `POST /approval/v4/instances/initiate`。服务端验证 OAuth 用户，直接使用该用户的 `user_access_token` 发起，创建在登录用户的名下。成功必须有真实 `instance_code`，页面显示审批链接与单号；错误不会回退成成功。
 
 会话落在 `localStorage` 键 `fill-blank-expense:delight:v1`。
 
@@ -47,9 +47,10 @@
 - 采购方式 / 项目：显示文字转换为各自 `radioV2` 选项 value；采购事由 → `textarea`。
 - 发票：确认后的金额 → 当前明细组的金额（CNY）；商户 → 名称；日期、发票号、备注 → 备注。每张发票一行，科目使用该方式自己的选项 value，规格与数量由用户确认。
 - 关联审批 → `widget17901536351250001` 的 `connect` 实例 code 数组。除预付款项外必填；后端重新核验定义、通过状态与用户范围，仅允许立项预算、项目预算变更或出差申请。主页继续只列立项与变更预算。
-- 飞书原生创建接口**仅支持 tenant_access_token**，直接传 user_access_token 会返回 `99991668 user access token not support`。服务端先用 OAuth token 校验当前用户，再将可信 `open_id` 作为发起人，忽略客户端传入的用户身份。
-- 创建所需**应用身份**权限：`approval:instance`（最小）或 `approval:approval`；读取定义/预算已有的 `approval:approval:readonly`、`approval:approval.list:readonly` 继续保留。**用户身份**的 `approval:instance:write` 不能代替应用身份权限。
-- 2026-11-09 实测：当前缺创建的应用身份权限，飞书返回 `99991672`。管理员在 [应用权限管理](https://open.feishu.cn/app/cli_aaa28a16ca785cba/auth?q=approval:instance&op_from=openapi&token_type=tenant) 开通 `approval:instance` 并发布版本后复测；当前部署会明确失败，不会伪造审批。
+- 发起使用新的用户接口 `POST /approval/v4/instances/initiate`，只接受当前 OAuth 用户凭证，客户端不能指定申请人；不会回退到应用凭证创建。旧接口 `POST /instances` 只支持应用 token，不使用它。
+- 发起所需**用户身份**权限：`approval:instance:write`；登录请求会合并该 scope，即使 `.env` 保留旧 scope 也会补齐。旧用户未授权时需要退出再登录；权限错误展示真实错误、管理员开通链接与重新授权入口。
+- 定义和预算读取继续使用现有应用身份只读权限 `approval:approval:readonly`、`approval:approval.list:readonly`。本实现不要求新增用户 `approval:approval:read`，也不要求开通应用写权限。
+- 2026-11-09 实测：现有登录会话包含 `approval:instance:write`；对 `/instances/initiate` 使用不存在的定义探测，返回 `1390001 approval code not found`（已通过 token / scope 校验）。当前定义读取成功，七种条件明细已核实；真实定义的流程预览返回 code 0。测试没有发起生产采购申请。
 - 同一用户与相同表单生成稳定 UUID；`.submissions.sqlite3` 保存请求状态与真实回执（0600，忽略提交）。重复点击/刷新复用成功回执；超时或中断后状态待确认，阻止重复创建，须先在飞书核对。不要删除此数据库来重试未知结果。
 - 原始发票附件不是采购定义的必填项；本次仅提交核对后的结构化事实，尚未上传原文件。
 
@@ -62,7 +63,7 @@ node web/test-purchase-policy.cjs
 node --check web/app.js
 ```
 
-七种明细的条件切换、精确选项映射、关联范围/必填、OAuth 发起人绑定、权限失败、超时防重复、真实链接/单号回执均有离线测试。线上创建权限探测只用不存在的定义，不发起测试采购；真实采购定义的流程预览（指定现有部门 ID）返回 code 0。开通权限后，用实际发票完成一次公网流程，在该登录用户的飞书「已发起」核对。
+七种明细的条件切换、精确选项映射、关联范围/必填、OAuth 发起人绑定、权限失败、超时防重复、真实链接/单号回执均有离线测试。线上创建权限探测只用不存在的定义，不发起测试采购；真实采购定义的流程预览（指定现有部门 ID）返回 code 0。用实际发票完成一次公网流程，在该登录用户的飞书「已发起」核对。
 
 ## OCR 与校对
 

@@ -1,8 +1,7 @@
-"""Create native 采购申请, with the initiator taken only from OAuth.
+"""Native 采购申请 through the OAuth user's /instances/initiate API.
 
-Feishu v4 instances/create accepts tenant tokens, not user tokens (99991668).
-The user's OAuth token is verified first; their open_id is pinned server-side.
-No tenant actor, client-provided actor, or fake-success fallback is allowed.
+Definition and budget reads retain the existing tenant read-only access.
+Creation exclusively uses the verified OAuth user token; no tenant fallback.
 """
 from __future__ import annotations
 
@@ -15,12 +14,12 @@ import uuid
 from contextlib import closing
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import feishu_oauth as auth
 
 APPROVAL_CODE = "D448D0FB-77DB-4640-9650-1FB99512888C"
-CREATE_URL = "https://open.feishu.cn/open-apis/approval/v4/instances"
+CREATE_URL = "https://open.feishu.cn/open-apis/approval/v4/instances/initiate"
 ALLOWED_LINKS = {d["approval_code"] for d in auth.BUDGET_DEFINITIONS} | {auth.TRAVEL_DEFINITION["approval_code"]}
 DB_PATH = Path(__file__).resolve().parent.parent / ".submissions.sqlite3"
 _submit_lock = threading.Lock()
@@ -109,6 +108,8 @@ def build_form(form, claim):
         if not isinstance(inv, dict) or not inv.get("id") or inv["id"] in invoice_ids:
             raise ValidationError("发票行标识缺失或重复，请返回识别汇总")
         invoice_ids.add(inv["id"])
+        if inv.get("source") == "mock":
+            raise ValidationError("模拟发票不能发起真实审批，请上传真实发票并核对识别汇总")
         amount = number(inv.get("amount"), "发票金额", money=True)
         cells = []
         for w in group["children"]:
@@ -182,11 +183,13 @@ def validate_relation(claim, actor, token):
         raise ValidationError("所选关联审批不在当前登录用户的可用范围内")
 
 
-def permission_error(err):
+def permission_error(err, identity="user"):
     # Return only actionable, bounded upstream error details, never token payloads.
     missing = [v.get("subject") for v in (err.payload.get("error") or {}).get("permission_violations", []) if v.get("subject")]
+    scopes = missing or (["approval:instance:write"] if identity == "user" else ["approval:approval:readonly"])
+    query = urlencode({"q": ",".join(scopes), "op_from": "openapi", "token_type": identity})
     return {"ok": False, "error": f"飞书审批创建失败：{str(err)[:1600]}", "feishuCode": err.feishu_code,
-            "requiredScopes": missing, "permissionUrl": f"https://open.feishu.cn/app/{auth.app_id()}/auth?q=approval:instance&op_from=openapi&token_type=tenant",
+            "requiredScopes": missing, "permissionUrl": f"https://open.feishu.cn/app/{auth.app_id()}/auth?{query}",
             "loginUrl": "/api/auth/feishu/login"}
 
 
@@ -220,13 +223,13 @@ def create_purchase(sess, body):
         db.execute("INSERT INTO submissions VALUES (?, 'pending', '')", (request_id,))
         db.commit()
         try:
-            obj = auth.http_json("POST", CREATE_URL, token=token, payload={"approval_code": APPROVAL_CODE,
-                "open_id": actor["openId"], "form": json.dumps(form, ensure_ascii=False), "uuid": request_id, "with_link": True})
+            obj = auth.http_json("POST", CREATE_URL, token=sess["access_token"], payload={"approval_code": APPROVAL_CODE,
+                "form": json.dumps(form, ensure_ascii=False), "uuid": request_id})
             if obj.get("code") != 0:
                 raise auth.FeishuAPIError(400, obj)
         except auth.FeishuAPIError as e:
             # Only an explicit Feishu rejection proves that creation did not happen.
-            if e.feishu_code is not None:
+            if e.feishu_code is not None and e.feishu_code != 60012 and e.http_status < 500:
                 db.execute("DELETE FROM submissions WHERE id=?", (request_id,)); db.commit()
             raise
         data = obj.get("data") or {}
@@ -253,7 +256,7 @@ def handle_schema(handler):
     try:
         handler._json(200, {"ok": True, **public_schema(definition())})
     except auth.FeishuAPIError as e:
-        handler._json(403 if auth.is_missing_scope(e) else 502, permission_error(e))
+        handler._json(403 if auth.is_missing_scope(e) else 502, permission_error(e, "tenant"))
     except (ValidationError, ValueError) as e:
         handler._json(422, {"ok": False, "error": str(e)})
     except Exception:

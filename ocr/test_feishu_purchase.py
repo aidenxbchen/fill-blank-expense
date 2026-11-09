@@ -63,6 +63,10 @@ class FormTests(unittest.TestCase):
         schema=copy.deepcopy(SCHEMA);schema.append({'id':'new','name':'新增必填','type':'input','required':True})
         with self.assertRaisesRegex(p.ValidationError,'新增必填'):p.build_form(schema,claim_for())
 
+    def test_mock_invoice_cannot_be_submitted(self):
+        c=claim_for();c['invoices'][0]['source']='mock'
+        with self.assertRaisesRegex(p.ValidationError,'模拟发票'):p.build_form(SCHEMA,c)
+
     def test_relation_not_trusting_client_metadata(self):
         for detail in [dict(approval_code='evil',status='APPROVED'),dict(approval_code=next(iter(p.ALLOWED_LINKS)),status='PENDING')]:
             with patch.object(auth,'fetch_instance',return_value=detail):
@@ -85,8 +89,10 @@ class CreateTests(unittest.TestCase):
         with patch.object(auth,'http_json',return_value={'code':0,'data':{'instance_code':'real-id','instance_link':'https://feishu.cn/approval/real'}}) as call:
             a=p.create_purchase(self.sess,body);b=p.create_purchase(self.sess,body)
             self.assertEqual(a,b);self.assertEqual(call.call_count,1)
-            self.assertEqual(call.call_args.kwargs['payload']['open_id'],ACTOR['openId'])
-            self.assertEqual(call.call_args.kwargs['token'],'tenant-token')
+            self.assertNotIn('open_id',call.call_args.kwargs['payload'])
+            self.assertNotIn('user_id',call.call_args.kwargs['payload'])
+            self.assertEqual(call.call_args.kwargs['token'],'oauth-token')
+            self.assertTrue(call.call_args.args[1].endswith('/instances/initiate'))
             self.assertEqual(a['approvalUrl'],'https://feishu.cn/approval/real')
             self.assertEqual(a['serialNumber'],'202611090001')
             self.assertEqual(p.DB_PATH.stat().st_mode & 0o777,0o600)
@@ -109,6 +115,12 @@ class CreateTests(unittest.TestCase):
     def test_missing_instance_code_never_success(self):
         with patch.object(auth,'http_json',return_value={'code':0,'data':{}}):
             with self.assertRaisesRegex(p.ValidationError,'未返回实例编号'):p.create_purchase(self.sess,{'claim':claim_for()})
+
+    def test_uuid_conflict_remains_pending(self):
+        with patch.object(auth,'http_json',side_effect=auth.FeishuAPIError(400,{'code':60012,'msg':'UUID conflict'})) as call:
+            with self.assertRaises(auth.FeishuAPIError):p.create_purchase(self.sess,{'claim':claim_for()})
+            with self.assertRaisesRegex(p.ValidationError,'待确认'):p.create_purchase(self.sess,{'claim':claim_for()})
+            self.assertEqual(call.call_count,1)
 
     def test_actor_mismatch_stops_before_create(self):
         self.sess['user']={'openId':'another'}

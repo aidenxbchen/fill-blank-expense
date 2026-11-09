@@ -5,3 +5,5 @@ __pycache__/
 .sessions.json
 
 .submissions.sqlite3*
+
+.purchase-submissions.sqlite3*
