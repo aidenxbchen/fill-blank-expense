@@ -4,6 +4,49 @@
   const CAT_LABEL = {lodging:"住宿", meal:"餐饮", entertainment:"招待", purchase:"采购", transit:"交通", gift:"礼品", other:"其他"};
   const POLICY = {name:"飞书采购申请", version:2};
   const present = v => v != null && String(v).trim() && v !== "（跳过）";
+
+  /** Prefer fileName stem like 餐饮/服装/鞋类 from 品类-MMDD-金额.pdf; else CAT_LABEL; else 这笔. */
+  function invoiceItemName(inv) {
+    const name = String((inv && inv.fileName) || "").trim();
+    const m = name.match(/^([^-\/]+)-\d{4}-\d+(?:\.\d+)?(?:\.[^.]+)?$/);
+    if (m && m[1]) return m[1];
+    const cat = inv && inv.category;
+    if (cat && CAT_LABEL[cat]) return CAT_LABEL[cat];
+    return "这笔";
+  }
+
+  function invoiceAmountLabel(inv) {
+    const amount = Number(inv && inv.amount);
+    return Number.isFinite(amount) ? `¥${amount.toFixed(2)}` : "";
+  }
+
+  /** Short MM-DD from inv.date when needed to disambiguate identical item+amount. */
+  function invoiceShortDate(inv) {
+    const d = String((inv && inv.date) || "").trim();
+    const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return `${iso[2]}-${iso[3]}`;
+    const md = d.match(/^(\d{1,2})-(\d{1,2})$/);
+    if (md) return `${md[1].padStart(2, "0")}-${md[2].padStart(2, "0")}`;
+    return "";
+  }
+
+  /** Referent for Q&A: 项目名称 + 金额 only. Never 尾号 / 第 N 张 / merchant. */
+  function invoiceReferent(inv, invoices) {
+    const item = invoiceItemName(inv);
+    const amt = invoiceAmountLabel(inv);
+    let base = amt ? `${item} ${amt}` : item;
+    const peers = (invoices || []).filter(other =>
+      other !== inv &&
+      invoiceItemName(other) === item &&
+      invoiceAmountLabel(other) === amt
+    );
+    if (peers.length) {
+      const short = invoiceShortDate(inv);
+      if (short) base = `${base} (${short})`;
+    }
+    return base;
+  }
+
   function buildQuestionQueue(invoices, answers) {
     answers = answers || {};
     const schema = global.__purchaseSchema;
@@ -36,9 +79,10 @@
       if (["账户名称","银行账户","收款账号","开户支行"].includes(w.name))
         ask(`purchase:${method.name}:shared:${w.name}`, `本次所有明细的${w.name}是？`, [], "如各行收款信息不同，请分开提交申请。");
     }
-    for (const [index, inv] of (invoices || []).entries()) {
+    const list = invoices || [];
+    for (const inv of list) {
       const project = answers.costCenter || (answers.selectedBudget || {}).project || "待选项目";
-      const ticket = (invoices || []).length > 1 ? `第 ${index+1} 张票` : "这张票";
+      const referent = invoiceReferent(inv, list);
       for (const w of method.fields) {
         if (!w.required || ["金额","名称","账户名称","银行账户","收款账号","开户支行"].includes(w.name)) continue;
         let chips = w.options || [];
@@ -53,15 +97,15 @@
         if (present(v) && (!w.options.length || w.options.includes(v)) && (w.type !== "number" || Number.isFinite(Number(v)) && Number(v)>0)) continue;
         const field = w.name.includes("科目") ? "科目" : w.name;
         const rank = ordered(chips, (((learned.rows || {})[inv.id] || {})[field]), Boolean(w.options.length));
-        const text = field === "科目" ? `${ticket}在【${project}】里属于哪个科目？` : `${ticket}在【${project}】里的${w.name}是？`;
-        const amount = Number(inv.amount);
-        const hint = [inv.date, inv.invoiceNo ? `发票尾号 ${String(inv.invoiceNo).slice(-6)}` : "", Number.isFinite(amount) ? `¥${amount.toFixed(2)}` : ""].filter(Boolean).join(" · ");
-        q.push({id, text, hint, ...rank, required:true, input:"chips+text", numeric:w.type === "number", options:w.options});
+        const text = field === "科目"
+          ? `${referent} 在【${project}】里属于哪个科目？`
+          : `${referent} 在【${project}】里的${w.name}是？`;
+        q.push({id, text, hint:"", ...rank, required:true, input:"chips+text", numeric:w.type === "number", options:w.options});
       }
     }
     return q;
   }
-  global.ExpensePolicy = {POLICY, CAT_LABEL, buildQuestionQueue,
+  global.ExpensePolicy = {POLICY, CAT_LABEL, buildQuestionQueue, invoiceItemName, invoiceAmountLabel, invoiceReferent,
     remainingCount:(i,a)=>buildQuestionQueue(i,a).length,
     nextQuestion:(i,a)=>buildQuestionQueue(i,a)[0] || null};
 })(window);

@@ -8,7 +8,7 @@ const methods = definition.find(w=>w.name==='采购方式').option.map(o=>{
 });
 const window = {__purchaseSchema:{methods,projects:definition.find(w=>w.name==='项目').option.map(o=>o.text)}, __approvedBudgets:[{instanceId:'budget',title:'软件组预算',project:'软件组',serialId:'123'}]};
 vm.runInNewContext(fs.readFileSync('web/policy.js','utf8'),{window});
-const inv=[{id:'corrected-row',merchant:'已改商户',amount:'100.50'}];
+const inv=[{id:'corrected-row',merchant:'已改商户',amount:'100.50',category:'meal',fileName:'餐饮-1103-241.pdf',date:'2025-11-03'}];
 for (const method of methods) {
   const answers={};
   let rounds=0;
@@ -42,3 +42,31 @@ const nextMethod=window.ExpensePolicy.nextQuestion(inv,{});
 assert.equal(nextMethod.chips[0],'个人垫付');
 assert.equal(nextMethod.recommended.evidence,4);
 console.log('Project subjects, ranked suggestions, deleted options and explicit selection verified');
+
+// Per-invoice referent: 项目名称 + 金额 only
+assert.equal(window.ExpensePolicy.invoiceItemName(inv[0]), '餐饮');
+assert.equal(window.ExpensePolicy.invoiceAmountLabel(inv[0]), '¥100.50');
+assert.equal(window.ExpensePolicy.invoiceReferent(inv[0], inv), '餐饮 ¥100.50');
+assert.ok(question.text.includes('餐饮 ¥100.50'));
+assert.ok(question.text.includes('属于哪个科目') || question.text.includes('里的'));
+assert.ok(!question.text.includes('发票尾号'));
+assert.ok(!question.text.includes('第 ') && !/第\s*\d+\s*张票/.test(question.text));
+assert.equal(question.hint, '');
+assert.ok(!String(question.hint).includes('发票尾号'));
+
+const clothing={id:'cloth',merchant:'某店',amount:338,category:'purchase',fileName:'服装-1104-338.pdf',date:'2025-11-04'};
+assert.equal(window.ExpensePolicy.invoiceItemName(clothing), '服装');
+assert.equal(window.ExpensePolicy.invoiceReferent(clothing, [clothing]), '服装 ¥338.00');
+const mealOnly={id:'meal2',merchant:'X',amount:241,category:'meal',date:'2025-11-03'};
+assert.equal(window.ExpensePolicy.invoiceItemName(mealOnly), '餐饮');
+assert.equal(window.ExpensePolicy.invoiceReferent(mealOnly, [mealOnly]), '餐饮 ¥241.00');
+const dupA={id:'a',fileName:'餐饮-1103-241.pdf',amount:241,category:'meal',date:'2025-11-03'};
+const dupB={id:'b',fileName:'餐饮-1105-241.pdf',amount:241,category:'meal',date:'2025-11-05'};
+assert.ok(window.ExpensePolicy.invoiceReferent(dupA,[dupA,dupB]).includes('(11-03)'));
+assert.ok(window.ExpensePolicy.invoiceReferent(dupB,[dupA,dupB]).includes('(11-05)'));
+const qCloth=window.ExpensePolicy.nextQuestion([clothing],answers);
+assert.ok(qCloth.text.startsWith('服装 ¥338.00'));
+assert.ok(!qCloth.text.includes('某店'));
+assert.ok(!qCloth.text.includes('发票尾号'));
+assert.ok(!/第\s*\d+\s*张票/.test(qCloth.text));
+console.log('Invoice referent uses 项目名称+金额; no 尾号 / 第N张票 / merchant');

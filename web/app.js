@@ -869,14 +869,19 @@
     const policy = window.ExpensePolicy && window.ExpensePolicy.POLICY;
     const q = window.ExpensePolicy ? window.ExpensePolicy.nextQuestion(invs, session.answers, policy) : null;
     if (!q) return;
+    const expected = q.text + (q.hint ? `\n${q.hint}` : "");
     const last = session.chat[session.chat.length - 1];
-    if (last && last.role === "assistant" && last.meta && last.meta.qid === q.id) return;
+    // Same unanswered question: refresh wording so old drafts drop 尾号 / 第 N 张票 phrasing.
+    if (last && last.role === "assistant" && last.meta && last.meta.qid === q.id) {
+      if (last.text !== expected) last.text = expected;
+      return;
+    }
     // avoid duplicating same question text if already last
-    if (last && last.role === "assistant" && last.text === q.text) {
+    if (last && last.role === "assistant" && last.text === expected) {
       if (!last.meta) last.meta = { qid: q.id };
       return;
     }
-    pushChat("assistant", q.text + (q.hint ? `\n${q.hint}` : ""), { qid: q.id });
+    pushChat("assistant", expected, { qid: q.id });
   }
 
   function fillingClaim() {
