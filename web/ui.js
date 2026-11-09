@@ -72,3 +72,38 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ExpenseUI = api;
 })(typeof window !== "undefined" ? window : globalThis);
+
+/* Blessing card shuffle */
+(function () {
+  const card = document.getElementById('blessing-card');
+  const btn = document.getElementById('btn-blessing-shuffle');
+  const zh = document.getElementById('blessing-zh');
+  const en = document.getElementById('blessing-en');
+  const note = document.getElementById('blessing-note');
+  if (!card || !btn || !zh || !en || !note) return;
+  const lines = [
+    { zh: '流星发生时', en: 'When meteors write across the sky', note: '愿这一单也顺利如愿' },
+    { zh: '归来如初', en: 'Return as we first met', note: '把心事安稳地放回口袋' },
+    { zh: '山河远阔', en: 'Mountains wide, rivers long', note: '你要的答案会按时抵达' },
+    { zh: '星河入梦', en: 'A river of stars into dreams', note: '今晚的账，也温柔结清' },
+    { zh: '一纸清欢', en: 'A quiet joy on paper', note: '报销烦心事，留给报了么' },
+    { zh: '月色正好', en: 'The moonlight is just right', note: '慢慢填，也不晚' },
+    { zh: '万事顺意', en: 'May all go as you wish', note: '点一点，世界轻一点' },
+    { zh: '花开有时', en: 'Flowers bloom in their season', note: '这笔费用，终会安放妥当' }
+  ];
+  let i = Math.floor(Math.random() * lines.length);
+  const paint = () => {
+    const L = lines[i % lines.length];
+    card.classList.remove('is-shuffling');
+    void card.offsetWidth;
+    card.classList.add('is-shuffling');
+    zh.textContent = L.zh;
+    en.textContent = L.en;
+    note.textContent = L.note;
+    card.dataset.index = String(i % lines.length);
+  };
+  paint();
+  const next = () => { i = (i + 1) % lines.length; paint(); };
+  btn.addEventListener('click', next);
+  card.addEventListener('dblclick', next);
+})();

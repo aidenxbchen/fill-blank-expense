@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了么 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261109bg1" />
+  <link rel="stylesheet" href="./styles.css?v=20261109card1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -22,8 +22,8 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <picture>
-            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261109bg1" />
-            <img src="./assets/logo-zbs.png?v=20261109bg1" alt="" width="44" height="44" />
+            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261109card1" />
+            <img src="./assets/logo-zbs.png?v=20261109card1" alt="" width="44" height="44" />
           </picture>
         </div>
         <div class="brand-text">
@@ -74,6 +74,21 @@
         <h2 class="hero-title">准备这次采购的发票</h2>
         <p class="hero-sub">选好项目，上传原件。识别后直接核对表格，再补齐采购信息。</p>
       </div>
+
+      <aside class="blessing-card" id="blessing-card" aria-label="今日祝福" data-index="0">
+        <div class="blessing-ornament blessing-ornament-tl" aria-hidden="true">
+          <svg viewBox="0 0 64 64" fill="none"><path d="M8 32c12-18 36-18 48 0-12 18-36 18-48 0Z" stroke="currentColor" stroke-width="1.2"/><path d="M20 32c6-9 18-9 24 0-6 9-18 9-24 0Z" stroke="currentColor" stroke-width="1"/><circle cx="32" cy="32" r="2.2" fill="currentColor"/></svg>
+        </div>
+        <div class="blessing-ornament blessing-ornament-br" aria-hidden="true">
+          <svg viewBox="0 0 64 64" fill="none"><path d="M6 50c10-4 18-14 22-28 2 10 8 18 18 22-12 2-24 8-40 6Z" stroke="currentColor" stroke-width="1.2"/><path d="M38 12l2.5 6.5L47 21l-6.5 2.5L38 30l-2.5-6.5L29 21l6.5-2.5L38 12Z" fill="currentColor" opacity=".55"/><path d="M14 18l1.4 3.6L19 23l-3.6 1.4L14 28l-1.4-3.6L9 23l3.6-1.4L14 18Z" fill="currentColor" opacity=".4"/></svg>
+        </div>
+        <div class="blessing-constellation" aria-hidden="true"></div>
+        <p class="blessing-kicker">今日小诗 · tap to shuffle</p>
+        <p class="blessing-zh" id="blessing-zh">流星发生时</p>
+        <p class="blessing-en" id="blessing-en">When meteors write across the sky</p>
+        <p class="blessing-note" id="blessing-note">愿这一单也顺利如愿</p>
+        <button type="button" class="blessing-shuffle" id="btn-blessing-shuffle" aria-label="换一句祝福">换一句 ✦</button>
+      </aside>
       <section class="budget-picker panel" id="budget-picker">
         <div class="panel-head-row">
           <h2>选择关联项目</h2>
@@ -257,9 +272,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261109bg1"></script>
-  <script src="./ocr-bridge.js?v=20261109bg1"></script>
-  <script src="./policy.js?v=20261109bg1"></script>
-  <script src="./app.js?v=20261109bg1"></script>
+  <script src="./ui.js?v=20261109card1"></script>
+  <script src="./ocr-bridge.js?v=20261109card1"></script>
+  <script src="./policy.js?v=20261109card1"></script>
+  <script src="./app.js?v=20261109card1"></script>
 </body>
 </html>
