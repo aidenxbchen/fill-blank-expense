@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261108a";
+  const ASSET_V = "20261109a";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -169,55 +169,125 @@
 
   /* ---------- upload ---------- */
 
+  function invoiceHasAmount(inv) {
+    if (!inv || inv.amount === "" || inv.amount == null) return false;
+    return Number.isFinite(Number(inv.amount));
+  }
+
+  function refreshUploadActions() {
+    const startBtn = document.getElementById("btn-start-interview");
+    const totalEl = document.getElementById("summary-total");
+    const countPill = document.getElementById("summary-count-pill");
+    const okCount = okInvoices().length;
+    const busy = session.invoices.some((i) => i.status === "parsing");
+    if (countPill) countPill.textContent = String(session.invoices.length);
+    if (startBtn) {
+      startBtn.disabled = okCount === 0 || busy;
+      startBtn.textContent = busy ? "识别中…" : `确认表格，开始问答（${okCount} 张）`;
+    }
+    if (totalEl) {
+      const total = session.invoices.reduce(
+        (s, i) => s + (invoiceHasAmount(i) ? Number(i.amount) || 0 : 0),
+        0
+      );
+      totalEl.textContent = `表内合计 ${formatMoney(total)} · ${okCount} 张可用`;
+    }
+  }
+
   function renderUpload() {
     const list = document.getElementById("invoice-list");
+    const summary = document.getElementById("invoice-summary");
+    const body = document.getElementById("invoice-summary-body");
     const actions = document.getElementById("upload-actions");
     const status = document.getElementById("parse-status");
-    const startBtn = document.getElementById("btn-start-interview");
-    if (!list) return;
+    if (!actions) return;
+
+    if (list) {
+      list.hidden = true;
+      list.innerHTML = "";
+    }
 
     if (!session.invoices.length) {
-      list.hidden = true;
+      if (summary) summary.hidden = true;
       actions.hidden = true;
-      status.hidden = true;
-      list.innerHTML = "";
+      if (status) status.hidden = true;
       return;
     }
 
-    list.hidden = false;
+    if (summary) summary.hidden = false;
     actions.hidden = false;
-    list.innerHTML = session.invoices
-      .map((inv) => {
-        const ok = inv.status === "ok";
-        const err = inv.status === "error";
-        const parsing = inv.status === "parsing";
-        const badge = parsing ? "识别中…" : err ? "失败" : `${formatMoney(inv.amount)} · ${CAT_LABEL[inv.category] || inv.category || "—"}`;
-        return `<div class="inv-chip ${err ? "is-error" : ok ? "is-ok" : "is-busy"}" data-id="${esc(inv.id)}">
-          <div class="inv-chip-main">
-            <strong>${esc(inv.merchant || inv.fileName || "发票")}</strong>
-            <span>${esc(badge)}</span>
-            ${inv.date ? `<span class="muted-sm">${esc(inv.date)}</span>` : ""}
-            ${err && inv.error ? `<span class="err-sm">${esc(inv.error)}</span>` : ""}
-          </div>
-          <button type="button" class="btn btn-ghost btn-sm inv-remove" data-remove="${esc(inv.id)}" aria-label="移除">×</button>
-        </div>`;
-      })
-      .join("");
 
-    const okCount = session.invoices.filter((i) => i.status === "ok").length;
-    const busy = session.invoices.some((i) => i.status === "parsing");
-    startBtn.disabled = okCount === 0 || busy;
-    startBtn.textContent = busy ? "识别中…" : `开始问答（${okCount} 张）`;
-
-    if (session.parseErrors.length) {
-      status.hidden = false;
-      status.innerHTML = session.parseErrors
-        .slice(-3)
-        .map((e) => `<div class="parse-err">${esc(e)}</div>`)
+    if (body) {
+      body.innerHTML = session.invoices
+        .map((inv) => {
+          const err = inv.status === "error";
+          const parsing = inv.status === "parsing";
+          const shownAmount = inv.amount === "" || inv.amount == null ? "" : inv.amount;
+          let state = "识别中…";
+          if (err) state = inv.error ? `失败：${inv.error}` : "失败，可手改";
+          else if (!parsing) {
+            if (inv._userEdited) state = "已编辑";
+            else if (inv.needsReview) state = "待核对";
+            else state = "已识别";
+            if (inv.corrections && inv.corrections.length) state += " · 已校对";
+          }
+          const disabled = parsing ? "disabled" : "";
+          const cat = inv.category || "other";
+          const options = Object.keys(CAT_LABEL)
+            .map((k) => `<option value="${esc(k)}"${k === cat ? " selected" : ""}>${esc(CAT_LABEL[k])}</option>`)
+            .join("");
+          const dateType = /^\d{4}-\d{2}-\d{2}$/.test(inv.date || "") || !inv.date ? "date" : "text";
+          return `<tr data-inv="${esc(inv.id)}" class="${err ? "is-error" : parsing ? "is-busy" : "is-ok"}">
+            <td class="td-file" title="${esc(inv.fileName || "")}">${esc(inv.fileName || "发票")}</td>
+            <td><input data-sum="date" type="${dateType}" value="${esc(inv.date || "")}" ${disabled} /></td>
+            <td><input data-sum="merchant" type="text" value="${esc(inv.merchant || "")}" ${disabled} /></td>
+            <td><input data-sum="invoiceNo" type="text" value="${esc(inv.invoiceNo || "")}" ${disabled} /></td>
+            <td><input data-sum="amount" inputmode="decimal" value="${esc(shownAmount)}" ${disabled} /></td>
+            <td><select data-sum="category" ${disabled}>${options}</select></td>
+            <td class="td-inv">${esc(state)}</td>
+            <td><button type="button" class="btn btn-ghost btn-sm" data-remove="${esc(inv.id)}" ${parsing ? "disabled" : ""} aria-label="移除">×</button></td>
+          </tr>`;
+        })
         .join("");
-    } else {
-      status.hidden = true;
     }
+
+    refreshUploadActions();
+
+    if (status) {
+      if (session.parseErrors.length) {
+        status.hidden = false;
+        status.innerHTML = session.parseErrors
+          .slice(-3)
+          .map((e) => `<div class="parse-err">${esc(e)}</div>`)
+          .join("");
+      } else {
+        status.hidden = true;
+      }
+    }
+  }
+
+  function syncSummaryFromDom() {
+    document.querySelectorAll("#invoice-summary-body tr[data-inv]").forEach((tr) => {
+      const id = tr.getAttribute("data-inv");
+      const inv = session.invoices.find((i) => i.id === id);
+      if (!inv || inv.status === "parsing") return;
+      tr.querySelectorAll("[data-sum]").forEach((el) => {
+        const key = el.getAttribute("data-sum");
+        const val = el.value;
+        if (String(inv[key] == null ? "" : inv[key]) !== String(val)) inv._userEdited = true;
+        if (key === "amount") {
+          inv.amount = String(val).trim() === "" ? "" : String(val).trim();
+          if (invoiceHasAmount(inv) && inv.status === "error") {
+            inv.status = "ok";
+            inv.error = "";
+          }
+        } else {
+          inv[key] = val;
+        }
+      });
+      if (inv._userEdited) inv.confirmed = true;
+    });
+    save();
   }
 
   function esc(s) {
@@ -238,31 +308,47 @@
         id,
         fileName: file.name,
         status: "parsing",
-        amount: null,
+        amount: "",
         merchant: "",
         date: "",
+        invoiceNo: "",
         category: "",
         confidence: 0,
         source: "",
         error: "",
         raw: null,
+        corrections: [],
+        needsReview: false,
+        extract_method: "",
+        review_model: "",
+        confirmed: false,
       };
       session.invoices.push(entry);
+      syncSummaryFromDom();
       renderUpload();
       save();
 
       try {
         const result = await parseInvoice(file, {});
+        const parsedAmount = result.amount;
+        const amount =
+          parsedAmount == null || (Number(parsedAmount) === 0 && result.needsReview)
+            ? ""
+            : parsedAmount;
         Object.assign(entry, {
           status: "ok",
-          amount: result.amount,
+          amount,
           merchant: result.merchant || file.name.replace(/\.[^.]+$/, ""),
           date: result.date || "",
+          invoiceNo: result.invoiceNo || "",
           category: normalizeCategory(result.category),
           confidence: result.confidence || 0,
           source: result.source || "",
           raw: result.raw || null,
           extract_method: result.extract_method,
+          review_model: result.review_model || "",
+          corrections: result.corrections || [],
+          needsReview: !!result.needsReview,
         });
       } catch (err) {
         entry.status = "error";
@@ -270,6 +356,7 @@
         session.parseErrors.push(`${file.name}: ${entry.error}`);
         showToast(`识别失败：${file.name}`);
       }
+      syncSummaryFromDom();
       renderUpload();
       save();
     }
@@ -284,7 +371,7 @@
   /* ---------- interview ---------- */
 
   function okInvoices() {
-    return session.invoices.filter((i) => i.status === "ok");
+    return session.invoices.filter((i) => i.status !== "parsing" && invoiceHasAmount(i));
   }
 
   function applyAnswerSideEffects(qid, value, question) {
@@ -345,7 +432,7 @@
           (inv) => `<li>
             <strong>${esc(inv.merchant || inv.fileName)}</strong>
             <span>${esc(formatMoney(inv.amount))} · ${esc(CAT_LABEL[inv.category] || inv.category)}</span>
-            <span class="muted-sm">${esc(inv.date || "无日期")}</span>
+            <span class="muted-sm">${esc(inv.date || "无日期")}${inv.invoiceNo ? " · " + esc(inv.invoiceNo) : ""}</span>
           </li>`
         )
         .join("");
@@ -456,6 +543,7 @@
         id: uid("row"),
         date: inv.date || "",
         description: inv.merchant || inv.fileName || "",
+        invoiceNo: inv.invoiceNo || "",
         amount: inv.amount == null ? "" : String(inv.amount),
         hasInvoice: true,
         invoiceRef: inv.id,
@@ -543,6 +631,7 @@
               return `<tr data-si="${si}" data-ri="${ri}">
                 <td><input data-cell="date" value="${esc(row.date)}" /></td>
                 <td><input data-cell="description" value="${esc(row.description)}" /></td>
+                <td><input data-cell="invoiceNo" value="${esc(row.invoiceNo || "")}" /></td>
                 <td><input data-cell="amount" inputmode="decimal" value="${esc(row.amount)}" /></td>
                 <td class="td-inv">${row.hasInvoice ? "有票" : "无票"}</td>
                 <td><input data-cell="note" value="${esc(row.note || "")}" placeholder="备注" /></td>
@@ -557,8 +646,8 @@
             </div>
             <div class="table-wrap">
               <table class="sheet-table">
-                <thead><tr><th>日期</th><th>摘要</th><th>金额</th><th>发票</th><th>备注</th><th></th></tr></thead>
-                <tbody>${rows || `<tr><td colspan="6" class="muted">暂无行</td></tr>`}</tbody>
+                <thead><tr><th>日期</th><th>摘要</th><th>发票号码</th><th>金额</th><th>发票</th><th>备注</th><th></th></tr></thead>
+                <tbody>${rows || `<tr><td colspan="7" class="muted">暂无行</td></tr>`}</tbody>
               </table>
             </div>
           </section>`;
@@ -745,19 +834,51 @@
 
     document.getElementById("btn-add-more").addEventListener("click", openPicker);
     document.getElementById("btn-start-interview").addEventListener("click", () => {
-      if (!okInvoices().length) return;
+      syncSummaryFromDom();
+      if (!okInvoices().length) {
+        showToast("请先在汇总表里确认至少一张发票的金额");
+        renderUpload();
+        return;
+      }
+      session.invoices.forEach((inv) => {
+        if (invoiceHasAmount(inv)) inv.confirmed = true;
+      });
       session.chat = [];
+      session.draft = null;
+      save();
       setStage("interview");
     });
 
-    document.getElementById("invoice-list").addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-remove]");
-      if (!btn) return;
-      const id = btn.getAttribute("data-remove");
-      session.invoices = session.invoices.filter((i) => i.id !== id);
-      save();
-      renderUpload();
-    });
+    const invoiceList = document.getElementById("invoice-list");
+    if (invoiceList) {
+      invoiceList.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-remove]");
+        if (!btn) return;
+        const id = btn.getAttribute("data-remove");
+        session.invoices = session.invoices.filter((i) => i.id !== id);
+        save();
+        renderUpload();
+      });
+    }
+    const summaryEl = document.getElementById("invoice-summary");
+    if (summaryEl) {
+      summaryEl.addEventListener("input", () => {
+        syncSummaryFromDom();
+        refreshUploadActions();
+      });
+      summaryEl.addEventListener("change", () => {
+        syncSummaryFromDom();
+        refreshUploadActions();
+      });
+      summaryEl.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-remove]");
+        if (!btn) return;
+        const id = btn.getAttribute("data-remove");
+        session.invoices = session.invoices.filter((i) => i.id !== id);
+        save();
+        renderUpload();
+      });
+    }
 
     document.getElementById("btn-back-upload").addEventListener("click", () => setStage("upload"));
     document.getElementById("btn-back-interview").addEventListener("click", () => setStage("interview"));
@@ -815,6 +936,7 @@
           id: uid("row"),
           date: "",
           description: "",
+          invoiceNo: "",
           amount: "",
           hasInvoice: false,
           invoiceRef: "",

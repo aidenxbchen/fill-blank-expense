@@ -1706,12 +1706,69 @@ button {
 }
 
 .hero-actions {
-  max-width: 640px;
+  max-width: 960px;
   margin: 16px auto 0;
   display: flex;
   gap: 10px;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.invoice-summary {
+  max-width: 960px;
+  margin: 20px auto 0;
+}
+
+.invoice-summary .section-hint {
+  margin: 0 0 12px;
+}
+
+.summary-table input,
+.summary-table select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  background: #fff;
+}
+
+.summary-table input:focus,
+.summary-table select:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent, #2f6fed);
+}
+
+.summary-table .td-file {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.summary-table tr.is-error td {
+  background: var(--danger-soft);
+}
+
+.summary-table tr.is-busy td {
+  opacity: 0.72;
+}
+
+.summary-table td:nth-child(5) {
+  width: 7rem;
+}
+
+.summary-table td:nth-child(6) {
+  width: 7.5rem;
+}
+
+.summary-total {
+  margin-top: 10px;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .parse-status {

@@ -73,8 +73,8 @@
       throw new Error(msg);
     }
 
-    if (!data || typeof data.amount !== "number") {
-      throw new Error("OCR 结果缺少 amount");
+    if (!data) {
+      throw new Error("OCR 结果为空");
     }
 
     var known = { lodging: 1, meal: 1, other: 1, purchase: 1, transit: 1, gift: 1 };
@@ -87,10 +87,14 @@
       category = opts.categoryHint;
     }
 
+    var amount = typeof data.amount === "number" ? data.amount : Number(data.amount);
+    if (!Number.isFinite(amount)) amount = null;
+
     return {
-      amount: data.amount,
+      amount: amount,
       merchant: data.merchant != null ? String(data.merchant) : "",
       date: data.date || opts.dayDate || "",
+      invoiceNo: data.invoice_no || data.invoiceNo || "",
       category: category,
       confidence:
         typeof data.confidence === "number"
@@ -98,6 +102,10 @@
           : Number(data.confidence) || 0,
       source: data.source || "xiaomi-ocr-0",
       raw: data.raw,
+      extract_method: data.extract_method || "",
+      review_model: data.reviewModel || data.review_model || "",
+      corrections: Array.isArray(data.corrections) ? data.corrections : [],
+      needsReview: !!data.needs_review || amount == null,
     };
   }
 

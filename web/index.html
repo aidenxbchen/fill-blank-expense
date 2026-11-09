@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>填空报销 · 丢发票就问完</title>
-  <link rel="stylesheet" href="./styles.css?v=20261108a" />
+  <link rel="stylesheet" href="./styles.css?v=20261109a" />
 </head>
 <body class="delight-body">
   <header class="app-header">
@@ -45,7 +45,7 @@
     <section class="stage-panel" id="stage-upload" data-stage-panel="upload">
       <div class="hero">
         <h2 class="hero-title">把发票全丢进来</h2>
-        <p class="hero-sub">一次多张 PDF / 图片。我们按团队报销规范一句句问你，然后生成可编辑草稿，确认后提交飞书报销（当前为 stub）。</p>
+        <p class="hero-sub">一次多张 PDF / 图片。识别后请在汇总表里核对、直接改格；后续问答和草稿都以这张表为准。</p>
       </div>
       <section class="budget-picker panel" id="budget-picker">
         <div class="panel-head-row">
@@ -61,13 +61,38 @@
           <strong>拖到这里，或点击选择文件</strong>
           <span class="muted">支持 PDF、JPG、PNG、WebP · 可多选</span>
         </div>
-        <input class="file-input-hidden" type="file" id="file-input" accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp,.gif" multiple />
+        <input class="file-input-hidden" type="file" id="file-input" accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif" multiple />
       </div>
       <div class="invoice-chip-list" id="invoice-list" hidden></div>
+      <section class="invoice-summary panel" id="invoice-summary" hidden>
+        <div class="panel-head-row">
+          <h2>识别汇总</h2>
+          <span class="pill" id="summary-count-pill">0</span>
+        </div>
+        <p class="section-hint" id="summary-hint">请核对金额、日期、商户和发票号码，直接在表格里改。后续问答和草稿都以这张表为准，而不是原始识别结果。</p>
+        <div class="table-wrap">
+          <table class="sheet-table summary-table">
+            <thead>
+              <tr>
+                <th>文件</th>
+                <th>日期</th>
+                <th>商户</th>
+                <th>发票号码</th>
+                <th>金额</th>
+                <th>类别</th>
+                <th>状态</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="invoice-summary-body"></tbody>
+          </table>
+        </div>
+        <div class="summary-total" id="summary-total"></div>
+      </section>
       <div class="parse-status" id="parse-status" hidden></div>
       <div class="hero-actions" id="upload-actions" hidden>
         <button type="button" class="btn btn-secondary" id="btn-add-more">继续添加</button>
-        <button type="button" class="btn btn-primary" id="btn-start-interview" disabled>开始问答</button>
+        <button type="button" class="btn btn-primary" id="btn-start-interview" disabled>确认表格，开始问答</button>
       </div>
     </section>
 
@@ -147,8 +172,8 @@
 
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="./ocr-bridge.js?v=20261108a"></script>
-  <script src="./policy.js?v=20261108a"></script>
-  <script src="./app.js?v=20261108a"></script>
+  <script src="./ocr-bridge.js?v=20261109a"></script>
+  <script src="./policy.js?v=20261109a"></script>
+  <script src="./app.js?v=20261109a"></script>
 </body>
 </html>
