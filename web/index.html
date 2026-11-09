@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了么 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261109align1" />
+  <link rel="stylesheet" href="./styles.css?v=20261109ms1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -14,13 +14,18 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <picture>
-            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261109align1" />
-            <img src="./assets/logo-zbs.png?v=20261109align1" alt="" width="44" height="44" />
+            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261109ms1" />
+            <img src="./assets/logo-zbs.png?v=20261109ms1" alt="" width="44" height="44" />
           </picture>
         </div>
         <div class="brand-text">
           <h1>报了么</h1>
           <p id="brand-tagline">发票放进去了，唠唠就完事了。</p>
+          <div class="save-strip" data-state="idle">
+            <span class="save-indicator" aria-hidden="true"></span>
+            <span id="draft-save-status" role="status" aria-live="polite" aria-atomic="true">登录后自动保存草稿</span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-retry-save" hidden>重试保存</button>
+          </div>
         </div>
       </div>
       <div class="header-actions">
@@ -46,11 +51,9 @@
     </div>
   </header>
 
-  <div class="save-strip" data-state="idle">
-    <span class="save-indicator" aria-hidden="true"></span>
-    <span id="draft-save-status" role="status" aria-live="polite" aria-atomic="true">登录后可保存草稿，随时继续填写</span>
-    <button type="button" class="btn btn-ghost btn-sm" id="btn-retry-save" hidden>重试保存</button>
-  </div>
+
+
+  <main class="page delight-page" id="main-content" tabindex="-1">
   <nav class="stage-rail" aria-label="流程进度">
     <ol class="stage-list" id="stage-list">
       <li class="stage-item is-active" data-stage="upload"><span class="stage-dot">1</span><span class="stage-name">上传发票</span></li>
@@ -59,8 +62,6 @@
       <li class="stage-item" data-stage="submit"><span class="stage-dot">4</span><span class="stage-name">发起采购</span></li>
     </ol>
   </nav>
-
-  <main class="page delight-page" id="main-content" tabindex="-1">
     <!-- STAGE: upload -->
     <section class="stage-panel" id="stage-upload" data-stage-panel="upload">
       <div class="hero">
@@ -250,9 +251,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261109align1"></script>
-  <script src="./ocr-bridge.js?v=20261109align1"></script>
-  <script src="./policy.js?v=20261109align1"></script>
-  <script src="./app.js?v=20261109align1"></script>
+  <script src="./ui.js?v=20261109ms1"></script>
+  <script src="./ocr-bridge.js?v=20261109ms1"></script>
+  <script src="./policy.js?v=20261109ms1"></script>
+  <script src="./app.js?v=20261109ms1"></script>
 </body>
 </html>
