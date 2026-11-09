@@ -29,6 +29,7 @@ from feishu_oauth import (
     handle_me,
     load_dotenv as load_feishu_dotenv,
 )
+from feishu_purchase import handle_create, handle_schema
 from invoice_extract import (
     ollama_base,
     ollama_model,
@@ -193,6 +194,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/auth/me":
             handle_me(self)
             return
+        if path == "/api/purchase-schema":
+            handle_schema(self)
+            return
         if path == "/api/budgets":
             handle_budgets(self)
             return
@@ -243,24 +247,21 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/feishu-expense":
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._json(400, {"ok": False, "error": "无效请求长度"})
+                return
+            if not 0 < length <= 1024 * 1024:
+                self._json(413, {"ok": False, "error": "采购请求为空或超过 1MB"})
+                return
+            raw = self.rfile.read(length)
             try:
                 body = json.loads(raw.decode("utf-8") or "{}")
             except Exception as e:
                 self._json(400, {"ok": False, "error": f"invalid JSON: {e}"})
                 return
-            approval_id = "STUB-FS-" + str(int(time.time()))
-            self._json(
-                200,
-                {
-                    "ok": True,
-                    "stub": True,
-                    "message": "Feishu expense stub accepted; no real approval created",
-                    "feishuApprovalId": approval_id,
-                    "echo": body,
-                },
-            )
+            handle_create(self, body)
             return
 
         if path != "/api/parse-invoice":
@@ -346,7 +347,7 @@ def main() -> None:
         f"  GET  /api/health\n"
         f"  GET  /api/auth/feishu/login | /api/auth/me | /api/budgets\n"
         f"  POST /api/parse-invoice (multipart file=...)\n"
-        f"  POST /api/feishu-expense (JSON stub)\n"
+        f"  POST /api/feishu-expense (native purchase approval)\n"
         f"  feishu_oauth={'configured' if os.environ.get('FEISHU_APP_ID') else 'missing FEISHU_*'}",
         flush=True,
     )

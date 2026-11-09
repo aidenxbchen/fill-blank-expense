@@ -1,12 +1,12 @@
 /**
  * 填空报销 · delight flow
- * dump invoices → parse → one-at-a-time policy interview → editable draft → Feishu stub
+ * dump invoices → parse → one-at-a-time policy interview → editable draft → native Feishu purchase approval
  */
 (function () {
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261109a";
+  const ASSET_V = "20261109purchase1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -22,6 +22,7 @@
 
   let authUser = null;
   let approvedBudgets = [];
+  let budgetWarning = "";
 
   const SHEET_KIND_META = {
     meal: { kind: "meal", title: "餐饮表" },
@@ -510,6 +511,14 @@
     if (!value) return;
     const q = session._currentQuestion;
     if (!q) return;
+    if (q.id === "schemaUnavailable") { showToast("采购表单加载失败，请刷新重试"); return; }
+    if (q.numeric && (!Number.isFinite(Number(value)) || Number(value) <= 0)) { showToast("请输入大于零的数量"); return; }
+    if (q.options && q.options.length && !q.options.includes(value)) { showToast("请从现有选项中选择"); return; }
+    if (q.id === "selectBudget") {
+      const index = (q.chips || []).indexOf(value);
+      if (index < 0) { showToast("请点选一条已通过的预算"); return; }
+      selectBudget(q.budgetIds[index]);
+    }
     pushChat("user", value, { qid: q.id });
     applyAnswerSideEffects(q.id, value, q);
     save();
@@ -520,13 +529,6 @@
 
   function buildDraft() {
     const invs = okInvoices().map((i) => ({ ...i }));
-    // remap entertainment label for meals if needed
-    if (session.answers.isEntertainment === true) {
-      invs.forEach((inv) => {
-        if (inv.category === "meal") inv.category = "entertainment";
-      });
-    }
-
     const sheetsMap = {};
     invs.forEach((inv) => {
       const kind = SHEET_KIND_META[inv.category] ? inv.category : "other";
@@ -551,28 +553,6 @@
       });
     });
 
-    // cash no invoice placeholder
-    const cash = session.answers.cashNoInvoice || "";
-    if (cash && !/没有/.test(cash)) {
-      if (!sheetsMap.other) {
-        sheetsMap.other = {
-          id: uid("sheet"),
-          title: SHEET_KIND_META.other.title,
-          kind: "other",
-          rows: [],
-        };
-      }
-      sheetsMap.other.rows.push({
-        id: uid("row"),
-        date: "",
-        description: "无发票支出（待补）",
-        amount: "",
-        hasInvoice: false,
-        invoiceRef: "",
-        note: String(cash),
-      });
-    }
-
     const sheets = Object.values(sheetsMap);
     const total = sheets.reduce(
       (s, sh) => s + sh.rows.reduce((a, r) => a + (parseFloat(r.amount) || 0), 0),
@@ -581,6 +561,7 @@
 
     session.draft = {
       generatedAt: new Date().toISOString(),
+      purchaseMethod: session.answers.purchaseMethod || "",
       purpose: session.answers.purpose || "",
       costCenter: session.answers.costCenter || "",
       guestCompany: session.answers.guestCompany || "",
@@ -612,15 +593,20 @@
     }
 
     if (meta) {
-      meta.innerHTML = `
-        <div class="draft-meta-grid">
-          <div class="field"><label>事由</label><input type="text" data-meta="purpose" value="${esc(d.purpose)}" /></div>
-          <div class="field"><label>项目 / 成本中心</label><input type="text" data-meta="costCenter" value="${esc(d.costCenter)}" /></div>
-          <div class="field"><label>对方公司</label><input type="text" data-meta="guestCompany" value="${esc(d.guestCompany)}" /></div>
-          <div class="field"><label>用餐人</label><input type="text" data-meta="attendees" value="${esc(d.attendees)}" /></div>
-          <div class="field"><label>酒水</label><input type="text" data-meta="hasAlcohol" value="${esc(d.hasAlcohol)}" /></div>
-          <div class="field"><label>对公 / 私人</label><input type="text" data-meta="privatePublic" value="${esc(d.privatePublic)}" /></div>
-        </div>`;
+      const schema = window.__purchaseSchema || {projects:[], methods:[]};
+      const choices = (items, current) => items.map(x=>`<option value="${esc(x)}" ${x===current ? "selected":""}>${esc(x)}</option>`).join("");
+      const method = schema.methods.find(m=>m.name === d.purchaseMethod);
+      const sharedFields = method ? method.fields.filter(w=>["账户名称","银行账户","收款账号","开户支行"].includes(w.name)).map(w=>{
+        const key = `purchase:${method.name}:shared:${w.name}`;
+        return `<div class="field"><label>${esc(w.name)}（所有行共用）</label><input data-answer="${esc(key)}" value="${esc(session.answers[key] || "")}" /></div>`;
+      }).join("") : "";
+      meta.innerHTML = `<div class="draft-meta-grid">
+        <div class="field"><label>采购事由</label><input data-meta="purpose" value="${esc(d.purpose)}" /></div>
+        <div class="field"><label>项目</label><select data-meta="costCenter">${choices(schema.projects,d.costCenter)}</select></div>
+        <div class="field"><label>采购方式</label><select data-meta="purchaseMethod">${choices(schema.methods.map(m=>m.name),d.purchaseMethod)}</select></div>
+        <div class="field"><label>关联审批</label><span>${esc((session.answers.selectedBudget || {}).title || "未选择（仅预付款项可不选）")}</span></div>
+        ${sharedFields}
+      </div><p class="section-hint">修改采购方式后，请返回问答补齐对应必填项。金额、日期、商户、票号与识别汇总同步。</p>`;
     }
 
     if (sheetsEl) {
@@ -634,7 +620,7 @@
                 <td><input data-cell="invoiceNo" value="${esc(row.invoiceNo || "")}" /></td>
                 <td><input data-cell="amount" inputmode="decimal" value="${esc(row.amount)}" /></td>
                 <td class="td-inv">${row.hasInvoice ? "有票" : "无票"}</td>
-                <td><input data-cell="note" value="${esc(row.note || "")}" placeholder="备注" /></td>
+                <td><input data-cell="note" value="${esc(row.note || "")}" placeholder="备注" />${purchaseRowFields(row.invoiceRef)}</td>
                 <td><button type="button" class="btn btn-ghost btn-sm" data-del-row="${si}:${ri}">删</button></td>
               </tr>`;
             })
@@ -642,7 +628,7 @@
           return `<section class="panel sheet-card" data-sheet="${si}">
             <div class="sheet-head">
               <input class="sheet-title-input" data-sheet-title="${si}" value="${esc(sheet.title)}" />
-              <button type="button" class="btn btn-secondary btn-sm" data-add-row="${si}">添加行</button>
+
             </div>
             <div class="table-wrap">
               <table class="sheet-table">
@@ -675,6 +661,7 @@
 
   function syncDraftFromDom() {
     if (!session.draft) return;
+    document.querySelectorAll("[data-answer]").forEach(input => { session.answers[input.dataset.answer] = input.value; });
     document.querySelectorAll("#draft-meta [data-meta]").forEach((input) => {
       const key = input.getAttribute("data-meta");
       session.draft[key] = input.value;
@@ -693,98 +680,97 @@
         row[input.getAttribute("data-cell")] = input.value;
       });
     });
+    session.draft.answers = {...session.answers};
+    session.draft.detailSheets.forEach(sh => sh.rows.forEach(row => {
+      const inv = session.invoices.find(i => i.id === row.invoiceRef);
+      if (inv) Object.assign(inv, {date:row.date, merchant:row.description, invoiceNo:row.invoiceNo, amount:row.amount, note:row.note});
+    }));
     recomputeDraftTotal();
   }
 
-  /* ---------- submit / feishu stub ---------- */
+  /* ---------- real purchase submission ---------- */
+
+  function purchaseRowFields(invoiceId) {
+    const method = ((window.__purchaseSchema || {}).methods || []).find(m=>m.name === session.draft.purchaseMethod);
+    if (!method) return "";
+    return `<details><summary>采购明细</summary>${method.fields.filter(w=>!["金额","名称","备注","账户名称","银行账户","收款账号","开户支行"].includes(w.name)).map(w=>{
+      const shared = ["账户名称","银行账户","收款账号","开户支行"].includes(w.name);
+      const key = `purchase:${method.name}:${shared ? "shared":invoiceId}:${w.name}`;
+      const value = session.answers[key] || "";
+      const control = w.options.length ? `<select data-answer="${esc(key)}"><option value="">请选择</option>${w.options.map(o=>`<option ${o===value ? "selected":""}>${esc(o)}</option>`).join("")}</select>` : `<input data-answer="${esc(key)}" value="${esc(value)}" />`;
+      return `<label>${esc(w.name)}${shared ? "（所有行共用）":""}${control}</label>`;
+    }).join("")}</details>`;
+  }
 
   function buildFeishuPayload() {
     syncDraftFromDom();
     const d = session.draft;
-    return {
-      stub: true,
-      api: "POST /api/feishu-expense",
-      note: "Real Feishu approval wiring comes later. This payload is what would be sent.",
-      submittedAt: new Date().toISOString(),
-      claim: {
-        purpose: d.purpose,
-        costCenter: d.costCenter,
-        guestCompany: d.guestCompany,
-        attendees: d.attendees,
-        hasAlcohol: d.hasAlcohol,
-        privatePublic: d.privatePublic,
-        travelCity: d.travelCity,
-        purchaseProject: d.purchaseProject,
-        total: d.total,
-        currency: "CNY",
-        invoiceCount: (d.invoices || []).length,
-        detailSheets: d.detailSheets,
-        answers: d.answers,
-        policyName: d.policyName,
-        selectedBudget: (session.answers && session.answers.selectedBudget) || null,
-      },
-    };
+    return {claim:{purchaseMethod:d.purchaseMethod, purpose:d.purpose, costCenter:d.costCenter,
+      invoices:okInvoices().map(({id,date,merchant,invoiceNo,amount,category,note,fileName})=>({id,date,merchant,invoiceNo,amount,category,note,fileName})), answers:{...session.answers},
+      selectedBudget:session.answers.selectedBudget || null}};
   }
 
   function renderSubmit() {
     const prev = document.getElementById("submit-preview");
     if (!session.draft) buildDraft();
-    const payload = buildFeishuPayload();
-    if (prev) {
-      prev.innerHTML = `
-        <div class="submit-stat"><span>事由</span><strong>${esc(payload.claim.purpose || "—")}</strong></div>
-        <div class="submit-stat"><span>合计</span><strong>${esc(formatMoney(payload.claim.total))}</strong></div>
-        <div class="submit-stat"><span>发票</span><strong>${esc(payload.claim.invoiceCount)} 张</strong></div>
-        <div class="submit-stat"><span>明细表</span><strong>${esc(payload.claim.detailSheets.length)} 张</strong></div>
-      `;
-    }
+    const c = buildFeishuPayload().claim;
+    if (prev) prev.innerHTML = `
+      <div class="submit-stat"><span>采购方式</span><strong>${esc(c.purchaseMethod || "未填")}</strong></div>
+      <div class="submit-stat"><span>项目</span><strong>${esc(c.costCenter || "未填")}</strong></div>
+      <div class="submit-stat"><span>采购事由</span><strong>${esc(c.purpose || "未填")}</strong></div>
+      <div class="submit-stat"><span>合计</span><strong>${esc(formatMoney(c.invoices.reduce((a,i)=>a+Number(i.amount),0)))}</strong></div>
+      <div class="submit-stat"><span>关联审批</span><strong>${esc((c.selectedBudget || {}).title || "未选择")}</strong></div>`;
   }
 
+  let submitting = false;
   async function submitFeishu() {
+    if (submitting) return;
+    if (!authUser) { showToast("请先用飞书登录"); return; }
     const payload = buildFeishuPayload();
+    const pending = window.ExpensePolicy.nextQuestion(payload.claim.invoices, {...session.answers, ...payload.claim});
+    if (pending) { showToast("还缺采购必填项，先补齐这一问"); setStage("interview"); return; }
+    submitting = true;
+    const button = document.getElementById("btn-feishu-submit");
+    button.disabled = true;
+    button.textContent = "正在发起采购申请…";
     let result;
     try {
-      const base =
-        location.hostname === "127.0.0.1" || location.hostname === "localhost"
-          ? "http://127.0.0.1:18790"
-          : "";
-      const res = await fetch(base + "/api/feishu-expense", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const res = await fetch(apiBase() + "/api/feishu-expense", {
+        method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)
       });
-      const text = await res.text();
-      let data;
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch (e) {
-        data = { ok: false, error: "non-json", raw: text.slice(0, 400) };
+      result = await res.json();
+      if (!res.ok || !result || !result.ok || !result.instanceCode || result.stub) {
+        result = {...result, ok:false, error:(result && result.error) || "飞书未确认创建成功"};
       }
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || "HTTP " + res.status);
-      result = data;
     } catch (err) {
-      // client stub fallback
-      result = {
-        ok: true,
-        stub: true,
-        clientFallback: true,
-        message: "OCR 桥接不可达，已使用前端 stub",
-        errorDetail: String(err && err.message ? err.message : err),
-        echo: payload,
-        feishuApprovalId: "STUB-" + Date.now().toString(36).toUpperCase(),
-      };
+      result = {ok:false, error:"未收到飞书创建确认，请先检查飞书「已发起」，重试时会防止重复创建。"};
+    } finally {
+      submitting = false;
+      button.disabled = false;
+      button.textContent = "发起飞书采购申请";
     }
-
     session.lastFeishu = result;
     save();
     showResultModal(result);
-    showToast(result.ok ? "已提交（stub 成功）" : "提交失败");
+    showToast(result.ok ? "采购申请已发起":"提交未完成，请查看原因");
   }
 
   function showResultModal(result) {
     const modal = document.getElementById("result-modal");
     const pre = document.getElementById("result-payload");
-    if (pre) pre.textContent = JSON.stringify(result, null, 2);
+    const title = document.getElementById("result-title");
+    if (title) title.textContent = result.ok ? "采购申请已发起" : "采购申请未完成";
+    const links = document.getElementById("result-links");
+    if (links) {
+      links.replaceChildren();
+      const addLink = (label, url) => {
+        if (!url || !/^https:\/\//.test(url)) return;
+        const a = document.createElement("a"); a.href=url; a.target="_blank"; a.rel="noopener noreferrer"; a.textContent=label; a.className="btn btn-primary"; links.append(a);
+      };
+      if (result.ok) addLink("打开飞书采购申请", result.approvalUrl);
+      else { addLink("开通飞书审批权限", result.permissionUrl); if (result.loginUrl) addLink("重新用飞书登录", new URL(result.loginUrl, location.origin).href); }
+    }
+    if (pre) pre.textContent = result.ok ? `采购申请已发起\n申请人：${result.initiator}\n审批单号：${result.serialNumber || "同步中"}\n实例编号：${result.instanceCode}` : result.error;
     if (modal) modal.hidden = false;
   }
 
@@ -835,6 +821,8 @@
     document.getElementById("btn-add-more").addEventListener("click", openPicker);
     document.getElementById("btn-start-interview").addEventListener("click", () => {
       syncSummaryFromDom();
+      if (!window.__purchaseSchema) { showToast("采购表单加载失败，请刷新重试"); return; }
+      if (!authUser) { showToast("请先用飞书登录"); return; }
       if (!okInvoices().length) {
         showToast("请先在汇总表里确认至少一张发票的金额");
         renderUpload();
@@ -900,7 +888,7 @@
       const chip = e.target.closest("[data-chip]");
       if (!chip) return;
       const q = session._currentQuestion;
-      if (q && (q.input === "chips" || !document.getElementById("chat-input").value)) {
+      if (q) {
         submitAnswer(chip.getAttribute("data-chip"));
       } else {
         document.getElementById("chat-input").value = chip.getAttribute("data-chip");
@@ -924,7 +912,7 @@
     });
 
     document.getElementById("detail-sheets").addEventListener("input", (e) => {
-      if (!e.target.matches("input")) return;
+      if (!e.target.matches("input, select")) return;
       syncDraftFromDom();
     });
     document.getElementById("draft-meta").addEventListener("input", () => syncDraftFromDom());
@@ -949,7 +937,8 @@
       const del = e.target.closest("[data-del-row]");
       if (del) {
         const [si, ri] = del.getAttribute("data-del-row").split(":").map(Number);
-        session.draft.detailSheets[si].rows.splice(ri, 1);
+        const removed = session.draft.detailSheets[si].rows.splice(ri, 1)[0];
+        if (removed && removed.invoiceRef) session.invoices = session.invoices.filter(i=>i.id !== removed.invoiceRef);
         save();
         renderDraft();
       }
@@ -1001,12 +990,14 @@
     session.answers.selectedBudget = {
       instanceId: b.instanceId,
       approvalName: b.approvalName,
+      approvalCode: b.approvalCode,
       project: b.project,
       title: b.title,
       totalAmount: b.totalAmount,
       subjects: b.subjects || [],
     };
     if (b.project) session.answers.purchaseProject = b.project;
+    if (session.draft) session.draft.costCenter = session.answers.costCenter;
     save();
     renderBudgets();
     showToast("已选择预算：" + (b.project || b.title || ""));
@@ -1026,8 +1017,13 @@
       return;
     }
     if (pill) pill.textContent = String(approvedBudgets.length);
+    if (budgetWarning) {
+      if (hint) hint.textContent = budgetWarning;
+      grid.innerHTML = `<p class="budget-empty">${esc(budgetWarning)}</p>`;
+      return;
+    }
     if (!approvedBudgets.length) {
-      if (hint) hint.textContent = "没有已通过的立项或变更预算，问答时仍可手填项目。";
+      if (hint) hint.textContent = "没有可用的已通过预算；除预付款项外，须先在飞书完成预算或出差审批。";
       grid.innerHTML = `<p class="budget-empty">暂无已通过的预算</p>`;
       return;
     }
@@ -1099,6 +1095,7 @@
           cache: "no-store",
         });
         const data = await res.json();
+        budgetWarning = (data && (data.error || data.warning)) || "";
         approvedBudgets = data && Array.isArray(data.budgets) ? data.budgets : [];
         window.__approvedBudgets = approvedBudgets;
         if (data && data.error && !approvedBudgets.length) {
@@ -1106,10 +1103,12 @@
           if (hint) hint.textContent = data.error;
         }
       } catch (e) {
+        budgetWarning = "预算读取失败，请检查网络并刷新重试";
         approvedBudgets = [];
         window.__approvedBudgets = [];
       }
     } else {
+      budgetWarning = "";
       approvedBudgets = [];
       window.__approvedBudgets = [];
     }
@@ -1124,6 +1123,7 @@
       });
     } catch (e) {}
     authUser = null;
+    budgetWarning = "";
     approvedBudgets = [];
     window.__approvedBudgets = [];
     renderAuth();
@@ -1151,11 +1151,17 @@
     }
   }
 
-  function init() {
+  async function init() {
     load();
     bind();
     consumeAuthQuery();
-    refreshAuth();
+    try {
+      const res = await fetch(apiBase() + "/api/purchase-schema", {cache:"no-store"});
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "采购表单加载失败");
+      window.__purchaseSchema = data;
+    } catch (err) { showToast(err.message, 10000); }
+    await refreshAuth();
     // restore stage
     const stage = session.stage || "upload";
     if (stage === "interview" && !okInvoices().length) session.stage = "upload";

@@ -9,9 +9,9 @@
 1. **丢发票**：一个大拖放区，一次多张 PDF / 图片，不必先选场景或按天找槽位。
 2. **识别**：`/api/parse-invoice`：文字 PDF 抽文本；图片先经 Xiaomi-OCR 抽全文，再启发式抽取，并用本地大模型校对（默认 `longwayxu/xiaomi-ocr-0:bf16` 文本模式，避免 8GB Mini 再加载 `gemma:7b` 把视觉模型挤出显存。可用环境变量 `INVOICE_REVIEW_MODEL=gemma:7b` 改用 Gemma）。
 3. **汇总表**：识别完成后出现可编辑汇总表（日期 / 商户 / 发票号码 / 金额 / 类别）。用户确认或手改后，**以表格为准**进入问答和草稿。
-4. **问答**：按内置 `POLICY`（典型中国初创规范）**一次只问一个问题**（事由、项目/成本中心、谁吃了、有无酒水、对公/私人、缺日期、类别冲突、无票现金等）。Chips + 自由输入；进度「还差 N 个问题」。
-5. **草稿**：按类别生成可编辑明细表 + 摘要字段（含发票号码）；可改、可加无票行。
-6. **提交飞书**：按钮调用 `POST /api/feishu-expense`（**明确 stub**，弹窗展示 payload；真实飞书审批后续再接）。
+4. **问答**：从飞书实时读取采购申请定义，**一次只问一个问题**，收集采购方式、项目、采购事由、关联预算，以及当前方式的科目/规格/数量等必填项。七种方式按定义切换明细；合同/预付多收集收款信息，京东收集采购清单，差旅收集费用类型。
+5. **草稿**：可编辑明细与「识别汇总」同步；金额、日期、商户、发票号均取确认后的表格。采购专用字段在行内「采购明细」展开编辑。
+6. **提交飞书采购申请**：按钮调用 `POST /api/feishu-expense` → 飞书原生 `POST /approval/v4/instances`。服务端验证 OAuth 用户，用应用凭证传入该用户的 `open_id`，创建在登录用户的名下。成功必须有真实 `instance_code`，页面显示审批链接与单号；错误不会回退成成功。
 
 会话落在 `localStorage` 键 `fill-blank-expense:delight:v1`。
 
@@ -22,8 +22,8 @@
 1. 打开 https://baoxiao.xbchen.top 并 **硬刷新**（应看到「把发票全丢进来」英雄区，而不是差旅 Tab）。
 2. 一次拖入 **多张** 发票（可用仓库里的 `test-invoice.pdf` + 任意图片）；等待出现「识别汇总」表。
 3. 在表里核对金额（价税合计）、日期、商户、发票号码，改完点 **确认表格，开始问答**；用 chips 或输入框逐题回答。
-4. 问完后自动进入 **报销草稿**：检查分类表，随便改一行金额，看合计更新。
-5. **确认，去提交飞书** → **提交飞书报销** → 应弹出 stub 成功 payload（含 `feishuApprovalId` / `echo`）。
+4. 问完后进入 **采购申请草稿**；核对项目、科目、规格、数量，编辑金额后合计同步更新。
+5. **确认，去提交飞书** → **发起飞书采购申请**。成功显示真实实例编号、单号和「打开飞书采购申请」；缺权限显示具体错误与开通链接。
 
 ## 本地启动
 
@@ -35,19 +35,34 @@
 ```
 
 - 前端：http://127.0.0.1:5173
-- OCR / API：`GET /api/health` · `POST /api/parse-invoice` · `POST /api/feishu-expense`（stub）
+- OCR / API：`GET /api/health` · `POST /api/parse-invoice` · `POST /api/feishu-expense`（真实采购审批） · `GET /api/purchase-schema`（实时字段选项）
 - 飞书登录：`GET /api/auth/feishu/login` → 回调 `/api/auth/feishu/callback` · `GET /api/auth/me` · `POST /api/auth/logout` · `GET /api/budgets`（当前用户已通过的立项/变更/出差）
 - 在页面点「用飞书登录」，授权后可点选已通过预算，问答会自动带上项目
 - 凭证放仓库根目录 `.env`（见 `.env.example`，不要提交）。需配置重定向 URL `https://baoxiao.xbchen.top/api/auth/feishu/callback`
 - 隧道：`baoxiao.xbchen.top` 的 `/api` → OCR `:18790`，其余 → web `:5173`
 
-## 报销政策（mock）
+## 采购申请定义与权限
 
-- JS：`web/policy.js` → `window.ExpensePolicy.POLICY` + `buildQuestionQueue` / `nextQuestion`
-- JSON 镜像：`web/policy.json`
-- v1 **纯规则引擎**（无外部 LLM）；预留 `window.__expenseInterviewLLM` 挂钩，便于后续接入模型。
+- 定义：`D448D0FB-77DB-4640-9650-1FB99512888C`（采购申请）。`ocr/purchase_definition.json` 是核验用表单快照；运行时读取飞书实时定义，定义不匹配或新增未映射的必填项会阻止提交。
+- 采购方式 / 项目：显示文字转换为各自 `radioV2` 选项 value；采购事由 → `textarea`。
+- 发票：确认后的金额 → 当前明细组的金额（CNY）；商户 → 名称；日期、发票号、备注 → 备注。每张发票一行，科目使用该方式自己的选项 value，规格与数量由用户确认。
+- 关联审批 → `widget17901536351250001` 的 `connect` 实例 code 数组。除预付款项外必填；后端重新核验定义、通过状态与用户范围，仅允许立项预算、项目预算变更或出差申请。主页继续只列立项与变更预算。
+- 飞书原生创建接口**仅支持 tenant_access_token**，直接传 user_access_token 会返回 `99991668 user access token not support`。服务端先用 OAuth token 校验当前用户，再将可信 `open_id` 作为发起人，忽略客户端传入的用户身份。
+- 创建所需**应用身份**权限：`approval:instance`（最小）或 `approval:approval`；读取定义/预算已有的 `approval:approval:readonly`、`approval:approval.list:readonly` 继续保留。**用户身份**的 `approval:instance:write` 不能代替应用身份权限。
+- 2026-11-09 实测：当前缺创建的应用身份权限，飞书返回 `99991672`。管理员在 [应用权限管理](https://open.feishu.cn/app/cli_aaa28a16ca785cba/auth?q=approval:instance&op_from=openapi&token_type=tenant) 开通 `approval:instance` 并发布版本后复测；当前部署会明确失败，不会伪造审批。
+- 同一用户与相同表单生成稳定 UUID；`.submissions.sqlite3` 保存请求状态与真实回执（0600，忽略提交）。重复点击/刷新复用成功回执；超时或中断后状态待确认，阻止重复创建，须先在飞书核对。不要删除此数据库来重试未知结果。
+- 原始发票附件不是采购定义的必填项；本次仅提交核对后的结构化事实，尚未上传原文件。
 
-规则示例：强制事由；采购要项目名；招待要对方公司；餐饮问同席/酒水/对公私人；可选差旅餐住上限软提醒；缺日期与商户-类别冲突会追问。
+### 验证
+
+```bash
+python3 -m unittest discover -s ocr -v
+python3 ocr/test_invoice_extract.py
+node web/test-purchase-policy.cjs
+node --check web/app.js
+```
+
+七种明细的条件切换、精确选项映射、关联范围/必填、OAuth 发起人绑定、权限失败、超时防重复、真实链接/单号回执均有离线测试。线上创建权限探测只用不存在的定义，不发起测试采购；真实采购定义的流程预览（指定现有部门 ID）返回 code 0。开通权限后，用实际发票完成一次公网流程，在该登录用户的飞书「已发起」核对。
 
 ## OCR 与校对
 
@@ -69,6 +84,6 @@
 
 ## 尚未实现
 
-- 真实飞书审批实例创建
+- 原始发票附件上传
 - LLM 问答（结构已预留）
 - 与 invoice-assistant 深度对接
