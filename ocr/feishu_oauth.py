@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -88,6 +89,24 @@ MISSING_SCOPE_WARNING = (
     "approval:approval.list:readonly 和 approval:approval:readonly，"
     "并创建版本发布后再试。当前无法列出预算。"
 )
+
+BUDGET_CACHE_TTL_SEC = 90
+_BUDGET_FETCH_WORKERS = 8
+_budget_cache_lock = threading.Lock()
+# open_id-key -> (expires_at_epoch, budgets_list, warning)
+_budget_cache: dict[str, tuple[float, list[dict[str, Any]], str]] = {}
+
+
+def clear_budget_cache() -> None:
+    """Test/helper: drop in-memory budget list cache."""
+    with _budget_cache_lock:
+        _budget_cache.clear()
+
+
+def _budget_cache_key(user: dict[str, Any] | None) -> str:
+    ids = sorted(x for x in logged_in_user_ids(user) if x)
+    return "|".join(ids)
+
 
 APPROVED_STATUSES = {
     "2",
@@ -1021,11 +1040,20 @@ def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, A
     """Return approved 立项/变更 budgets in the logged-in user's scope.
 
     Uses tenant_access_token + instances/query. Never falls back to the
-    user-initiated list (which mixed in 出差申请).
+    user-initiated list (which mixed in 出差申请). Fetches instance details
+    in parallel and caches per-user results briefly.
     """
     user_ids = logged_in_user_ids(user)
     if not user_ids:
         return [], "无法识别登录用户的飞书身份，请重新用飞书登录"
+    cache_key = _budget_cache_key(user)
+    now = time.time()
+    if cache_key:
+        with _budget_cache_lock:
+            hit = _budget_cache.get(cache_key)
+            if hit and hit[0] > now:
+                budgets, warning = hit[1], hit[2]
+                return [dict(b) for b in budgets], warning
     try:
         token = get_tenant_access_token()
     except FeishuAPIError as e:
@@ -1035,7 +1063,7 @@ def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, A
 
     collected: list[dict[str, Any]] = []
     seen: set[str] = set()
-    candidates: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, Any], Any]] = []
+    pending: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any], str]] = []
     id_map: dict[str, set[str]] = {}
     try:
         for defn in BUDGET_DEFINITIONS:
@@ -1056,20 +1084,47 @@ def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, A
                 )
                 if not instance_code or instance_code in seen:
                     continue
-                try:
-                    detail = fetch_instance(token, instance_code)
-                except FeishuAPIError as e:
-                    if is_missing_scope(e):
-                        return [], MISSING_SCOPE_WARNING
-                    sys.stderr.write(f"instance detail failed {instance_code}: {e}\n")
-                    continue
-                status = detail.get("status") if detail.get("status") is not None else inst_node.get("status")
-                if not is_approved_status(status):
-                    continue
                 seen.add(instance_code)
-                harvest_identity_pairs(detail, id_map)
-                harvest_identity_pairs(inst_node, id_map)
-                candidates.append((defn, approval_node, inst_node, instance_code, detail, status))
+                pending.append((defn, approval_node, inst_node, instance_code))
+
+        details_by_code: dict[str, dict[str, Any]] = {}
+        missing_scope = False
+        fetch_error: FeishuAPIError | None = None
+
+        def _fetch(code: str) -> tuple[str, dict[str, Any] | None, FeishuAPIError | None]:
+            try:
+                return code, fetch_instance(token, code), None
+            except FeishuAPIError as err:
+                return code, None, err
+
+        with ThreadPoolExecutor(max_workers=_BUDGET_FETCH_WORKERS) as pool:
+            futures = [pool.submit(_fetch, code) for *_, code in pending]
+            for fut in as_completed(futures):
+                code, detail, err = fut.result()
+                if err is not None:
+                    if is_missing_scope(err):
+                        missing_scope = True
+                        break
+                    sys.stderr.write(f"instance detail failed {code}: {err}\n")
+                    fetch_error = err
+                    continue
+                if detail is not None:
+                    details_by_code[code] = detail
+        if missing_scope:
+            return [], MISSING_SCOPE_WARNING
+
+        candidates: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, Any], Any]] = []
+        for defn, approval_node, inst_node, instance_code in pending:
+            detail = details_by_code.get(instance_code)
+            if not detail:
+                continue
+            status = detail.get("status") if detail.get("status") is not None else inst_node.get("status")
+            if not is_approved_status(status):
+                continue
+            harvest_identity_pairs(detail, id_map)
+            harvest_identity_pairs(inst_node, id_map)
+            candidates.append((defn, approval_node, inst_node, instance_code, detail, status))
+
         user_ids = expand_user_ids_with_map(user_ids, id_map)
         for defn, approval_node, inst_node, instance_code, detail, status in candidates:
             if not user_in_budget_scope(user_ids, detail, inst_node):
@@ -1098,7 +1153,16 @@ def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, A
         key=lambda b: (str(b.get("startTime") or ""), str(b.get("project") or "")),
         reverse=True,
     )
-    return collected, ""
+    warning = ""
+    if cache_key:
+        with _budget_cache_lock:
+            _budget_cache[cache_key] = (
+                time.time() + BUDGET_CACHE_TTL_SEC,
+                [dict(b) for b in collected],
+                warning,
+            )
+    return collected, warning
+
 
 
 def cookie_from_headers(headers: Any) -> str:

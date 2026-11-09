@@ -5,17 +5,22 @@ from __future__ import annotations
 import json
 import unittest
 
+from unittest import mock
+
 from feishu_oauth import (
+    BUDGET_CACHE_TTL_SEC,
     BUDGET_DEFINITIONS,
     MISSING_SCOPE_WARNING,
     TRAVEL_DEFINITION,
     FeishuAPIError,
+    clear_budget_cache,
     collect_scope_ids_from_form,
     expand_user_ids_with_map,
     extract_contact_ids,
     harvest_identity_pairs,
     is_missing_scope,
     kind_for_code,
+    list_approved_budgets,
     logged_in_user_ids,
     user_in_budget_scope,
 )
@@ -177,6 +182,133 @@ class MissingScopeTest(unittest.TestCase):
     def test_unrelated_error_not_treated_as_missing_scope(self):
         err = FeishuAPIError(400, {"code": 1390001, "msg": "param is invalid"})
         self.assertFalse(is_missing_scope(err))
+
+
+
+class BudgetListCacheParallelTest(unittest.TestCase):
+    """list_approved_budgets: TTL cache hit + parallel fetch still scopes."""
+
+    USER = {"open_id": "ou_member", "name": "参与人"}
+
+    DETAIL_OK = {
+        "status": "APPROVED",
+        "approval_code": BUDGET_DEFINITIONS[0]["approval_code"],
+        "approval_name": "立项预算申请",
+        "serial_number": "SN-1",
+        "start_time": "1700000000000",
+        "form": json.dumps(
+            [
+                {"id": "w1", "name": "项目名称", "type": "input", "value": "公共办公"},
+                {
+                    "id": "w2",
+                    "name": "项目负责人",
+                    "type": "contact",
+                    "value": [{"open_id": "ou_owner", "name": "负责人"}],
+                },
+                {
+                    "id": "w3",
+                    "name": "项目参与人",
+                    "type": "contact",
+                    "value": [{"open_id": "ou_member", "user_id": "uid_member", "name": "参与人"}],
+                },
+            ]
+        ),
+        "timeline": [
+            {"open_id": "ou_member", "user_id": "uid_member", "type": "START"},
+        ],
+    }
+
+    DETAIL_OTHER = {
+        "status": "APPROVED",
+        "approval_code": BUDGET_DEFINITIONS[0]["approval_code"],
+        "approval_name": "立项预算申请",
+        "serial_number": "SN-2",
+        "start_time": "1700000000000",
+        "form": json.dumps(
+            [
+                {"id": "w1", "name": "项目名称", "type": "input", "value": "外人项目"},
+                {
+                    "id": "w3",
+                    "name": "项目参与人",
+                    "type": "contact",
+                    "value": [{"open_id": "ou_stranger", "name": "外人"}],
+                },
+            ]
+        ),
+        "timeline": [{"open_id": "ou_stranger", "user_id": "uid_stranger", "type": "START"}],
+    }
+
+    def setUp(self):
+        clear_budget_cache()
+
+    def tearDown(self):
+        clear_budget_cache()
+
+    def _query_side_effect(self, token, approval_code):
+        if approval_code == BUDGET_DEFINITIONS[0]["approval_code"]:
+            return [
+                {"instance": {"code": "inst_in_scope", "status": "APPROVED"}},
+                {"instance": {"code": "inst_out_scope", "status": "APPROVED"}},
+            ]
+        return []
+
+    def _fetch_side_effect(self, token, instance_id):
+        if instance_id == "inst_in_scope":
+            return dict(self.DETAIL_OK)
+        if instance_id == "inst_out_scope":
+            return dict(self.DETAIL_OTHER)
+        raise FeishuAPIError(404, {"code": 1, "msg": "missing"})
+
+    @mock.patch("feishu_oauth.fetch_instance")
+    @mock.patch("feishu_oauth.query_approved_instances")
+    @mock.patch("feishu_oauth.get_tenant_access_token", return_value="tok")
+    def test_parallel_fetch_filters_scope_and_excludes_outsiders(
+        self, _token, query_mock, fetch_mock
+    ):
+        query_mock.side_effect = self._query_side_effect
+        fetch_mock.side_effect = self._fetch_side_effect
+        budgets, warning = list_approved_budgets(self.USER)
+        self.assertEqual(warning, "")
+        self.assertEqual(len(budgets), 1)
+        self.assertEqual(budgets[0]["instanceId"], "inst_in_scope")
+        self.assertEqual(budgets[0]["project"], "公共办公")
+        self.assertEqual(fetch_mock.call_count, 2)
+        queried_codes = {c.args[1] for c in query_mock.call_args_list}
+        self.assertNotIn(TRAVEL_DEFINITION["approval_code"], queried_codes)
+
+    @mock.patch("feishu_oauth.fetch_instance")
+    @mock.patch("feishu_oauth.query_approved_instances")
+    @mock.patch("feishu_oauth.get_tenant_access_token", return_value="tok")
+    def test_cache_ttl_hit_skips_refetch(self, _token, query_mock, fetch_mock):
+        query_mock.side_effect = self._query_side_effect
+        fetch_mock.side_effect = self._fetch_side_effect
+        first, _ = list_approved_budgets(self.USER)
+        self.assertEqual(len(first), 1)
+        calls_after_first = fetch_mock.call_count
+        second, _ = list_approved_budgets(self.USER)
+        self.assertEqual(second[0]["instanceId"], first[0]["instanceId"])
+        self.assertEqual(fetch_mock.call_count, calls_after_first)
+        self.assertEqual(query_mock.call_count, len(BUDGET_DEFINITIONS))
+        self.assertGreaterEqual(BUDGET_CACHE_TTL_SEC, 30)
+
+    @mock.patch("feishu_oauth.fetch_instance")
+    @mock.patch("feishu_oauth.query_approved_instances")
+    @mock.patch("feishu_oauth.get_tenant_access_token", return_value="tok")
+    def test_cache_miss_after_expiry(self, _token, query_mock, fetch_mock):
+        import feishu_oauth as mod
+
+        query_mock.side_effect = self._query_side_effect
+        fetch_mock.side_effect = self._fetch_side_effect
+        list_approved_budgets(self.USER)
+        key = mod._budget_cache_key(self.USER)
+        with mod._budget_cache_lock:
+            _exp, budgets, warning = mod._budget_cache[key]
+            mod._budget_cache[key] = (0.0, budgets, warning)
+        before = fetch_mock.call_count
+        again, _ = list_approved_budgets(self.USER)
+        self.assertEqual(len(again), 1)
+        self.assertGreater(fetch_mock.call_count, before)
+
 
 
 if __name__ == "__main__":

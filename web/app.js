@@ -23,6 +23,7 @@
   let authUser = null;
   let approvedBudgets = [];
   let budgetWarning = "";
+  let budgetsLoading = false;
 
   const SHEET_KIND_META = {
     meal: { kind: "meal", title: "餐饮表" },
@@ -493,6 +494,8 @@
     const actions = document.getElementById("upload-actions");
     const status = document.getElementById("parse-status");
     if (!actions) return;
+    // Capture in-progress edits before wiping the table (OCR completions race with category selects).
+    if (body && body.querySelector("tr[data-inv]")) syncSummaryFromDom();
 
     if (list) {
       list.hidden = true;
@@ -559,10 +562,19 @@
       const id = tr.getAttribute("data-inv");
       const inv = session.invoices.find((i) => i.id === id);
       if (!inv || inv.status === "parsing") return;
+      if (!inv._editedFields) inv._editedFields = {};
       tr.querySelectorAll("[data-sum]").forEach((el) => {
+        // Skip disabled cells (still-parsing rows). After applyParsedInvoice the model
+        // is already "ok" but the DOM may still show the old disabled empty inputs
+        // until this render finishes — never let those wipe OCR/user values.
+        if (el.disabled) return;
         const key = el.getAttribute("data-sum");
         const val = el.value;
-        if (String(inv[key] == null ? "" : inv[key]) !== String(val)) inv._userEdited = true;
+        const prev = inv[key] == null ? "" : inv[key];
+        if (String(prev) !== String(val)) {
+          inv._userEdited = true;
+          inv._editedFields[key] = true;
+        }
         if (key === "amount") {
           inv.amount = String(val).trim() === "" ? "" : String(val).trim();
           if (invoiceHasAmount(inv) && inv.status === "error") {
@@ -636,31 +648,45 @@
     }
   }
 
-  function applyParsedInvoice(entry,result) {
-        const parsedAmount = result.amount;
-        const amount =
-          parsedAmount == null || (Number(parsedAmount) === 0 && result.needsReview)
-            ? ""
-            : parsedAmount;
-        Object.assign(entry, {
-          status: "ok",
-          phase: "",
-          attachment: result.attachment || entry.attachment || null,
-          amount,
-          merchant: result.merchant || entry.fileName.replace(/\.[^.]+$/, ""),
-          date: result.date || "",
-          invoiceNo: result.invoiceNo || "",
-          category: normalizeCategory(result.category),
-          confidence: result.confidence || 0,
-          source: result.source || "",
-          raw: result.raw || null,
-          extract_method: result.extract_method,
-          review_model: result.review_model || "",
-          review_error: result.review_error || "",
-          corrections: result.corrections || [],
-          needsReview: !!result.needsReview,
-        });
+  function fieldWasEdited(entry, key) {
+    return !!(entry && entry._editedFields && entry._editedFields[key]);
   }
+
+  function applyParsedInvoice(entry, result) {
+    const edited = entry._editedFields || {};
+    const parsedAmount = result.amount;
+    const ocrAmount =
+      parsedAmount == null || (Number(parsedAmount) === 0 && result.needsReview)
+        ? ""
+        : parsedAmount;
+    Object.assign(entry, {
+      status: "ok",
+      phase: "",
+      attachment: result.attachment || entry.attachment || null,
+      amount: edited.amount ? entry.amount : ocrAmount,
+      merchant: edited.merchant
+        ? entry.merchant
+        : result.merchant || (entry.fileName || "").replace(/\.[^.]+$/, ""),
+      date: edited.date ? entry.date : result.date || "",
+      invoiceNo: edited.invoiceNo ? entry.invoiceNo : result.invoiceNo || "",
+      // Never overwrite a user-picked 类别 when concurrent OCR finishes.
+      category: edited.category ? entry.category : normalizeCategory(result.category),
+      confidence: result.confidence || 0,
+      source: result.source || "",
+      raw: result.raw || null,
+      extract_method: result.extract_method,
+      review_model: result.review_model || "",
+      review_error: result.review_error || "",
+      corrections: result.corrections || [],
+      needsReview: !!result.needsReview,
+    });
+  }
+
+  // Exported for unit tests: OCR merge must keep user-picked 类别 across concurrent parses.
+  window.ExpenseInvoiceMerge = {
+    fieldWasEdited,
+    applyParsedInvoice,
+  };
 
   async function ensureAttachment(inv) {
     if (inv.attachment && (inv.attachment.file_id || inv.attachment.fileId)) return inv.attachment;
@@ -1288,10 +1314,11 @@
         const file = picker.files[0]; if (!file) return;
         button.disabled=true;
         try {
+          syncSummaryFromDom();
           inv.attachment = await window.__storeInvoiceFile(file);
           inv.fileName = file.name; save(); showToast("原件已补传，识别汇总中的填写保持不变");
         } catch (err) { showToast(err.message,6000); }
-        finally { renderUpload(); }
+        finally { syncSummaryFromDom(); renderUpload(); }
       });
       picker.click();
     });
@@ -1299,6 +1326,7 @@
       invoiceList.addEventListener("click", (e) => {
         const btn = e.target.closest("[data-remove]");
         if (!btn) return;
+        syncSummaryFromDom();
         const id = btn.getAttribute("data-remove");
         session.invoices = session.invoices.filter((i) => i.id !== id);
         save();
@@ -1320,6 +1348,7 @@
         if(retry) {const inv=session.invoices.find(i=>i.id===retry.dataset.reparse);if(inv) retryStoredOCR(inv);return;}
         const btn = e.target.closest("[data-remove]");
         if (!btn) return;
+        syncSummaryFromDom();
         const id = btn.getAttribute("data-remove");
         session.invoices = session.invoices.filter((i) => i.id !== id);
         save();
@@ -1492,9 +1521,16 @@
     if (!box || !grid) return;
     box.hidden = false;
     if (!authUser) {
+      budgetsLoading = false;
       if (pill) pill.textContent = "0";
       if (hint) hint.textContent = "用飞书登录后，这里会列出你已通过的立项 / 变更预算，点选即可带进问答。";
       grid.innerHTML = `<a class="btn btn-primary" href="${esc(loginHref())}">用飞书登录</a>`;
+      return;
+    }
+    if (budgetsLoading && !approvedBudgets.length && !budgetWarning) {
+      if (pill) pill.textContent = "…";
+      if (hint) hint.textContent = "正在加载可用预算…";
+      grid.innerHTML = `<p class="budget-empty">正在加载可用预算…</p>`;
       return;
     }
     if (pill) pill.textContent = String(approvedBudgets.length);
@@ -1705,6 +1741,37 @@
     }
   }
 
+  async function loadBudgets() {
+    if (!authUser) {
+      budgetsLoading = false;
+      budgetWarning = "";
+      approvedBudgets = [];
+      window.__approvedBudgets = [];
+      renderBudgets();
+      return;
+    }
+    budgetsLoading = true;
+    budgetWarning = "";
+    renderBudgets();
+    try {
+      const res = await fetch(apiBase() + "/api/budgets", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = await res.json();
+      budgetWarning = (data && (data.error || data.warning)) || "";
+      approvedBudgets = data && Array.isArray(data.budgets) ? data.budgets : [];
+      window.__approvedBudgets = approvedBudgets;
+    } catch (e) {
+      budgetWarning = "预算读取失败，请检查网络并刷新重试";
+      approvedBudgets = [];
+      window.__approvedBudgets = [];
+    } finally {
+      budgetsLoading = false;
+      renderBudgets();
+    }
+  }
+
   async function refreshAuth() {
     const loginBtn = document.getElementById("btn-feishu-login");
     if (loginBtn) loginBtn.href = loginHref();
@@ -1720,30 +1787,15 @@
     }
     renderAuth();
     if (authUser) {
-      try {
-        const res = await fetch(apiBase() + "/api/budgets", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        const data = await res.json();
-        budgetWarning = (data && (data.error || data.warning)) || "";
-        approvedBudgets = data && Array.isArray(data.budgets) ? data.budgets : [];
-        window.__approvedBudgets = approvedBudgets;
-        if (data && data.error && !approvedBudgets.length) {
-          const hint = document.getElementById("budget-picker-hint");
-          if (hint) hint.textContent = data.error;
-        }
-      } catch (e) {
-        budgetWarning = "预算读取失败，请检查网络并刷新重试";
-        approvedBudgets = [];
-        window.__approvedBudgets = [];
-      }
+      // Do not block login toast / page paint on slow budget listing.
+      loadBudgets();
     } else {
+      budgetsLoading = false;
       budgetWarning = "";
       approvedBudgets = [];
       window.__approvedBudgets = [];
+      renderBudgets();
     }
-    renderBudgets();
   }
 
   async function logout() {
@@ -1764,6 +1816,7 @@
     window.__fillSuggestions=null;
     setStage("upload");
     setSaveStatus("已退出，登录后可在我的报销继续草稿");
+    budgetsLoading = false;
     budgetWarning = "";
     approvedBudgets = [];
     window.__approvedBudgets = [];
