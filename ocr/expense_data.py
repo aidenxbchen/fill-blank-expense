@@ -134,6 +134,19 @@ def resolve_file(owner, ref):
     return dict(row), raw
 
 
+def lookup_file(owner, name):
+    """Latest original for this owner+filename, or None. Used to resume after a draft lost attachment refs."""
+    if not owner:
+        raise DataError('请先用飞书登录')
+    name = safe_name(name)
+    with database() as con:
+        row = con.execute(
+            'SELECT * FROM invoice_files WHERE owner=? AND name=? ORDER BY created_at DESC LIMIT 1',
+            (owner, name),
+        ).fetchone()
+    return public_file(row) if row else None
+
+
 def cache_upload(file_id, owner, app_id, code):
     with database() as con:
         con.execute('UPDATE invoice_files SET remote_code=?,remote_app_id=?,uploaded_at=? WHERE file_id=? AND owner=?',

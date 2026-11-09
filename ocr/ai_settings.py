@@ -97,10 +97,11 @@ def _validate_base(url: str) -> str:
     if len(url) > MAX_BASE:
         raise SettingsError("API Base URL 过长")
     try:
+        url = ai_client.normalize_base_url(url)
         ai_client.join_chat_url(url)
     except ValueError as e:
         raise SettingsError(str(e)) from e
-    return url.rstrip("/")
+    return url
 
 
 def _validate_model(name: str, *, required: bool) -> str:
@@ -126,27 +127,42 @@ def public_view(owner: str) -> dict[str, Any]:
         "textModel": "",
         "visionModel": "",
     }
+    key_ok = False
+    needs_reenter = False
     if row:
         masked = ""
         if row["api_key_enc"]:
             try:
                 masked = ai_client.mask_api_key(decrypt_secret(row["api_key_enc"]))
+                key_ok = True
             except SettingsError:
-                masked = "***"
+                # Saved ciphertext cannot be decrypted (secret rotated) — treat as not configured.
+                masked = ""
+                key_ok = False
+                needs_reenter = True
+        try:
+            display_base = ai_client.normalize_base_url(row["base_url"]) if row["base_url"] else ""
+        except ValueError:
+            display_base = row["base_url"] or ""
         settings = {
-            "baseUrl": row["base_url"],
+            "baseUrl": display_base,
             "apiKeyMasked": masked,
-            "hasApiKey": bool(row["api_key_enc"]),
+            "hasApiKey": key_ok,
             "textModel": row["text_model"],
             "visionModel": row["vision_model"] or "",
         }
-    return {
+    configured = bool(row and key_ok and row["base_url"] and row["text_model"])
+    out = {
         "ok": True,
-        "configured": bool(row and row["api_key_enc"] and row["base_url"] and row["text_model"]),
+        "configured": configured,
         "settings": settings,
         "defaults": ai_client.defaults(),
         "ocrNote": ai_client.OCR_NOTE,
     }
+    if needs_reenter:
+        out["needsReenterKey"] = True
+        out["message"] = "无法解密已保存的 API Key，请重新填写"
+    return out
 
 
 def load_credentials(owner: str | None) -> dict[str, str] | None:

@@ -95,6 +95,15 @@ class DataTests(unittest.TestCase):
         self.assertEqual(form,[{'id':'widget16510609389860001','type':'attachmentV2','value':['real-native-code']}])
 
 
+    def test_lookup_file_by_name_returns_latest(self):
+        a=d.save_file('alice', b'%PDF-1.4 a', 'meal.pdf', 'application/pdf')
+        b=d.save_file('alice', b'%PDF-1.4 bb', 'meal.pdf', 'application/pdf')
+        found=d.lookup_file('alice','meal.pdf')
+        self.assertEqual(found['file_id'], b['file_id'])
+        self.assertIsNone(d.lookup_file('alice','missing.pdf'))
+        self.assertIsNone(d.lookup_file('bob','meal.pdf'))
+
+
 class AttachmentCreationTests(unittest.TestCase):
     setUp = purchase_tests.CreateTests.setUp
     claim = purchase_tests.CreateTests.claim

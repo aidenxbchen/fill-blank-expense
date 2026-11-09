@@ -211,6 +211,23 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/budgets":
             handle_budgets(self)
             return
+        if path == "/api/invoice-files/by-name":
+            try:
+                owner = self._owner()
+            except auth.FeishuAPIError as e:
+                self._json(e.http_status if e.http_status in (401, 403) else 502, {"ok": False, "error": str(e)})
+                return
+            name = (qs.get("name") or [""])[0]
+            try:
+                attachment = expense_data.lookup_file(owner, name)
+            except expense_data.DataError as e:
+                self._json(422, {"ok": False, "error": str(e)})
+                return
+            if not attachment:
+                self._json(404, {"ok": False, "error": "未找到同名已存原件，请补传"})
+                return
+            self._json(200, {"ok": True, "attachment": attachment})
+            return
         if path == "/api/health":
             reachable = probe_ollama()
             self._json(
@@ -251,6 +268,7 @@ class Handler(BaseHTTPRequestHandler):
                         "POST /api/auth/logout",
                         "GET /api/budgets",
                         "POST /api/parse-invoice",
+                        "GET /api/invoice-files/by-name",
                         "POST /api/feishu-expense",
                         "GET/PUT /api/ai-settings",
                         "POST /api/ai-settings/test",

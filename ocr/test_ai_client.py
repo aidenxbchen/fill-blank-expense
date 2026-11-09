@@ -40,6 +40,14 @@ class AIClientTests(unittest.TestCase):
             ai_client.join_chat_url("http://127.0.0.1:11434/v1"),
             "http://127.0.0.1:11434/v1/chat/completions",
         )
+        self.assertEqual(
+            ai_client.normalize_base_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/v1",
+        )
+        self.assertEqual(
+            ai_client.join_chat_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/v1/chat/completions",
+        )
         with self.assertRaisesRegex(ValueError, "http"):
             ai_client.join_chat_url("ftp://example.com")
         with self.assertRaisesRegex(ValueError, "API Base URL"):

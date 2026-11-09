@@ -74,6 +74,41 @@ class AISettingsTests(unittest.TestCase):
         self.assertFalse(cleared["configured"])
         self.assertIsNone(ai_settings.load_credentials("alice"))
 
+    def test_deepseek_base_without_v1_is_normalized(self):
+        view = ai_settings.save(
+            "alice",
+            {
+                "baseUrl": "https://api.deepseek.com",
+                "apiKey": "sk-abcdefghijklmnop",
+                "textModel": "deepseek-flash",
+            },
+        )
+        self.assertEqual(view["settings"]["baseUrl"], "https://api.deepseek.com/v1")
+        self.assertEqual(ai_settings.load_credentials("alice")["base_url"], "https://api.deepseek.com/v1")
+        self.assertEqual(ai_settings.load_credentials("alice")["model"], "deepseek-flash")
+
+    def test_decrypt_failure_marks_not_configured(self):
+        ai_settings.save(
+            "alice",
+            {
+                "baseUrl": "https://api.deepseek.com/v1",
+                "apiKey": "sk-realkey00001234",
+                "textModel": "deepseek-chat",
+            },
+        )
+        with data.database() as con:
+            con.execute(
+                "UPDATE ai_settings SET api_key_enc=? WHERE owner=?",
+                ("not-a-valid-blob", "alice"),
+            )
+        view = ai_settings.public_view("alice")
+        self.assertFalse(view["configured"])
+        self.assertFalse(view["settings"]["hasApiKey"])
+        self.assertTrue(view.get("needsReenterKey"))
+        self.assertEqual(view["settings"]["apiKeyMasked"], "")
+        self.assertIsNone(ai_settings.load_credentials("alice"))
+
+
 
 if __name__ == "__main__":
     unittest.main()

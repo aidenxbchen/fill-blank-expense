@@ -26,13 +26,21 @@ SETUP_CTA = (
 )
 
 
-def join_chat_url(base_url: str) -> str:
+def normalize_base_url(base_url: str) -> str:
+    """Strip trailing slash; for Deepseek host without /v1, add it."""
     base = (base_url or "").strip()
     if not base:
         raise ValueError("请填写 API Base URL")
     if not re.match(r"^https?://", base, re.I):
         raise ValueError("API Base URL 必须以 http:// 或 https:// 开头")
     base = base.rstrip("/")
+    if re.fullmatch(r"https://api\.deepseek\.com", base, flags=re.I):
+        base = "https://api.deepseek.com/v1"
+    return base
+
+
+def join_chat_url(base_url: str) -> str:
+    base = normalize_base_url(base_url)
     if base.endswith("/chat/completions"):
         return base
     return base + "/chat/completions"

@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261109workspace1";
+  const ASSET_V = "20261109ocrResume1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -95,6 +95,44 @@
     }
   }
 
+  const INCOMPLETE_OCR_MSG = "上次识别未完成，请核对后手动补全或重新上传";
+
+  function invoiceNeedsStoredReparse(inv) {
+    if (!inv) return false;
+    if (inv.status === "parsing") return true;
+    if (inv.status !== "error") return false;
+    if (inv.error === INCOMPLETE_OCR_MSG) return true;
+    return !invoiceHasAmount(inv);
+  }
+
+  function prepareInvoicesForResume(invoices) {
+    const list = Array.isArray(invoices) ? invoices : [];
+    const toResume = [];
+    list.forEach((i) => {
+      if (!invoiceNeedsStoredReparse(i)) return;
+      const hasAtt = !!(i.attachment && (i.attachment.file_id || i.attachment.fileId));
+      if (hasAtt || i.fileName) {
+        // Keep as parsing so UI shows progress; resume will requeue from stored original.
+        i.status = "parsing";
+        i.phase = "queued";
+        i.error = "";
+        toResume.push(i);
+      } else if (i.status === "parsing") {
+        i.status = "error";
+        i.phase = "";
+        i.error = INCOMPLETE_OCR_MSG;
+      }
+    });
+    return { invoices: list, toResume };
+  }
+
+  // Exported for unit tests (restore → auto-reparse hook).
+  window.ExpenseOCRResume = {
+    INCOMPLETE_OCR_MSG,
+    invoiceNeedsStoredReparse,
+    prepareInvoicesForResume,
+  };
+
   function restoreState(state, metadata={}) {
     document.getElementById("draft-meta").replaceChildren();
     document.getElementById("detail-sheets").replaceChildren();
@@ -106,9 +144,23 @@
     session.recordRevision = metadata.revision || 0;
     session.recordTitle = metadata.title || "";
     session.submitted = !!metadata.submitted || !!(session.lastFeishu && session.lastFeishu.ok);
-    session.invoices.forEach(i=>{
-      if (i.status === "parsing") { i.status="error"; i.error="上次识别未完成，请核对后手动补全或重新上传"; }
-    });
+    const prepared = prepareInvoicesForResume(session.invoices);
+    session.invoices = prepared.invoices;
+    session._pendingResumeOCR = prepared.toResume;
+  }
+
+  function localLooksLikeIncompleteOCR(state) {
+    const invs = (state && state.invoices) || [];
+    if (!invs.length) return false;
+    const stuck = invs.filter((i) => i.status === "parsing" || (i.status === "error" && (i.error === INCOMPLETE_OCR_MSG || !invoiceHasAmount(i))));
+    return stuck.length >= Math.ceil(invs.length / 2);
+  }
+
+  function serverLooksRicher(serverState, localState) {
+    const s = (serverState && serverState.invoices) || [];
+    const l = (localState && localState.invoices) || [];
+    const score = (invs) => invs.reduce((n, i) => n + (i.attachment ? 2 : 0) + (invoiceHasAmount(i) ? 3 : 0) + (i.status === "ok" ? 1 : 0), 0);
+    return score(s) > score(l);
   }
 
   async function load() {
@@ -122,7 +174,11 @@
         if (session.recordRevision && !session.submitted) {
           try {
             const result=await recordsAPI("/api/drafts/"+encodeURIComponent(session.draftId));
-            if (result.record.revision > session.recordRevision) restoreState(result.record.state,result.record);
+            const remote = result.record;
+            if (remote.revision > session.recordRevision) restoreState(remote.state, remote);
+            else if (remote.revision === session.recordRevision && localLooksLikeIncompleteOCR(raw.state) && serverLooksRicher(remote.state, raw.state)) {
+              restoreState(remote.state, remote);
+            }
           } catch(e) {
             if (e.status===404) { session=emptySession(); showToast("上次草稿已删除或提交，可在我的报销查看"); }
             else showToast("暂时无法核对服务器草稿，保留本机内容；保存时会检查版本",6000);
@@ -130,17 +186,18 @@
         }
       }
     } catch(e) { setSaveStatus("本机缓存读取失败，请从我的报销继续草稿"); }
-    if (hadLocal) return;
-    try {
-      const listed = await recordsAPI("/api/drafts?offset=0");
-      if (listed.items && listed.items.length) {
-        const data = await recordsAPI("/api/drafts/"+encodeURIComponent(listed.items[0].id));
-        restoreState(data.record.state, data.record);
-        setSaveStatus("已恢复最近一份草稿，也可在「我的报销」查看全部");
-        showToast("已恢复最近一份未完成的报销");
+    if (!hadLocal) {
+      try {
+        const listed = await recordsAPI("/api/drafts?offset=0");
+        if (listed.items && listed.items.length) {
+          const data = await recordsAPI("/api/drafts/"+encodeURIComponent(listed.items[0].id));
+          restoreState(data.record.state, data.record);
+          setSaveStatus("已恢复最近一份草稿，也可在「我的报销」查看全部");
+          showToast("已恢复最近一份未完成的报销");
+        }
+      } catch (e) {
+        setSaveStatus("暂时无法读取云端草稿，可稍后点「我的报销」重试");
       }
-    } catch (e) {
-      setSaveStatus("暂时无法读取云端草稿，可稍后点「我的报销」重试");
     }
   }
 
@@ -169,6 +226,15 @@
     if (session.submitted) { setSaveStatus("已提交 · 可在我的报销查看历史"); return Promise.resolve(); }
     if (!manual && !session.invoices.length && !Object.keys(session.answers).length) {
       setSaveStatus("填写内容会自动保存，也可以随时点保存草稿"); return Promise.resolve();
+    }
+    // Avoid writing a dead-end server snapshot of empty in-flight rows with no originals yet.
+    if (!manual) {
+      const invs = session.invoices || [];
+      const allEmptyParsing = invs.length && invs.every((i) => i.status === "parsing" && !i.attachment && !invoiceHasAmount(i));
+      if (allEmptyParsing) {
+        setSaveStatus("正在上传原件，识别完成后会自动保存");
+        return Promise.resolve();
+      }
     }
     const target=session, owner=ownerId(), state=snapshot();
     const fingerprint=JSON.stringify(state);
@@ -307,6 +373,7 @@
         setStage(session.stage);
         document.getElementById("chat-input").value=session.composerText || "";
         showToast("已恢复草稿，接着上次的位置继续");
+        resumeIncompleteOCR().catch((e)=>showToast(e.message||String(e),7000));
       } else if(action==="save-title") {
         const result=await recordsAPI("/api/drafts/"+encodeURIComponent(row.id),"PATCH",{revision,title:card.querySelector("input").value});
         if(current) {session.recordRevision=result.record.revision;session.recordTitle=result.record.title;save();}
@@ -549,6 +616,10 @@
         // parsing, so its empty disabled inputs must never overwrite the result.
         syncSummaryFromDom();
         applyParsedInvoice(entry,result);
+        renderUpload();
+        save();
+        // Persist each successful parse immediately so a refresh can resume instead of losing amounts.
+        await persistDraft(false);
         if(result.review_setup_needed) showToast("字段校对需要配置 AI：请打开 AI 设置，推荐使用 Deepseek",7000);
         else if(result.review_error) showToast("已识别，但文本校对未完成："+result.review_error,6000);
       } catch(err) {
@@ -558,6 +629,8 @@
         entry.error=(err && err.message) || String(err);
         session.parseErrors.push(`${file.name}: ${entry.error}`);
         showToast("识别未完成，可在汇总表重试或手动补全",6000);
+        renderUpload();save();
+        await persistDraft(false).catch(()=>{});
       }
       renderUpload();save();
     }
@@ -589,16 +662,77 @@
         });
   }
 
-  async function retryStoredOCR(inv) {
-    if(busyEditing()) return;
+  async function ensureAttachment(inv) {
+    if (inv.attachment && (inv.attachment.file_id || inv.attachment.fileId)) return inv.attachment;
+    if (!inv.fileName || !ownerId()) return null;
+    const response = await fetch(
+      apiBase() + "/api/invoice-files/by-name?name=" + encodeURIComponent(inv.fileName),
+      { credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10000) }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok || !data.attachment) return null;
+    inv.attachment = data.attachment;
+    return inv.attachment;
+  }
+
+  async function reparseFromStored(inv, { force = false } = {}) {
+    if (!force && busyEditing()) return;
     syncSummaryFromDom();
-    inv.status="parsing";inv.phase="recognizing";save();renderUpload();
+    inv.status = "parsing";
+    inv.phase = "recognizing";
+    inv.error = "";
+    save();
+    renderUpload();
     try {
-      const result=await parseInvoice(null,{attachment:inv.attachment});
+      const attachment = await ensureAttachment(inv);
+      if (!attachment) throw new Error("缺少已存原件，请补传后再识别");
+      const result = await parseInvoice(null, { attachment });
       syncSummaryFromDom();
-      applyParsedInvoice(inv,result);
-    } catch(e) {syncSummaryFromDom();inv.status="error";inv.phase="";inv.error=e.message;showToast(e.message,6000);}
-    save();renderUpload();
+      applyParsedInvoice(inv, result);
+      renderUpload();
+      save();
+      await persistDraft(false);
+    } catch (e) {
+      syncSummaryFromDom();
+      inv.status = "error";
+      inv.phase = "";
+      inv.error = e.message || String(e);
+      showToast(inv.error, 6000);
+      save();
+      renderUpload();
+    }
+  }
+
+  async function retryStoredOCR(inv) {
+    return reparseFromStored(inv, { force: false });
+  }
+
+  async function resumeIncompleteOCR() {
+    const pending = Array.isArray(session._pendingResumeOCR) ? session._pendingResumeOCR.slice() : [];
+    session._pendingResumeOCR = null;
+    const targets = session.invoices.filter(
+      (i) =>
+        pending.includes(i) ||
+        (invoiceNeedsStoredReparse(i) && (i.attachment || i.fileName))
+    );
+    // Dedupe by id
+    const seen = new Set();
+    const list = [];
+    targets.forEach((i) => {
+      if (!i || seen.has(i.id)) return;
+      seen.add(i.id);
+      list.push(i);
+    });
+    if (!list.length || session.submitted) return;
+    showToast("正在用已存原件继续识别…", 5000);
+    setSaveStatus("正在用已存原件继续识别…", "saving");
+    for (const inv of list) {
+      if (!session.invoices.includes(inv)) continue;
+      await reparseFromStored(inv, { force: true });
+    }
+    const left = session.invoices.filter((i) => i.status === "error").length;
+    if (!left) showToast("已用原件完成识别，请核对汇总表");
+    else showToast(`仍有 ${left} 份需手动补全或补传原件`, 7000);
   }
 
   function normalizeCategory(c) {
@@ -1416,9 +1550,15 @@
     }
   }
 
+  function normalizeAiBaseUrl(url) {
+    url = (url || "").trim().replace(/\/+$/, "");
+    if (/^https:\/\/api\.deepseek\.com$/i.test(url)) return "https://api.deepseek.com/v1";
+    return url;
+  }
+
   function aiSettingsForm() {
     return {
-      baseUrl: (document.getElementById("ai-base-url").value || "").trim(),
+      baseUrl: normalizeAiBaseUrl(document.getElementById("ai-base-url").value || ""),
       apiKey: (document.getElementById("ai-api-key").value || "").trim(),
       textModel: (document.getElementById("ai-text-model").value || "").trim(),
       visionModel: (document.getElementById("ai-vision-model").value || "").trim(),
@@ -1483,12 +1623,16 @@
           ? ("当前密钥：" + s.apiKeyMasked + "（留空保存则不更改）")
           : "密钥只保存在服务器，页面不会再次显示原文";
       }
-      setAiMessage(
-        data.configured
-          ? "已配置，字段校对将使用你的接口（推荐 Deepseek）"
-          : "尚未配置，将尝试本机校对；推荐填写 Deepseek",
-        true
-      );
+      if (data.needsReenterKey) {
+        setAiMessage(data.message || "无法解密已保存的 API Key，请重新填写", false);
+      } else {
+        setAiMessage(
+          data.configured
+            ? "已配置，字段校对将使用你的接口（推荐 Deepseek）"
+            : "尚未配置，将尝试本机校对；推荐填写 Deepseek",
+          true
+        );
+      }
     } catch (e) {
       setAiMessage((e && e.message) || "读取失败", false);
     }
@@ -1664,6 +1808,8 @@
     setStage(session.stage || "upload");
     document.getElementById("chat-input").value=session.composerText || "";
     if (session.submitted) setSaveStatus("已提交 · 可在我的报销查看历史");
+    // Do not await: resume runs in background so the UI stays interactive.
+    resumeIncompleteOCR().catch((e)=>showToast(e.message||String(e),7000));
   }
 
   if (document.readyState === "loading") {
