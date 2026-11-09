@@ -1,0 +1,74 @@
+/* Presentation-only feedback. No network, storage, credentials or business rules. */
+(function (root) {
+  "use strict";
+  const locked = new WeakSet();
+  async function run(button, action, label, peers = []) {
+    if (locked.has(button)) return;
+    locked.add(button);
+    const text = button.textContent;
+    const controls = [...new Set([button, ...peers])];
+    const previous = controls.map(el => el.disabled);
+    controls.forEach(el => { el.disabled = true; });
+    button.setAttribute("aria-busy", "true");
+    button.textContent = label;
+    try { return await action(); }
+    finally {
+      controls.forEach((el, i) => { el.disabled = previous[i]; });
+      button.textContent = text;
+      button.removeAttribute("aria-busy");
+      locked.delete(button);
+    }
+  }
+
+  function bindDialogs(doc) {
+    let active = null, origin = null, background = [];
+    const focusable = modal => [...modal.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex="0"]')]
+      .filter(el => !el.disabled && !el.closest("[hidden]") && el.getClientRects().length);
+    function sync() {
+      const next = [...doc.querySelectorAll('.modal-backdrop')].find(el => !el.hidden) || null;
+      if (next === active) return;
+      if (active) {
+        background.forEach(([el, value]) => { el.inert = value; });
+        doc.body.classList.remove("has-modal");
+        if (origin && origin.isConnected && !origin.closest("[hidden]")) origin.focus({preventScroll:true});
+      }
+      active = next;
+      if (!active) return;
+      const menu = doc.querySelector(".workspace-menu");
+      if (menu) menu.open = false;
+      origin = doc.activeElement;
+      background = [...doc.querySelectorAll('body > header, body > nav, body > main, body > .save-strip')].map(el => [el, el.inert]);
+      background.forEach(([el]) => { el.inert = true; });
+      doc.body.classList.add("has-modal");
+      active.tabIndex = -1;
+      (focusable(active)[0] || active).focus({preventScroll:true});
+    }
+    const observer = new MutationObserver(sync);
+    observer.observe(doc.body, {subtree:true, attributes:true, attributeFilter:["hidden"]});
+    doc.addEventListener("keydown", event => {
+      if (!active) {
+        if (event.key === "Escape") doc.querySelectorAll(".workspace-menu[open]").forEach(el => { el.open=false;el.querySelector("summary").focus(); });
+        return;
+      }
+      if (event.key === "Escape") { event.preventDefault();active.hidden = true;sync();return; }
+      if (event.key !== "Tab") return;
+      const items=focusable(active), first=items[0], last=items[items.length-1];
+      if (!first) { event.preventDefault();active.focus(); }
+      else if (event.shiftKey && (doc.activeElement === first || !active.contains(doc.activeElement))) {event.preventDefault();last.focus();}
+      else if (!event.shiftKey && (doc.activeElement === last || !active.contains(doc.activeElement))) {event.preventDefault();first.focus();}
+    });
+    doc.addEventListener("focusin", () => {
+      if (active && !active.contains(doc.activeElement)) (focusable(active)[0] || active).focus({preventScroll:true});
+    });
+    doc.addEventListener("click", event => {
+      const menu=doc.querySelector(".workspace-menu");
+      if (menu && (!menu.contains(event.target) || event.target.closest("button, a"))) menu.open=false;
+    });
+    sync();
+    return () => observer.disconnect();
+  }
+
+  const api = {run, bindDialogs};
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  else root.ExpenseUI = api;
+})(typeof window !== "undefined" ? window : globalThis);

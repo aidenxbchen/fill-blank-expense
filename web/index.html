@@ -3,57 +3,67 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>填空报销 · 丢发票就问完</title>
-  <link rel="stylesheet" href="./styles.css?v=20261109ai1" />
+  <title>填空报销 | ANEVER 采购工作台</title>
+  <link rel="stylesheet" href="./styles.css?v=20261109workspace1" />
 </head>
 <body class="delight-body">
+  <a class="skip-link" href="#main-content">跳到工作区</a>
   <header class="app-header">
     <div class="header-inner">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">空</div>
+        <div class="brand-mark" aria-hidden="true">填</div>
         <div class="brand-text">
           <h1>填空报销</h1>
-          <p id="brand-tagline">丢发票 · AI 逐句问 · 一键交飞书</p>
+          <p id="brand-tagline">ANEVER 采购工作台</p>
         </div>
       </div>
       <div class="header-actions">
-        <div class="auth-box" id="auth-box">
-          <a class="btn btn-primary" id="btn-feishu-login" href="/api/auth/feishu/login">用飞书登录</a>
-          <div class="auth-user" id="auth-user" hidden>
-            <img class="auth-avatar" id="auth-avatar" alt="" hidden />
-            <span id="auth-name"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-logout">退出</button>
-          </div>
-        </div>
-        <a class="btn btn-ghost" href="./classic/index.html" title="旧版按场景填空">经典填空</a>
-        <button type="button" class="btn btn-ghost" id="btn-ai-settings">AI 设置</button>
         <button type="button" class="btn btn-secondary" id="btn-records">我的报销</button>
-        <button type="button" class="btn btn-ghost" id="btn-save-draft">保存草稿</button>
-        <button type="button" class="btn btn-ghost" id="btn-reset">新建报销</button>
+        <button type="button" class="btn btn-ghost" id="btn-ai-settings">AI 设置</button>
+        <details class="workspace-menu">
+          <summary class="btn btn-ghost">更多 <span aria-hidden="true">⌄</span></summary>
+          <div class="workspace-menu-items">
+            <button type="button" class="btn btn-ghost" id="btn-save-draft">保存草稿</button>
+            <button type="button" class="btn btn-ghost" id="btn-reset">新建报销</button>
+            <a class="btn btn-ghost" href="./classic/index.html">经典填空</a>
+          </div>
+        </details>
+      </div>
+      <div class="auth-box" id="auth-box">
+        <a class="btn btn-primary" id="btn-feishu-login" href="/api/auth/feishu/login">用飞书登录</a>
+        <div class="auth-user" id="auth-user" hidden>
+          <img class="auth-avatar" id="auth-avatar" alt="" hidden />
+          <span id="auth-name"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-logout">退出</button>
+        </div>
       </div>
     </div>
   </header>
 
-  <div class="save-strip" role="status" aria-live="polite"><span id="draft-save-status">登录后可保存草稿，随时继续填写</span></div>
+  <div class="save-strip" data-state="idle">
+    <span class="save-indicator" aria-hidden="true"></span>
+    <span id="draft-save-status" role="status" aria-live="polite" aria-atomic="true">登录后可保存草稿，随时继续填写</span>
+    <button type="button" class="btn btn-ghost btn-sm" id="btn-retry-save" hidden>重试保存</button>
+  </div>
   <nav class="stage-rail" aria-label="流程进度">
     <ol class="stage-list" id="stage-list">
-      <li class="stage-item is-active" data-stage="upload"><span class="stage-dot">1</span><span class="stage-name">丢发票</span></li>
-      <li class="stage-item" data-stage="interview"><span class="stage-dot">2</span><span class="stage-name">问答</span></li>
-      <li class="stage-item" data-stage="draft"><span class="stage-dot">3</span><span class="stage-name">草稿</span></li>
-      <li class="stage-item" data-stage="submit"><span class="stage-dot">4</span><span class="stage-name">提交</span></li>
+      <li class="stage-item is-active" data-stage="upload"><span class="stage-dot">1</span><span class="stage-name">上传发票</span></li>
+      <li class="stage-item" data-stage="interview"><span class="stage-dot">2</span><span class="stage-name">补充信息</span></li>
+      <li class="stage-item" data-stage="draft"><span class="stage-dot">3</span><span class="stage-name">核对草稿</span></li>
+      <li class="stage-item" data-stage="submit"><span class="stage-dot">4</span><span class="stage-name">发起采购</span></li>
     </ol>
   </nav>
 
-  <main class="page delight-page">
+  <main class="page delight-page" id="main-content" tabindex="-1">
     <!-- STAGE: upload -->
     <section class="stage-panel" id="stage-upload" data-stage-panel="upload">
       <div class="hero">
-        <h2 class="hero-title">把发票全丢进来</h2>
-        <p class="hero-sub">一次多张 PDF / 图片。识别后请在汇总表里核对、直接改格；后续问答和草稿都以这张表为准。</p>
+        <h2 class="hero-title">准备这次采购的发票</h2>
+        <p class="hero-sub">选好项目，上传原件。识别后直接核对表格，再补齐采购信息。</p>
       </div>
       <section class="budget-picker panel" id="budget-picker">
         <div class="panel-head-row">
-          <h2>已通过的预算</h2>
+          <h2>选择关联项目</h2>
           <span class="pill" id="budget-count-pill">0</span>
         </div>
         <p class="section-hint" id="budget-picker-hint">用飞书登录后，点选你已通过的立项 / 变更，问答会自动带上项目。</p>
@@ -61,9 +71,10 @@
       </section>
       <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="拖拽或点击上传发票">
         <div class="dropzone-inner">
-          <div class="dropzone-icon" aria-hidden="true">📎</div>
-          <strong>拖到这里，或点击选择文件</strong>
-          <span class="muted">先用飞书登录 · PDF / 图片每份不超过 24MB · 原件随采购申请提交</span>
+          <svg class="dropzone-icon" aria-hidden="true" width="48" height="56" viewBox="0 0 48 56" fill="none"><path d="M7 3h24l10 10v39l-6-3-6 3-6-3-6 3-10-3V3Z" stroke="currentColor" stroke-width="1.6"/><path d="M31 3v11h10M16 25h16M16 32h16M16 39h9" stroke="currentColor" stroke-width="1.6"/></svg>
+          <strong>选择发票文件</strong>
+          <span class="muted">支持拖放，多张 PDF / 图片，每份不超过 24MB</span>
+        <span class="upload-assurance">原件随采购申请提交，请先用飞书登录</span>
         </div>
         <input class="file-input-hidden" type="file" id="file-input" accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif" multiple />
       </div>
@@ -93,7 +104,7 @@
         </div>
         <div class="summary-total" id="summary-total"></div>
       </section>
-      <div class="parse-status" id="parse-status" hidden></div>
+      <div class="parse-status" id="parse-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       <div class="hero-actions" id="upload-actions" hidden>
         <button type="button" class="btn btn-secondary" id="btn-add-more">继续添加</button>
         <button type="button" class="btn btn-primary" id="btn-start-interview" disabled>确认表格，开始问答</button>
@@ -112,12 +123,12 @@
           <button type="button" class="btn btn-ghost btn-sm btn-block" id="btn-back-upload">← 返回添加发票</button>
         </aside>
         <div class="chat-panel panel">
-          <div class="chat-progress" id="chat-progress">还差 — 个问题</div>
+          <div class="chat-progress" id="chat-progress" role="status">还差 — 个问题</div>
           <div class="chat-log" id="chat-log" aria-live="polite"></div>
           <div class="chat-composer" id="chat-composer">
             <div class="chip-row" id="chip-row"></div>
             <div class="composer-row">
-              <input type="text" id="chat-input" placeholder="输入回答，回车发送" autocomplete="off" />
+              <input type="text" id="chat-input" aria-label="回答当前问题" placeholder="输入回答，回车发送" autocomplete="off" />
               <button type="button" class="btn btn-primary" id="btn-send-answer">发送</button>
             </div>
             <button type="button" class="btn btn-ghost btn-sm" id="btn-skip-optional" hidden>跳过（可选）</button>
@@ -231,10 +242,11 @@
     </div>
   </div>
 
-  <div class="toast" id="toast" role="status"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ocr-bridge.js?v=20261109ai1"></script>
-  <script src="./policy.js?v=20261109ai1"></script>
-  <script src="./app.js?v=20261109ai1"></script>
+  <script src="./ui.js?v=20261109workspace1"></script>
+  <script src="./ocr-bridge.js?v=20261109workspace1"></script>
+  <script src="./policy.js?v=20261109workspace1"></script>
+  <script src="./app.js?v=20261109workspace1"></script>
 </body>
 </html>

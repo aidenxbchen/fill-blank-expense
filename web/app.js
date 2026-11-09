@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261109records1";
+  const ASSET_V = "20261109workspace1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -144,9 +144,14 @@
     }
   }
 
-  function setSaveStatus(text) {
+  function setSaveStatus(text, state) {
     const el=document.getElementById("draft-save-status");
     if (el) el.textContent=text;
+    state = state || (/未完成|不可用|失败|冲突|暂时无法/.test(text) ? "error" : /正在保存/.test(text) ? "saving" : /未保存/.test(text) ? "dirty" : /已保存|已提交/.test(text) ? "saved" : "idle");
+    const strip=document.querySelector(".save-strip");
+    if (strip) strip.dataset.state=state;
+    const retry=document.getElementById("btn-retry-save");
+    if (retry) { retry.hidden=state!=="error";retry.textContent=session.saveConflict ? "查看草稿" : "重试保存"; }
   }
 
   async function recordsAPI(path, method="GET", body) {
@@ -170,7 +175,7 @@
     const job=async()=>{
       if (target.submitted || owner!==ownerId()) return;
       if(target.savedFingerprint===fingerprint) {
-        if (session===target) setSaveStatus("已保存 · "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}));
+        if (session===target) setSaveStatus(JSON.stringify(snapshot())===fingerprint ? "已保存 · "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}) : "有未保存的修改…");
         if(manual) showToast("草稿已保存，可在我的报销继续");
         return;
       }
@@ -183,7 +188,8 @@
         target.recordTitle=result.record.title;
         if (session===target && owner===ownerId()) {
           localStorage.setItem(localKey(),JSON.stringify({state:snapshot(),revision:target.recordRevision,title:target.recordTitle,submitted:false}));
-          setSaveStatus("已保存 · "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}));
+          if (JSON.stringify(snapshot())===fingerprint) setSaveStatus("已保存 · "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}));
+          else setSaveStatus("有未保存的修改…", "dirty");
           if (manual) showToast("草稿已保存，稍后可在「我的报销」继续");
         }
       } catch(e) {
@@ -236,6 +242,9 @@
   async function refreshRecords(more=false) {
     if (recordsLoading) return;
     recordsLoading=true;
+    const controls=[...document.querySelectorAll("[data-record-tab], #btn-refresh-records, #btn-more-records")];
+    controls.forEach(b=>{b.disabled=true;});
+    document.getElementById("records-list").setAttribute("aria-busy","true");
     const tab=recordsTab;
     const message=document.getElementById("records-message");
     message.textContent="正在读取…";
@@ -247,7 +256,7 @@
       renderRecords();
       message.textContent=recordItems.length ? "" : (tab==="drafts" ? "还没有草稿，开始填写后会自动保存。" : "还没有提交记录，成功发起采购申请后会出现在这里。");
     } catch(e) { message.textContent=e.message; }
-    finally { recordsLoading=false; }
+    finally { recordsLoading=false;controls.forEach(b=>{b.disabled=false;});document.getElementById("records-list").removeAttribute("aria-busy"); }
   }
 
   function renderRecords() {
@@ -358,6 +367,7 @@
     document.querySelectorAll(".stage-item").forEach((el) => {
       const s = el.getAttribute("data-stage");
       el.classList.toggle("is-active", s === stage);
+      if (s===stage) el.setAttribute("aria-current","step"); else el.removeAttribute("aria-current");
       el.classList.toggle("is-done", stageOrder(s) < stageOrder(stage));
     });
     document.querySelectorAll("[data-stage-panel]").forEach((el) => {
@@ -430,7 +440,7 @@
           const err = inv.status === "error";
           const parsing = inv.status === "parsing";
           const shownAmount = inv.amount === "" || inv.amount == null ? "" : inv.amount;
-          let state = "识别中…";
+          let state = ({queued:"排队中",uploading:"正在保存原件…",recognizing:"正在识别与校对…"})[inv.phase] || "正在识别与校对…";
           if (err) state = inv.error ? `失败：${inv.error}` : "失败，可手改";
           else if (!parsing) {
             if (inv._userEdited) state = "已编辑";
@@ -447,13 +457,13 @@
           const dateType = /^\d{4}-\d{2}-\d{2}$/.test(inv.date || "") || !inv.date ? "date" : "text";
           return `<tr data-inv="${esc(inv.id)}" class="${err ? "is-error" : parsing ? "is-busy" : "is-ok"}">
             <td class="td-file" title="${esc(inv.fileName || "")}">${esc(inv.fileName || "发票")}<small>${inv.attachment ? "原件已保存" : "需要补传原件"}</small><button type="button" class="btn btn-ghost btn-sm" data-reattach="${esc(inv.id)}" ${disabled}>${inv.attachment ? "更换原件" : "补传原件"}</button>${err && inv.attachment ? `<button type="button" class="btn btn-secondary btn-sm" data-reparse="${esc(inv.id)}">用原件重新识别</button>` : ""}</td>
-            <td><input data-sum="date" type="${dateType}" value="${esc(inv.date || "")}" ${disabled} /></td>
-            <td><input data-sum="merchant" type="text" value="${esc(inv.merchant || "")}" ${disabled} /></td>
-            <td><input data-sum="invoiceNo" type="text" value="${esc(inv.invoiceNo || "")}" ${disabled} /></td>
-            <td><input data-sum="amount" inputmode="decimal" value="${esc(shownAmount)}" ${disabled} /></td>
-            <td><select data-sum="category" ${disabled}>${options}</select></td>
-            <td class="td-inv">${esc(state)}</td>
-            <td><button type="button" class="btn btn-ghost btn-sm" data-remove="${esc(inv.id)}" ${parsing ? "disabled" : ""} aria-label="移除">×</button></td>
+            <td data-label="日期"><input aria-label="发票日期" data-sum="date" type="${dateType}" value="${esc(inv.date || "")}" ${disabled} /></td>
+            <td data-label="商户"><input aria-label="发票商户" data-sum="merchant" type="text" value="${esc(inv.merchant || "")}" ${disabled} /></td>
+            <td data-label="发票号码"><input aria-label="发票号码" data-sum="invoiceNo" type="text" value="${esc(inv.invoiceNo || "")}" ${disabled} /></td>
+            <td data-label="金额"><input aria-label="发票金额" data-sum="amount" inputmode="decimal" value="${esc(shownAmount)}" ${disabled} /></td>
+            <td data-label="类别"><select aria-label="发票类别" data-sum="category" ${disabled}>${options}</select></td>
+            <td data-label="处理状态"><span class="invoice-state${parsing && inv.phase!=="queued" ? " is-processing" : ""}">${esc(state)}</span></td>
+            <td><button type="button" class="btn btn-ghost btn-sm" data-remove="${esc(inv.id)}" ${parsing ? "disabled" : ""} aria-label="移除${esc(inv.fileName || "发票")}">×</button></td>
           </tr>`;
         })
         .join("");
@@ -462,15 +472,10 @@
     refreshUploadActions();
 
     if (status) {
-      if (session.parseErrors.length) {
-        status.hidden = false;
-        status.innerHTML = session.parseErrors
-          .slice(-3)
-          .map((e) => `<div class="parse-err">${esc(e)}</div>`)
-          .join("");
-      } else {
-        status.hidden = true;
-      }
+      const busy=session.invoices.filter(i=>i.status==="parsing");
+      const errors=session.invoices.filter(i=>i.status==="error");
+      status.hidden=!busy.length && !errors.length;
+      status.innerHTML=busy.length ? `<div class="parse-activity is-processing">已处理 ${session.invoices.length-busy.length} / ${session.invoices.length} 份，剩余文件正在处理。你可以先核对已识别的内容。</div>` : errors.length ? `<div class="parse-err">${errors.length} 份未完成识别。可用已保存原件重新识别，也可在表格手动补全；缺原件时请补传。</div>` : "";
     }
   }
 
@@ -513,32 +518,15 @@
     if (!files.length) return;
     if (!authUser) { showToast("请先用飞书登录，再上传发票；原件会随采购申请提交"); return; }
 
-    for (const file of files) {
-      const id = uid("inv");
-      const entry = {
-        id,
-        fileName: file.name,
-        status: "parsing",
-        amount: "",
-        merchant: "",
-        date: "",
-        invoiceNo: "",
-        category: "",
-        confidence: 0,
-        source: "",
-        error: "",
-        raw: null,
-        corrections: [],
-        needsReview: false,
-        extract_method: "",
-        review_model: "",
-        confirmed: false,
-      };
-      session.invoices.push(entry);
+    syncSummaryFromDom();
+    const queued=files.map(file=>({file,entry:{
+      id:uid("inv"),fileName:file.name,status:"parsing",phase:"queued",amount:"",merchant:"",date:"",invoiceNo:"",category:"",confidence:0,source:"",error:"",raw:null,corrections:[],needsReview:false,confirmed:false
+    }}));
+    session.invoices.push(...queued.map(item=>item.entry));
+    renderUpload();save();
+    for (const {file,entry} of queued) {
       syncSummaryFromDom();
-      renderUpload();
-      save();
-
+      entry.phase="uploading";renderUpload();
       try {
         if(window.__storeInvoiceFile) {
           entry.attachment=await window.__storeInvoiceFile(file);
@@ -546,23 +534,24 @@
           // Persist the original reference BEFORE starting potentially slow OCR.
           await persistDraft(false);
         }
-        const result = await parseInvoice(file, {attachment:entry.attachment});
+        syncSummaryFromDom();
+        entry.phase="recognizing";renderUpload();
+        const result=await parseInvoice(file,{attachment:entry.attachment});
+        // Capture edits to OTHER rows before replacing the DOM. This row is still
+        // parsing, so its empty disabled inputs must never overwrite the result.
+        syncSummaryFromDom();
         applyParsedInvoice(entry,result);
-        if (result.review_setup_needed) {
-          showToast("字段校对需要配置 AI：请打开顶栏「AI 设置」，推荐使用 Deepseek", 7000);
-        } else if (result.review_error) {
-          showToast("已识别，但文本校对未完成：" + result.review_error, 6000);
-        }
-      } catch (err) {
-        entry.status = "error";
-        if (err.attachment) entry.attachment = err.attachment;
-        entry.error = (err && err.message) || String(err);
+        if(result.review_setup_needed) showToast("字段校对需要配置 AI：请打开 AI 设置，推荐使用 Deepseek",7000);
+        else if(result.review_error) showToast("已识别，但文本校对未完成："+result.review_error,6000);
+      } catch(err) {
+        syncSummaryFromDom();
+        entry.status="error";entry.phase="";
+        if(err.attachment) entry.attachment=err.attachment;
+        entry.error=(err && err.message) || String(err);
         session.parseErrors.push(`${file.name}: ${entry.error}`);
-        showToast(`识别失败：${file.name}`);
+        showToast("识别未完成，可在汇总表重试或手动补全",6000);
       }
-      syncSummaryFromDom();
-      renderUpload();
-      save();
+      renderUpload();save();
     }
   }
 
@@ -574,7 +563,8 @@
             : parsedAmount;
         Object.assign(entry, {
           status: "ok",
-          attachment: result.attachment || null,
+          phase: "",
+          attachment: result.attachment || entry.attachment || null,
           amount,
           merchant: result.merchant || entry.fileName.replace(/\.[^.]+$/, ""),
           date: result.date || "",
@@ -594,11 +584,12 @@
   async function retryStoredOCR(inv) {
     if(busyEditing()) return;
     syncSummaryFromDom();
-    inv.status="parsing";save();renderUpload();
+    inv.status="parsing";inv.phase="recognizing";save();renderUpload();
     try {
       const result=await parseInvoice(null,{attachment:inv.attachment});
+      syncSummaryFromDom();
       applyParsedInvoice(inv,result);
-    } catch(e) {inv.status="error";inv.error=e.message;showToast(e.message,6000);}
+    } catch(e) {syncSummaryFromDom();inv.status="error";inv.phase="";inv.error=e.message;showToast(e.message,6000);}
     save();renderUpload();
   }
 
@@ -726,7 +717,7 @@
     if (skipBtn) skipBtn.hidden = !!q.required;
 
     chipRow.innerHTML = (q.chips || [])
-      .map((c) => `<button type="button" class="chip${q.recommended && q.recommended.value === c ? " is-recommended" : ""}" data-chip="${esc(c)}">${esc(c)}${q.recommended && q.recommended.value === c ? '<small>历史常用</small>' : ""}</button>`)
+      .map((c) => `<button type="button" class="chip${q.recommended && q.recommended.value === c ? " is-recommended" : ""}" data-chip="${esc(c)}" aria-pressed="false">${esc(c)}${q.recommended && q.recommended.value === c ? '<small>历史常用</small>' : ""}</button>`)
       .join("");
     session._currentQuestion = q;
   }
@@ -787,10 +778,16 @@
     pushChat("user", value, { qid: q.id });
     applyAnswerSideEffects(q.id, value, q);
     answering = true;
+    const input=document.getElementById("chat-input"), send=document.getElementById("btn-send-answer");
+    const restoreInputFocus=document.activeElement===input;
+    input.value="";session.composerText="";
+    document.querySelectorAll("[data-chip]").forEach(chip=>{chip.disabled=true;chip.classList.toggle("is-selected",chip.dataset.chip===value);chip.setAttribute("aria-pressed",String(chip.dataset.chip===value));});
+    input.disabled=true;send.disabled=true;send.setAttribute("aria-busy","true");send.textContent="已选择";
+    document.getElementById("chat-progress").textContent="已记录回答，正在准备下一问…";
     save();
-    await refreshFillSuggestions(true);
-    answering = false;
-    renderInterview();
+    try { await refreshFillSuggestions(true); }
+    finally { answering=false;send.removeAttribute("aria-busy");send.textContent="发送";renderInterview();if(restoreInputFocus && session.stage==="interview" && !input.disabled) input.focus({preventScroll:true}); }
+    return true;
   }
 
   /* ---------- draft ---------- */
@@ -866,12 +863,12 @@
       const method = schema.methods.find(m=>m.name === d.purchaseMethod);
       const sharedFields = method ? method.fields.filter(w=>["账户名称","银行账户","收款账号","开户支行"].includes(w.name)).map(w=>{
         const key = `purchase:${method.name}:shared:${w.name}`;
-        return `<div class="field"><label>${esc(w.name)}（所有行共用）</label><input data-answer="${esc(key)}" value="${esc(session.answers[key] || "")}" /></div>`;
+        return `<div class="field"><label>${esc(w.name)}（所有行共用）</label><input aria-label="${esc(w.name)}" data-answer="${esc(key)}" value="${esc(session.answers[key] || "")}" /></div>`;
       }).join("") : "";
       meta.innerHTML = `<div class="draft-meta-grid">
-        <div class="field"><label>采购事由</label><input data-meta="purpose" value="${esc(d.purpose)}" /></div>
-        <div class="field"><label>项目</label><select data-meta="costCenter">${choices(schema.projects,d.costCenter)}</select></div>
-        <div class="field"><label>采购方式</label><select data-meta="purchaseMethod">${choices(schema.methods.map(m=>m.name),d.purchaseMethod)}</select></div>
+        <div class="field"><label>采购事由</label><input aria-label="采购事由" data-meta="purpose" value="${esc(d.purpose)}" /></div>
+        <div class="field"><label>项目</label><select aria-label="项目" data-meta="costCenter">${choices(schema.projects,d.costCenter)}</select></div>
+        <div class="field"><label>采购方式</label><select aria-label="采购方式" data-meta="purchaseMethod">${choices(schema.methods.map(m=>m.name),d.purchaseMethod)}</select></div>
         <div class="field"><label>关联审批</label><span>${esc((session.answers.selectedBudget || {}).title || "未选择（仅预付款项可不选）")}</span></div>
         ${sharedFields}
       </div><p class="section-hint">修改采购方式后，请返回问答补齐对应必填项。金额、日期、商户、票号与识别汇总同步。</p>`;
@@ -883,19 +880,19 @@
           const rows = sheet.rows
             .map((row, ri) => {
               return `<tr data-si="${si}" data-ri="${ri}">
-                <td><input data-cell="date" value="${esc(row.date)}" /></td>
-                <td><input data-cell="description" value="${esc(row.description)}" /></td>
-                <td><input data-cell="invoiceNo" value="${esc(row.invoiceNo || "")}" /></td>
-                <td><input data-cell="amount" inputmode="decimal" value="${esc(row.amount)}" /></td>
+                <td><input aria-label="日期" data-cell="date" value="${esc(row.date)}" /></td>
+                <td><input aria-label="摘要" data-cell="description" value="${esc(row.description)}" /></td>
+                <td><input aria-label="发票号码" data-cell="invoiceNo" value="${esc(row.invoiceNo || "")}" /></td>
+                <td><input aria-label="金额" data-cell="amount" inputmode="decimal" value="${esc(row.amount)}" /></td>
                 <td class="td-inv">${row.hasInvoice ? "有票" : "无票"}</td>
-                <td><input data-cell="note" value="${esc(row.note || "")}" placeholder="备注" />${purchaseRowFields(row.invoiceRef)}</td>
+                <td><input aria-label="备注" data-cell="note" value="${esc(row.note || "")}" placeholder="备注" />${purchaseRowFields(row.invoiceRef)}</td>
                 <td><button type="button" class="btn btn-ghost btn-sm" data-del-row="${si}:${ri}">删</button></td>
               </tr>`;
             })
             .join("");
           return `<section class="panel sheet-card" data-sheet="${si}">
             <div class="sheet-head">
-              <input class="sheet-title-input" data-sheet-title="${si}" value="${esc(sheet.title)}" />
+              <input aria-label="明细表名称" class="sheet-title-input" data-sheet-title="${si}" value="${esc(sheet.title)}" />
 
             </div>
             <div class="table-wrap">
@@ -1006,13 +1003,14 @@
     document.querySelector("main").inert=true;
     const button = document.getElementById("btn-feishu-submit");
     button.disabled = true;
+    button.setAttribute("aria-busy","true");
     button.textContent = "正在发起采购申请…";
     let result;
     try {
       await persistDraft(true);
       payload.draftRevision=session.recordRevision;
     } catch(e) {
-      submitting=false;document.querySelector("main").inert=false;button.disabled=false;button.textContent="发起飞书采购申请";
+      submitting=false;document.querySelector("main").inert=false;button.disabled=false;button.removeAttribute("aria-busy");button.textContent="发起飞书采购申请";
       showToast("请先保存草稿："+e.message,7000);return;
     }
     try {
@@ -1029,6 +1027,7 @@
       submitting = false;
       document.querySelector("main").inert=false;
       button.disabled = false;
+      button.removeAttribute("aria-busy");
       button.textContent = "发起飞书采购申请";
     }
     session.lastFeishu = result;
@@ -1045,6 +1044,7 @@
     const pre = document.getElementById("result-payload");
     const title = document.getElementById("result-title");
     if (title) title.textContent = result.ok ? "采购申请已发起" : "采购申请未完成";
+    document.getElementById("btn-close-result-2").textContent=result.ok ? "完成" : "返回检查";
     const links = document.getElementById("result-links");
     if (links) {
       links.replaceChildren();
@@ -1069,6 +1069,12 @@
   function bind() {
     const dz = document.getElementById("dropzone");
     const input = document.getElementById("file-input");
+    document.querySelectorAll('.records-tabs [role="tab"]').forEach(tab=>tab.addEventListener("keydown",event=>{
+      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
+      const tabs=[...document.querySelectorAll('.records-tabs [role="tab"]')];
+      const index=event.key==="Home" ? 0 : event.key==="End" ? tabs.length-1 : (tabs.indexOf(tab)+(event.key==="ArrowRight" ? 1 : -1)+tabs.length)%tabs.length;
+      event.preventDefault();if(!tabs[index].disabled){tabs[index].focus();tabs[index].click();}
+    }));
 
     function openPicker() {
       input.click();
@@ -1104,7 +1110,7 @@
     });
 
     document.getElementById("btn-add-more").addEventListener("click", openPicker);
-    document.getElementById("btn-start-interview").addEventListener("click", async () => {
+    document.getElementById("btn-start-interview").addEventListener("click", event => window.ExpenseUI.run(event.currentTarget, async () => {
       syncSummaryFromDom();
       if (!window.__purchaseSchema) { showToast("采购表单加载失败，请刷新重试"); return; }
       if (!authUser) { showToast("请先用飞书登录"); return; }
@@ -1121,7 +1127,7 @@
       save();
       await refreshFillSuggestions(false);
       setStage("interview");
-    });
+    }, "正在准备问答…"));
 
     const invoiceList = document.getElementById("invoice-list");
     document.getElementById("invoice-summary-body").addEventListener("click", (event) => {
@@ -1181,12 +1187,9 @@
     document.getElementById("btn-send-answer").addEventListener("click", () => {
       const inputEl = document.getElementById("chat-input");
       submitAnswer(inputEl.value);
-      inputEl.value = "";
-      session.composerText="";save();
-      inputEl.focus();
     });
     document.getElementById("chat-input").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
+      if (e.key === "Enter" && !e.isComposing) {
         e.preventDefault();
         document.getElementById("btn-send-answer").click();
       }
@@ -1279,19 +1282,20 @@
       });
     }
 
-    document.getElementById("btn-reset").addEventListener("click", async () => {
+    document.getElementById("btn-reset").addEventListener("click", event => window.ExpenseUI.run(event.currentTarget, async () => {
       if(busyEditing()) return;
       try { syncCurrentEditor();await persistDraft(false);clearTimeout(saveTimer);session=emptySession();setStage("upload");showToast("已新建，上份草稿可在我的报销继续"); }
       catch(e) {showToast("请先处理保存问题："+e.message,7000);}
-    });
-    document.getElementById("btn-save-draft").addEventListener("click",()=>{
-      syncCurrentEditor();persistDraft(true).catch(e=>showToast(e.message,7000));
-    });
+    }, "正在保存上份草稿…"));
+    const saveNow=()=>{syncCurrentEditor();return persistDraft(true).catch(e=>showToast(e.message,7000));};
+    document.getElementById("btn-save-draft").addEventListener("click",event=>window.ExpenseUI.run(event.currentTarget,saveNow,"正在保存…"));
+    document.getElementById("btn-retry-save").addEventListener("click",event=>window.ExpenseUI.run(event.currentTarget,session.saveConflict ? openRecords : saveNow,"正在处理…"));
     document.getElementById("btn-ai-settings").addEventListener("click",openAiSettings);
     document.getElementById("btn-close-ai-settings").addEventListener("click",closeAiSettings);
-    document.getElementById("btn-save-ai").addEventListener("click",saveAiSettings);
-    document.getElementById("btn-test-ai").addEventListener("click",testAiSettings);
-    document.getElementById("btn-clear-ai").addEventListener("click",clearAiSettings);
+    const aiControls=["btn-save-ai","btn-test-ai","btn-clear-ai"].map(id=>document.getElementById(id));
+    [["btn-save-ai",saveAiSettings,"正在保存…"],["btn-test-ai",testAiSettings,"正在测试…"],["btn-clear-ai",clearAiSettings,"正在清除…"]].forEach(([id,action,label])=>{
+      document.getElementById(id).addEventListener("click",event=>window.ExpenseUI.run(event.currentTarget,action,label,aiControls));
+    });
     document.getElementById("btn-records").addEventListener("click",openRecords);
     document.getElementById("btn-import-legacy").addEventListener("click",importLegacy);
     document.getElementById("btn-close-records").addEventListener("click",()=>{document.getElementById("records-modal").hidden=true;});
@@ -1368,7 +1372,7 @@
           .slice(0, 4)
           .join("、");
         const kindLabel = b.kindLabel || ({ init: "立项", change: "变更" }[b.kind] || b.approvalName || "");
-        return `<button type="button" class="budget-card${selected ? " is-selected" : ""}" data-budget-id="${esc(b.instanceId)}">
+        return `<button type="button" class="budget-card${selected ? " is-selected" : ""}" data-budget-id="${esc(b.instanceId)}" aria-pressed="${selected}">
         <span class="budget-card-kind">${esc(kindLabel)}</span>
         <strong class="budget-card-title">${esc(b.project || b.title || "未命名项目")}</strong>
         <span class="budget-card-meta">${esc([amt, subjects, b.startTime].filter(Boolean).join(" · "))}</span>
@@ -1632,6 +1636,7 @@
   }
 
   async function init() {
+    window.ExpenseUI.bindDialogs(document);
     bind();
     consumeAuthQuery();
     try {
