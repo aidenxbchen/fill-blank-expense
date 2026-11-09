@@ -208,6 +208,16 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .dropzone:active { transform: scale(.985); transition-duration: var(--m-press); }
 }
 
+/* Touch gets the same spring press as a pointer; hover remains pointer-only. */
+@media (hover: none), (pointer: coarse) {
+  .btn:active:not(:disabled), .chip:active:not(:disabled), .budget-card:active:not(:disabled) {
+    transform: scale(.97);
+    transition-duration: var(--m-press);
+    transition-timing-function: var(--ease-out-soft);
+  }
+  .dropzone:active { transform: scale(.985); transition-duration: var(--m-press); }
+}
+
 /* —— Glass header —— */
 .app-header {
   position: sticky;
@@ -1021,6 +1031,28 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 #ai-settings-message.is-ok { color: var(--accent); }
 #ai-settings-message.is-err { color: var(--danger); }
+
+/* Keep native hidden/focus semantics. Modern engines retain the visual sheet
+   during its discrete display exit; older engines keep the entrance fallback. */
+@supports (transition-behavior: allow-discrete) {
+  .modal-backdrop {
+    opacity: 1;
+    animation: none;
+    transition: opacity 220ms var(--ease-out-soft), display 220ms allow-discrete;
+  }
+  .modal {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    animation: none;
+    transition: opacity 220ms var(--ease-out-soft), transform var(--m-sheet) var(--ease-spring);
+  }
+  .modal-backdrop[hidden] { opacity: 0; pointer-events: none; }
+  .modal-backdrop[hidden] .modal { opacity: 0; transform: translateY(24px) scale(.98); }
+  @starting-style {
+    .modal-backdrop:not([hidden]) { opacity: 0; }
+    .modal-backdrop:not([hidden]) .modal { opacity: 0; transform: translateY(24px) scale(.98); }
+  }
+}
 
 /* —— Toast glass —— */
 .toast {
