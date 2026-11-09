@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261109purchase2";
+  const ASSET_V = "20261109files1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -50,6 +50,7 @@
   function emptySession() {
     return {
       stage: "upload",
+      draftId: uid("draft"),
       invoices: [],
       answers: {},
       chat: [],
@@ -73,6 +74,7 @@
     try {
       const slim = {
         stage: session.stage,
+        draftId: session.draftId,
         invoices: session.invoices.map(stripPreview),
         answers: session.answers,
         chat: session.chat,
@@ -183,8 +185,8 @@
     const busy = session.invoices.some((i) => i.status === "parsing");
     if (countPill) countPill.textContent = String(session.invoices.length);
     if (startBtn) {
-      startBtn.disabled = okCount === 0 || busy;
-      startBtn.textContent = busy ? "识别中…" : `确认表格，开始问答（${okCount} 张）`;
+      startBtn.disabled = okCount === 0 || busy || okCount !== session.invoices.length;
+      startBtn.textContent = busy ? "识别中…" : okCount !== session.invoices.length ? `还有 ${session.invoices.length-okCount} 张待核对金额` : `确认表格，开始问答（${okCount} 张）`;
     }
     if (totalEl) {
       const total = session.invoices.reduce(
@@ -239,7 +241,7 @@
             .join("");
           const dateType = /^\d{4}-\d{2}-\d{2}$/.test(inv.date || "") || !inv.date ? "date" : "text";
           return `<tr data-inv="${esc(inv.id)}" class="${err ? "is-error" : parsing ? "is-busy" : "is-ok"}">
-            <td class="td-file" title="${esc(inv.fileName || "")}">${esc(inv.fileName || "发票")}</td>
+            <td class="td-file" title="${esc(inv.fileName || "")}">${esc(inv.fileName || "发票")}<small>${inv.attachment ? "原件已保存" : "需要补传原件"}</small><button type="button" class="btn btn-ghost btn-sm" data-reattach="${esc(inv.id)}" ${disabled}>${inv.attachment ? "更换原件" : "补传原件"}</button></td>
             <td><input data-sum="date" type="${dateType}" value="${esc(inv.date || "")}" ${disabled} /></td>
             <td><input data-sum="merchant" type="text" value="${esc(inv.merchant || "")}" ${disabled} /></td>
             <td><input data-sum="invoiceNo" type="text" value="${esc(inv.invoiceNo || "")}" ${disabled} /></td>
@@ -302,6 +304,7 @@
   async function handleFiles(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
+    if (!authUser) { showToast("请先用飞书登录，再上传发票；原件会随采购申请提交"); return; }
 
     for (const file of files) {
       const id = uid("inv");
@@ -338,6 +341,7 @@
             : parsedAmount;
         Object.assign(entry, {
           status: "ok",
+          attachment: result.attachment || null,
           amount,
           merchant: result.merchant || file.name.replace(/\.[^.]+$/, ""),
           date: result.date || "",
@@ -353,6 +357,7 @@
         });
       } catch (err) {
         entry.status = "error";
+        if (err.attachment) entry.attachment = err.attachment;
         entry.error = (err && err.message) || String(err);
         session.parseErrors.push(`${file.name}: ${entry.error}`);
         showToast(`识别失败：${file.name}`);
@@ -486,7 +491,7 @@
     if (skipBtn) skipBtn.hidden = !!q.required;
 
     chipRow.innerHTML = (q.chips || [])
-      .map((c) => `<button type="button" class="chip" data-chip="${esc(c)}">${esc(c)}</button>`)
+      .map((c) => `<button type="button" class="chip${q.recommended && q.recommended.value === c ? " is-recommended" : ""}" data-chip="${esc(c)}">${esc(c)}${q.recommended && q.recommended.value === c ? '<small>历史常用</small>' : ""}</button>`)
       .join("");
     session._currentQuestion = q;
   }
@@ -506,7 +511,32 @@
     pushChat("assistant", q.text + (q.hint ? `\n${q.hint}` : ""), { qid: q.id });
   }
 
-  function submitAnswer(raw) {
+  function fillingClaim() {
+    return {costCenter:session.answers.costCenter || "", purchaseMethod:session.answers.purchaseMethod || "",
+      answers:{...session.answers}, invoices:okInvoices().map(({id,amount,merchant,category})=>({id,amount,merchant,category}))};
+  }
+
+  async function refreshFillSuggestions(record) {
+    if (!authUser || !okInvoices().length) return;
+    try {
+      const response = await fetch(apiBase() + (record ? "/api/fill-history" : "/api/fill-suggestions"), {
+        method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({draftId:session.draftId,claim:fillingClaim()}), signal:AbortSignal.timeout(4000)
+      });
+      const result = await response.json();
+      window.__fillSuggestions = response.ok && result.ok ? result.suggestions : null;
+    } catch (_) { window.__fillSuggestions = null; }
+  }
+
+  let fillingTimer;
+  function queueFillingHistory() {
+    clearTimeout(fillingTimer);
+    fillingTimer = setTimeout(()=>refreshFillSuggestions(true), 500);
+  }
+
+  let answering = false;
+  async function submitAnswer(raw) {
+    if (answering) return;
     const value = String(raw == null ? "" : raw).trim();
     if (!value) return;
     const q = session._currentQuestion;
@@ -521,7 +551,10 @@
     }
     pushChat("user", value, { qid: q.id });
     applyAnswerSideEffects(q.id, value, q);
+    answering = true;
     save();
+    await refreshFillSuggestions(true);
+    answering = false;
     renderInterview();
   }
 
@@ -680,6 +713,7 @@
         row[input.getAttribute("data-cell")] = input.value;
       });
     });
+    queueFillingHistory();
     session.draft.answers = {...session.answers};
     session.draft.detailSheets.forEach(sh => sh.rows.forEach(row => {
       const inv = session.invoices.find(i => i.id === row.invoiceRef);
@@ -705,8 +739,8 @@
   function buildFeishuPayload() {
     syncDraftFromDom();
     const d = session.draft;
-    return {claim:{purchaseMethod:d.purchaseMethod, purpose:d.purpose, costCenter:d.costCenter,
-      invoices:okInvoices().map(({id,date,merchant,invoiceNo,amount,category,note,fileName,source})=>({id,date,merchant,invoiceNo,amount,category,note,fileName,source})), answers:{...session.answers},
+    return {draftId:session.draftId,claim:{purchaseMethod:d.purchaseMethod, purpose:d.purpose, costCenter:d.costCenter,
+      invoices:okInvoices().map(({id,date,merchant,invoiceNo,amount,category,note,fileName,source,attachment})=>({id,date,merchant,invoiceNo,amount,category,note,fileName,source,attachment})), answers:{...session.answers},
       selectedBudget:session.answers.selectedBudget || null}};
   }
 
@@ -726,6 +760,7 @@
   async function submitFeishu() {
     if (submitting) return;
     if (!authUser) { showToast("请先用飞书登录"); return; }
+    if (okInvoices().some(i=>!i.attachment)) { showToast("还有发票缺少原件，请在识别汇总补传后再提交"); setStage("upload"); return; }
     const payload = buildFeishuPayload();
     const pending = window.ExpensePolicy.nextQuestion(payload.claim.invoices, {...session.answers, ...payload.claim});
     if (pending) { showToast("还缺采购必填项，先补齐这一问"); setStage("interview"); return; }
@@ -770,7 +805,7 @@
       if (result.ok) addLink("打开飞书采购申请", result.approvalUrl);
       else { addLink("开通飞书审批权限", result.permissionUrl); if (result.loginUrl) addLink("重新用飞书登录", new URL(result.loginUrl, location.origin).href); }
     }
-    if (pre) pre.textContent = result.ok ? `采购申请已发起\n申请人：${result.initiator}\n审批单号：${result.serialNumber || "同步中"}\n实例编号：${result.instanceCode}` : result.error;
+    if (pre) pre.textContent = result.ok ? `采购申请已发起\n申请人：${result.initiator}\n审批单号：${result.serialNumber || "同步中"}\n实例编号：${result.instanceCode}\n发票附件：${result.attachmentCount || 0} 个${result.attachmentsConfirmed ? "（飞书侧已确认）" : "（请在飞书核对）"}` : result.error;
     if (modal) modal.hidden = false;
   }
 
@@ -819,12 +854,12 @@
     });
 
     document.getElementById("btn-add-more").addEventListener("click", openPicker);
-    document.getElementById("btn-start-interview").addEventListener("click", () => {
+    document.getElementById("btn-start-interview").addEventListener("click", async () => {
       syncSummaryFromDom();
       if (!window.__purchaseSchema) { showToast("采购表单加载失败，请刷新重试"); return; }
       if (!authUser) { showToast("请先用飞书登录"); return; }
-      if (!okInvoices().length) {
-        showToast("请先在汇总表里确认至少一张发票的金额");
+      if (!okInvoices().length || okInvoices().length !== session.invoices.length) {
+        showToast("请先核对全部发票金额，或移除不提交的发票");
         renderUpload();
         return;
       }
@@ -834,10 +869,29 @@
       session.chat = [];
       session.draft = null;
       save();
+      await refreshFillSuggestions(false);
       setStage("interview");
     });
 
     const invoiceList = document.getElementById("invoice-list");
+    document.getElementById("invoice-summary-body").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-reattach]");
+      if (!button) return;
+      if (!authUser) { showToast("请先用飞书登录"); return; }
+      const inv = session.invoices.find(i=>i.id === button.dataset.reattach);
+      if (!inv) return;
+      const picker = document.createElement("input"); picker.type="file"; picker.accept="image/*,application/pdf";
+      picker.addEventListener("change", async () => {
+        const file = picker.files[0]; if (!file) return;
+        button.disabled=true;
+        try {
+          inv.attachment = await window.__storeInvoiceFile(file);
+          inv.fileName = file.name; save(); showToast("原件已补传，识别汇总中的填写保持不变");
+        } catch (err) { showToast(err.message,6000); }
+        finally { renderUpload(); }
+      });
+      picker.click();
+    });
     if (invoiceList) {
       invoiceList.addEventListener("click", (e) => {
         const btn = e.target.closest("[data-remove]");
@@ -997,6 +1051,7 @@
       subjects: b.subjects || [],
     };
     if (b.project) session.answers.purchaseProject = b.project;
+    queueFillingHistory();
     if (session.draft) session.draft.costCenter = session.answers.costCenter;
     save();
     renderBudgets();
@@ -1162,6 +1217,7 @@
       window.__purchaseSchema = data;
     } catch (err) { showToast(err.message, 10000); }
     await refreshAuth();
+    await refreshFillSuggestions(false);
     // restore stage
     const stage = session.stage || "upload";
     if (stage === "interview" && !okInvoices().length) session.stage = "upload";

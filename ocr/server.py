@@ -29,7 +29,9 @@ from feishu_oauth import (
     handle_me,
     load_dotenv as load_feishu_dotenv,
 )
-from feishu_purchase import handle_create, handle_schema
+import feishu_oauth as auth
+import expense_data
+from feishu_purchase import handle_create, handle_schema, definition, public_schema
 from invoice_extract import (
     ollama_base,
     ollama_model,
@@ -171,6 +173,7 @@ class Handler(BaseHTTPRequestHandler):
         if extra_headers:
             for key, value in extra_headers.items():
                 self.send_header(key, value)
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -207,6 +210,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "backend": "ollama-openai-compat",
+                    "features": {"invoiceOriginals": True, "historySuggestions": True},
                     "model": ollama_model(),
                     "reviewModel": review_model(),
                     "pipeline": "pdf-text|vision-ocr-text → heuristic → llm-review",
@@ -235,6 +239,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(404, {"ok": False, "error": "not found"})
 
+    def _owner(self):
+        origin = self.headers.get("Origin")
+        if origin and origin not in {auth.web_origin(), "http://127.0.0.1:5173", "http://localhost:5173"}:
+            raise auth.FeishuAPIError(403, {"error": "上传来源不受信任"})
+        sid = auth.cookie_from_headers(self.headers)
+        session = auth.get_session(sid)
+        if not session: raise auth.FeishuAPIError(401, {"error":"请先用飞书登录"})
+        session = auth.ensure_fresh_session(sid, session)
+        owner = (session.get("user") or {}).get("openId")
+        if not owner: raise auth.FeishuAPIError(401, {"error":"登录身份不完整，请重新登录"})
+        return owner
+
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
@@ -244,6 +260,26 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/logout":
             handle_logout(self)
+            return
+
+        if path in ("/api/fill-history", "/api/fill-suggestions"):
+            try:
+                owner = self._owner()
+                length = int(self.headers.get("Content-Length") or 0)
+                if not 0 < length <= 1024 * 1024: raise ValueError("填写请求为空或过大")
+                body = json.loads(self.rfile.read(length))
+                claim = body.get("claim")
+                if not isinstance(claim, dict) or not isinstance(claim.get("answers", {}), dict):
+                    raise ValueError("无效填写数据")
+                if path == "/api/fill-history":
+                    expense_data.record_fills(owner, body.get("draftId"), claim, public_schema(definition()))
+                self._json(200, {"ok":True, "suggestions":expense_data.suggestions(owner, claim)})
+            except auth.FeishuAPIError as e:
+                self._json(e.http_status if e.http_status in (401,403) else 502, {"ok":False,"error":str(e)})
+            except (ValueError, TypeError, KeyError, AttributeError) as e:
+                self._json(422, {"ok":False,"error":str(e)})
+            except Exception:
+                self._json(503, {"ok":False,"error":"填写建议暂不可用，可继续手动选择"})
             return
 
         if path == "/api/feishu-expense":
@@ -264,8 +300,14 @@ class Handler(BaseHTTPRequestHandler):
             handle_create(self, body)
             return
 
-        if path != "/api/parse-invoice":
+        if path not in ("/api/parse-invoice", "/api/invoice-files"):
             self._json(404, {"ok": False, "error": "not found"})
+            return
+
+        try:
+            owner = self._owner()
+        except auth.FeishuAPIError as e:
+            self._json(e.http_status if e.http_status in (401,403) else 502, {"ok":False,"error":str(e)})
             return
 
         try:
@@ -318,6 +360,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
+            attachment = expense_data.save_file(owner, data, filename, mime)
+        except (ValueError, OSError) as e:
+            self._json(422, {"ok":False,"error":str(e)})
+            return
+        if path == "/api/invoice-files":
+            self._json(200, {"ok":True,"attachment":attachment})
+            return
+        try:
             out = parse_uploaded_invoice(data, filename, mime)
         except Exception as e:
             self._json(
@@ -326,12 +376,14 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": False,
                     "error": str(e),
                     "message": str(e),
+                    "attachment": attachment,
                 },
             )
             return
 
         out = dict(out)
         out["ok"] = True
+        out["attachment"] = attachment
         self._json(200, out)
 
 

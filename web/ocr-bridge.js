@@ -55,6 +55,7 @@
     var res = await fetch(OCR_BASE + "/api/parse-invoice", {
       method: "POST",
       mode: "cors",
+      credentials: "include",
       body: form,
     });
 
@@ -70,7 +71,9 @@
       var msg =
         (data && (data.error || data.message)) ||
         "OCR 失败 HTTP " + res.status;
-      throw new Error(msg);
+      var error = new Error(msg);
+      error.attachment = data && data.attachment;
+      throw error;
     }
 
     if (!data) {
@@ -92,6 +95,7 @@
 
     return {
       amount: amount,
+      attachment: data.attachment || null,
       merchant: data.merchant != null ? String(data.merchant) : "",
       date: data.date || opts.dayDate || "",
       invoiceNo: data.invoice_no || data.invoiceNo || "",
@@ -109,5 +113,12 @@
     };
   }
 
+  window.__storeInvoiceFile = async function (file) {
+    var form = new FormData(); form.append("file", file, file.name || "invoice.pdf");
+    var response = await fetch(OCR_BASE + "/api/invoice-files", {method:"POST", credentials:"include", body:form});
+    var result = await response.json();
+    if (!response.ok || !result.ok || !result.attachment) throw new Error(result.error || "原件保存失败");
+    return result.attachment;
+  };
   window.__invoiceOCR = invoiceOCR;
 })();

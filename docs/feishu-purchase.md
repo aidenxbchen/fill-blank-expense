@@ -53,12 +53,51 @@
 - 出差：`87FAB2C0-D271-4ACF-9344-E7608532FA5C`
 
 预付款项不提交关联控件；其他方式必填。不用项目标题或 definition Code 冒充 instance Code。
-发票原文件上传暂未实现（定义中的「附件」为选填）；无票草稿占位行不自动发起，mock 识别结果也禁止真实提交。
+本产品要求每张票有原文件，即使飞书定义将「附件」设为选填。无原文件、原件属于其他用户、原件损坏、模拟发票均阻止真实发起；旧会话需在识别汇总点「补传原件」，不覆盖手改事实。
+
+## 发票附件
+
+1. 登录后上传 PDF / 图片，原始字节先保存在 Mini `.invoice-files/`，即使 OCR 失败也返回原件引用供手工修正。目录 0700、文件与数据库 0600；每文件最多 24MB，文件名不作为本地路径。
+2. 提交前服务端按 OAuth `open_id` 校验文件归属和 SHA-256，所有发票必须有原件；客户端不能传任意路径、URL 或伪造远端附件 code。
+3. 调用 `POST https://www.feishu.cn/approval/openapi/v2/file/upload`，multipart 字段为 `name`、`type=attachment`、`content`，使用同一应用 tenant 凭证。返回 `data.code` 是审批原生附件标识，不能用 Drive token 或下载 URL 替代。
+4. 将 code 数组放入 `widget16510609389860001` / `attachmentV2` / `value`，再用当前用户 OAuth 调用 `/instances/initiate`。上传身份不改变审批申请人。
+5. 上传失败或缺权限时不调用 initiate；返回真实错误与相应身份的权限开通链接。成功后读取审批详情确认附件数量，UI 显示数量及确认状态。
+6. 本轮实测：真实 62,592 字节 PDF 和 PNG 图片上传成功；两份原生附件 code 一起写入采购申请后，流程预览 `code=0`。未新增生产采购。v4 上传接口会拒绝用户 token，且目标应用缺 `approval:instance.file`；本实现使用已实测可用的正式 v2 上传接口与现有审批读取权限。
+
+接口参考：[飞书上传审批文件](https://open.feishu.cn/document/server-docs/approval-v4/file/upload-files)。
+
+## 项目问答与本地建议库
+
+逐票问题使用项目名称及票序号，例如「第 2 张票在【公共办公】里属于哪个科目？」；日期、金额、发票尾号用于区分票，不再用商户当主语。科目、方式、项目、规格、数量、费用类型只学习用户显式确认的最终值，不学习推荐本身，也不保存银行账号到建议库。
+
+SQLite `.expense-data.sqlite3`（Git 忽略，0600）包含：
+
+```sql
+invoice_files (
+  file_id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
+  mime TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL,
+  created_at INTEGER NOT NULL, remote_code TEXT, remote_app_id TEXT,
+  uploaded_at INTEGER, UNIQUE(owner, sha256, name)
+);
+fill_observations (
+  owner TEXT, draft_id TEXT, invoice_id TEXT, field TEXT, value TEXT,
+  project TEXT, method TEXT, merchant TEXT, category TEXT,
+  amount_bucket TEXT, updated_at INTEGER,
+  PRIMARY KEY(owner, draft_id, invoice_id, field)
+);
+CREATE INDEX fill_lookup ON fill_observations(owner, field, updated_at);
+```
+
+同一草稿的重复填写覆盖原记录，修正不重复计数；不同 OAuth 用户隔离。金额区间为 ≤100、≤500、≤1000、≤5000、≤10000、>10000；商户做 Unicode/空白归一化。
+
+排序采用拉普拉斯平滑条件概率的加权混合：项目/商户/采购方式/金额区间组合优先，稀疏时回退到较粗条件和总体频次。只能给当前飞书定义允许的选项排序，已删除选项会被过滤。概率最高的历史选项置顶并标「历史常用」，仍需用户点击；规格与数量会复用历史答案作为选择项。首次无数据、网络或建议库暂不可用时，保留默认选择及自由输入，不阻断问答。
+
+接口：`POST /api/fill-history` 保存显式填写并返回建议；`POST /api/fill-suggestions` 只读取建议。两者均校验登录，不向其他用户返回记录。
 
 ## 防重复与失败
 
 提交中禁用按钮；后端生成内容稳定 UUID，成功后相同内容仅重放真实回执。
-服务端 `.submissions.sqlite3` 用用户与规范化表单内容生成 UUID 并持久化：成功可重放，相同内容并发只允许一次 POST。
+服务端 `.submissions.sqlite3` 用用户与规范化表单内容、原件 SHA-256 和文件名生成 UUID 并持久化：成功可重放，相同内容并发只允许一次 POST。
 网络失败 / 5xx / 缺少实例 Code / UUID 冲突均视为结果未确认，不自动再 POST。应先核对飞书「我发起的」，由管理员核实结果后处置 pending 记录，不能直接清库重试。
 显式业务拒绝可在修正或重新授权后用同一 UUID 重试。
 
@@ -76,10 +115,10 @@ python3 ocr/test_invoice_extract.py
 
 1. 公网用飞书登录；旧会话缺写权限时退出重新授权。
 2. 硬刷新 https://baoxiao.xbchen.top ，确认提交页无 stub 提示。
-3. 上传真实发票，在识别汇总表修改一个金额 / 商户 / 发票号；完成问答，选择已通过的预算。
+3. 上传真实 PDF 和图片，在识别汇总确认「原件已保存」，修改一个金额 / 商户 / 发票号。旧草稿缺原件时补传，确认手改数据保持不变。
 4. 逐句问答选择「个人垫付」、真实项目，补全科目、规格、数量；草稿可展开采购明细修改。留空必填项应阻止提交并返回问答。
-5. 发起后核对真实 `instanceCode`，点击飞书返回的链接，并在飞书「我发起的」查看申请人、采购方式、项目、关联审批、金额和备注中的发票号码。
+5. 发起后核对真实 `instanceCode`，在本人飞书「我发起的」查看申请人与汇总事实，并在「附件」打开每份 PDF / 图片。页面显示附件个数和确认状态。
 6. 重复点击 / 刷新后重试同样内容，不应出现第二条审批；断网与撤销写 scope 均只能显示失败。
-7. 切换七种采购方式，检查仅对应明细出现；预付款不要求关联，其余缺关联 / 使用未通过或错误类型实例应失败。
+7. 切换七种采购方式检查条件明细；再用同项目/商户/金额区间新建草稿，确认前次选择置顶高亮且不会自动填写。首次没有历史时正常默认排序；逐票问法不包含商户名。
 
 自动测试不创建真实审批。浏览器回归使用受控响应测试成功 / 权限拒绝 / 断网 / stub 拒绝，不等同于生产 OAuth 创建成功。

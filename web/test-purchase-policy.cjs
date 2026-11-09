@@ -28,3 +28,17 @@ for (const method of methods) {
 assert.equal(window.ExpensePolicy.nextQuestion(inv,{purchaseMethod:'错误方式'}).id,'purchaseMethod');
 assert.equal(window.ExpensePolicy.nextQuestion(inv,{purchaseMethod:'个人垫付',costCenter:'待定'}).id,'costCenter');
 console.log('7 purchase methods: one-question interview completes with exact project/subject options');
+const options=methods.find(m=>m.name==='个人垫付').fields.find(w=>w.name.includes('科目')).options;
+window.__fillSuggestions={global:{purchaseMethod:[{value:'个人垫付',probability:0.8,evidence:4}]},rows:{'corrected-row':{'科目':[{value:options[2],probability:0.7,evidence:3},{value:'已删除选项',probability:0.2,evidence:10}]}}};
+const answers={purchaseMethod:'个人垫付',costCenter:'公共办公',purpose:'日常采购',selectedBudget:{instanceId:'budget'}};
+const question=window.ExpensePolicy.nextQuestion(inv,answers);
+assert.equal(question.chips[0],options[2]);
+assert.equal(question.recommended.value,options[2]);
+assert.ok(question.text.includes('【公共办公】'));
+assert.ok(!question.text.includes('已改商户'));
+assert.ok(!question.chips.includes('已删除选项'));
+assert.equal(answers[question.id],undefined,'a recommendation must never auto-fill an answer');
+const nextMethod=window.ExpensePolicy.nextQuestion(inv,{});
+assert.equal(nextMethod.chips[0],'个人垫付');
+assert.equal(nextMethod.recommended.evidence,4);
+console.log('Project subjects, ranked suggestions, deleted options and explicit selection verified');

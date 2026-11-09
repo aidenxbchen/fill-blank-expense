@@ -9,10 +9,17 @@
     const schema = global.__purchaseSchema;
     if (!schema) return [{id:"schemaUnavailable", text:"采购表单暂未加载，请返回首页重试。", required:true}];
     const q = [];
+    const learned = global.__fillSuggestions || {global:{},rows:{}};
+    function ordered(chips, history, strict) {
+      history = (history || []).filter(h=>!strict || chips.includes(h.value));
+      const values = [...history.map(h=>h.value), ...chips];
+      return {chips:[...new Set(values)], recommended:history[0] || null};
+    }
     function ask(id, text, chips, hint) {
       const v = answers[id];
       if (present(v) && (!chips || !chips.length || chips.includes(v))) return;
-      q.push({id, text, chips:chips || [], hint:hint || "", required:true, input:chips && chips.length ? "chips+text":"text", options:chips || []});
+      const rank = ordered(chips || [], (learned.global || {})[id], Boolean(chips && chips.length));
+      q.push({id, text, ...rank, hint:hint || "", required:true, input:rank.chips.length ? "chips+text":"text", options:chips || []});
     }
     ask("purchaseMethod", "这次用哪种采购方式？", schema.methods.map(m=>m.name));
     ask("costCenter", "这笔采购属于哪个项目？", schema.projects, "已选预算的项目会自动带入；名称不一致时请选实际项目。");
@@ -29,8 +36,9 @@
       if (["账户名称","银行账户","收款账号","开户支行"].includes(w.name))
         ask(`purchase:${method.name}:shared:${w.name}`, `本次所有明细的${w.name}是？`, [], "如各行收款信息不同，请分开提交申请。");
     }
-    for (const inv of invoices || []) {
-      const label = inv.merchant || inv.fileName || "此发票";
+    for (const [index, inv] of (invoices || []).entries()) {
+      const project = answers.costCenter || (answers.selectedBudget || {}).project || "待选项目";
+      const ticket = (invoices || []).length > 1 ? `第 ${index+1} 张票` : "这张票";
       for (const w of method.fields) {
         if (!w.required || ["金额","名称","账户名称","银行账户","收款账号","开户支行"].includes(w.name)) continue;
         let chips = w.options || [];
@@ -43,7 +51,12 @@
         const id = `purchase:${method.name}:${inv.id}:${w.name}`;
         const v = answers[id];
         if (present(v) && (!w.options.length || w.options.includes(v)) && (w.type !== "number" || Number.isFinite(Number(v)) && Number(v)>0)) continue;
-        q.push({id, text:`「${label}」的${w.name}是？`, chips, required:true, input:"chips+text", numeric:w.type === "number", options:w.options});
+        const field = w.name.includes("科目") ? "科目" : w.name;
+        const rank = ordered(chips, (((learned.rows || {})[inv.id] || {})[field]), Boolean(w.options.length));
+        const text = field === "科目" ? `${ticket}在【${project}】里属于哪个科目？` : `${ticket}在【${project}】里的${w.name}是？`;
+        const amount = Number(inv.amount);
+        const hint = [inv.date, inv.invoiceNo ? `发票尾号 ${String(inv.invoiceNo).slice(-6)}` : "", Number.isFinite(amount) ? `¥${amount.toFixed(2)}` : ""].filter(Boolean).join(" · ");
+        q.push({id, text, hint, ...rank, required:true, input:"chips+text", numeric:w.type === "number", options:w.options});
       }
     }
     return q;

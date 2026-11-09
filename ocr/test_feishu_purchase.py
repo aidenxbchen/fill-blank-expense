@@ -82,10 +82,17 @@ class CreateTests(unittest.TestCase):
             x=patch.object(p,name,value);x.start();self.addCleanup(x.stop)
         for obj,name,value in [(auth,'fetch_user_info',ACTOR),(auth,'get_tenant_access_token','tenant-token'),(p,'definition',SCHEMA),(p,'validate_relation',None),(auth,'fetch_instance',{'serial_number':'202611090001'})]:
             x=patch.object(obj,name,return_value=value);x.start();self.addCleanup(x.stop)
+        for name,value in [('DB_PATH',Path(self.tmp.name)/'data.db'),('FILE_ROOT',Path(self.tmp.name)/'files')]:
+            x=patch.object(p.expense_data,name,value);x.start();self.addCleanup(x.stop)
+        x=patch.object(p.approval_files,'upload_file',return_value='approval-native-file-code');x.start();self.addCleanup(x.stop)
+        self.attachment=p.expense_data.save_file(ACTOR['openId'],b'%PDF-1.7 fixture','invoice.pdf','application/pdf')
         self.sess={'access_token':'oauth-token','user':ACTOR}
 
+    def claim(self):
+        c=claim_for();c['invoices'][0]['attachment']=self.attachment;return c
+
     def test_oauth_actor_pinned_and_receipt_survives_repeat(self):
-        body={'claim':claim_for(),'open_id':'ou_forged','user_id':'forged'}
+        body={'claim':self.claim(),'open_id':'ou_forged','user_id':'forged'}
         with patch.object(auth,'http_json',return_value={'code':0,'data':{'instance_code':'real-id','instance_link':'https://feishu.cn/approval/real'}}) as call:
             a=p.create_purchase(self.sess,body);b=p.create_purchase(self.sess,body)
             self.assertEqual(a,b);self.assertEqual(call.call_count,1)
@@ -95,43 +102,46 @@ class CreateTests(unittest.TestCase):
             self.assertTrue(call.call_args.args[1].endswith('/instances/initiate'))
             self.assertEqual(a['approvalUrl'],'https://feishu.cn/approval/real')
             self.assertEqual(a['serialNumber'],'202611090001')
+            self.assertEqual(a['attachmentCount'],1)
+            controls=json.loads(call.call_args.kwargs['payload']['form'])
+            self.assertEqual(next(w['value'] for w in controls if w['type']=='attachmentV2'),['approval-native-file-code'])
             self.assertEqual(p.DB_PATH.stat().st_mode & 0o777,0o600)
 
     def test_missing_scope_never_success_and_can_retry_after_fix(self):
         err=auth.FeishuAPIError(400,{'code':99991672,'msg':'missing scope','error':{'permission_violations':[{'subject':'approval:instance'}]}})
         with patch.object(auth,'http_json',side_effect=err) as call:
             for _ in range(2):
-                with self.assertRaises(auth.FeishuAPIError):p.create_purchase(self.sess,{'claim':claim_for()})
+                with self.assertRaises(auth.FeishuAPIError):p.create_purchase(self.sess,{'claim':self.claim()})
             self.assertEqual(call.call_count,2)
         self.assertEqual(p.permission_error(err)['requiredScopes'],['approval:instance'])
         self.assertFalse(p.permission_error(err)['ok'])
 
     def test_unknown_transport_outcome_blocks_repeat(self):
         with patch.object(auth,'http_json',side_effect=TimeoutError) as call:
-            with self.assertRaises(TimeoutError):p.create_purchase(self.sess,{'claim':claim_for()})
-            with self.assertRaisesRegex(p.ValidationError,'待确认'):p.create_purchase(self.sess,{'claim':claim_for()})
+            with self.assertRaises(TimeoutError):p.create_purchase(self.sess,{'claim':self.claim()})
+            with self.assertRaisesRegex(p.ValidationError,'待确认'):p.create_purchase(self.sess,{'claim':self.claim()})
             self.assertEqual(call.call_count,1)
 
     def test_missing_instance_code_never_success(self):
         with patch.object(auth,'http_json',return_value={'code':0,'data':{}}):
-            with self.assertRaisesRegex(p.ValidationError,'未返回实例编号'):p.create_purchase(self.sess,{'claim':claim_for()})
+            with self.assertRaisesRegex(p.ValidationError,'未返回实例编号'):p.create_purchase(self.sess,{'claim':self.claim()})
 
     def test_uuid_conflict_remains_pending(self):
         with patch.object(auth,'http_json',side_effect=auth.FeishuAPIError(400,{'code':60012,'msg':'UUID conflict'})) as call:
-            with self.assertRaises(auth.FeishuAPIError):p.create_purchase(self.sess,{'claim':claim_for()})
-            with self.assertRaisesRegex(p.ValidationError,'待确认'):p.create_purchase(self.sess,{'claim':claim_for()})
+            with self.assertRaises(auth.FeishuAPIError):p.create_purchase(self.sess,{'claim':self.claim()})
+            with self.assertRaisesRegex(p.ValidationError,'待确认'):p.create_purchase(self.sess,{'claim':self.claim()})
             self.assertEqual(call.call_count,1)
 
     def test_actor_mismatch_stops_before_create(self):
         self.sess['user']={'openId':'another'}
         with patch.object(auth,'http_json') as call:
-            with self.assertRaisesRegex(p.ValidationError,'身份不匹配'):p.create_purchase(self.sess,{'claim':claim_for()})
+            with self.assertRaisesRegex(p.ValidationError,'身份不匹配'):p.create_purchase(self.sess,{'claim':self.claim()})
             call.assert_not_called()
 
     def test_detail_read_failure_does_not_repeat_create(self):
         with patch.object(auth,'fetch_instance',side_effect=RuntimeError),patch.object(auth,'http_json',return_value={'code':0,'data':{'instance_code':'real'}}) as call:
-            self.assertTrue(p.create_purchase(self.sess,{'claim':claim_for()})['ok'])
-            self.assertTrue(p.create_purchase(self.sess,{'claim':claim_for()})['ok'])
+            self.assertTrue(p.create_purchase(self.sess,{'claim':self.claim()})['ok'])
+            self.assertTrue(p.create_purchase(self.sess,{'claim':self.claim()})['ok'])
             self.assertEqual(call.call_count,1)
 
 

@@ -17,6 +17,8 @@ from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 import feishu_oauth as auth
+import approval_files
+import expense_data
 
 APPROVAL_CODE = "D448D0FB-77DB-4640-9650-1FB99512888C"
 CREATE_URL = "https://open.feishu.cn/open-apis/approval/v4/instances/initiate"
@@ -104,7 +106,7 @@ def build_form(form, claim):
         raise ValidationError("请确认识别汇总，至少一张发票，最多 100 张")
     rows = []
     invoice_ids = set()
-    for inv in invoices:
+    for row_number, inv in enumerate(invoices, 1):
         if not isinstance(inv, dict) or not inv.get("id") or inv["id"] in invoice_ids:
             raise ValidationError("发票行标识缺失或重复，请返回识别汇总")
         invoice_ids.add(inv["id"])
@@ -125,7 +127,7 @@ def build_form(form, claim):
             elif name in ("账户名称", "银行账户", "收款账号", "开户支行"):
                 val = answers.get(f"purchase:{method}:shared:{name}", "")
             if w.get("required") and not str(val).strip():
-                raise ValidationError(f"「{inv.get('merchant') or inv.get('fileName')}」还缺{name}，请返回问答补充")
+                raise ValidationError(f"【{project}】第 {row_number} 张票还缺{name}，请返回问答补充")
             if val == "" and not w.get("required"):
                 continue
             if w["type"] == "radioV2":
@@ -155,6 +157,8 @@ def build_form(form, claim):
             try: uuid.UUID(code)
             except (ValueError, TypeError): raise ValidationError("关联审批实例编号无效")
             val = [code]
+        elif w["type"] == "attachmentV2":
+            continue  # Always populated from owned originals after upload.
         elif w.get("required"):
             raise ValidationError(f"采购定义新增必填字段：{name}，请更新问答")
         else: continue
@@ -208,18 +212,23 @@ def create_purchase(sess, body):
     if not actor.get("openId") or actor["openId"] != (sess.get("user") or {}).get("openId"):
         raise ValidationError("OAuth 用户身份不匹配，请重新登录")
     claim = body.get("claim")
-    form = build_form(definition(), claim)
+    schema = definition()
+    form = build_form(schema, claim)
+    files = approval_files.resolve_invoices(actor["openId"], claim)
     token = auth.get_tenant_access_token()
     if (claim.get("purchaseMethod") or (claim.get("answers") or {}).get("purchaseMethod")) != "预付款项":
         validate_relation(claim, actor, token)
     # Content-addressed idempotency survives reloads, repeated clicks and server restarts.
-    canonical = json.dumps([actor["openId"], form], ensure_ascii=False, sort_keys=True)
+    canonical = json.dumps([actor["openId"], form, [{"sha256":r["sha256"],"name":r["name"]} for r,raw in files]], ensure_ascii=False, sort_keys=True)
     request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, hashlib.sha256(canonical.encode()).hexdigest()))
     with _submit_lock, closing(_db()) as db:
         previous = db.execute("SELECT status, receipt FROM submissions WHERE id=?", (request_id,)).fetchone()
         if previous:
             if previous[0] == "created": return json.loads(previous[1])
             raise ValidationError(f"该申请提交结果待确认（请求号 {request_id}），请先在飞书「已发起」核对，勿重复提交")
+        # File upload failure happens before any approval is initiated.
+        codes = approval_files.file_codes(actor["openId"], files)
+        approval_files.add_attachment(form, schema, codes)
         db.execute("INSERT INTO submissions VALUES (?, 'pending', '')", (request_id,))
         db.commit()
         try:
@@ -241,14 +250,24 @@ def create_purchase(sess, body):
             link = f"https://applink.feishu.cn/client/approval?instanceCode={code}"
         receipt = {"ok": True, "approvalCode": APPROVAL_CODE, "approvalName": "采购申请", "instanceCode": code,
                    "feishuApprovalId": code, "approvalUrl": link, "serialNumber": data.get("serial_number") or "",
-                   "requestId": request_id, "initiator": actor["name"]}
+                   "requestId": request_id, "initiator": actor["name"],
+                   "attachmentCount": len(codes), "attachmentsConfirmed": False}
         # Creation is already successful. A detail-read failure must never trigger another create.
         try:
-            receipt["serialNumber"] = auth.fetch_instance(token, code).get("serial_number") or receipt["serialNumber"]
+            detail = auth.fetch_instance(token, code)
+            receipt["serialNumber"] = detail.get("serial_number") or receipt["serialNumber"]
+            saved_form = detail.get("form") or []
+            if isinstance(saved_form, str): saved_form = json.loads(saved_form)
+            receipt["attachmentsConfirmed"] = any(w.get("type")=="attachmentV2" and len(w.get("value") or []) >= len(codes) for w in saved_form)
         except Exception:
             pass
         db.execute("UPDATE submissions SET status='created', receipt=? WHERE id=?", (json.dumps(receipt, ensure_ascii=False), request_id))
         db.commit()
+        try:
+            if body.get("draftId"):
+                expense_data.record_fills(actor["openId"], body["draftId"], claim, public_schema(schema))
+        except Exception:
+            pass  # A suggestion-library failure must not obscure a created approval.
         return receipt
 
 
@@ -275,7 +294,7 @@ def handle_create(handler, body):
         sess = auth.ensure_fresh_session(sid, sess)
         handler._json(200, create_purchase(sess, body))
     except auth.FeishuAPIError as e:
-        handler._json(403 if auth.is_missing_scope(e) else 502, permission_error(e))
+        handler._json(403 if auth.is_missing_scope(e) else 502, permission_error(e, getattr(e, "identity", "user")))
     except (ValidationError, ValueError, TypeError, KeyError) as e:
         handler._json(422, {"ok": False, "error": str(e)})
     except Exception:
