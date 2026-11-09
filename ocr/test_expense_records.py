@@ -96,8 +96,12 @@ class RecordTests(unittest.TestCase):
 class RecordsHTTPTests(ExpenseHTTPTests):
     def call(self,path,method='GET',body=None,origin=None):
         import urllib.request,urllib.error
-        req=urllib.request.Request(self.base+path,data=json.dumps(body).encode() if body is not None else None,method=method,
-            headers={'Content-Type':'application/json',**({'Origin':origin} if origin else {})})
+        headers={'Content-Type':'application/json',**({'Origin':origin} if origin else {})}
+        data=None if body is None else json.dumps(body).encode()
+        if body is None and method in ('DELETE','POST','PUT','PATCH'):
+            # Explicit empty body helpers still set Content-Length: 0 via urllib.
+            headers.pop('Content-Type',None)
+        req=urllib.request.Request(self.base+path,data=data,method=method,headers=headers)
         try:res=urllib.request.urlopen(req,timeout=5)
         except urllib.error.HTTPError as e:res=e
         with res:return res.status,json.load(res),res.headers
@@ -121,6 +125,23 @@ class RecordsHTTPTests(ExpenseHTTPTests):
             for path in ['/api/drafts','/api/drafts/draft_test','/api/history','/api/history/code']:
                 self.assertEqual(self.call(path)[0],401)
             recovery.assert_not_called()
+
+    def test_delete_via_query_without_body_and_post_delete(self):
+        def make(draft_id):
+            s=copy.deepcopy(state_for()); s['draftId']=draft_id; return s
+        self.assertEqual(self.call('/api/drafts','POST',{'id':'draft_q','state':make('draft_q'),'revision':0})[0],200)
+        # No body + ?revision= must succeed (browser/proxy-safe path).
+        status,result,_=self.call('/api/drafts/draft_q?revision=1','DELETE')
+        self.assertEqual(status,200);self.assertEqual(result['record']['status'],'deleted')
+        self.assertEqual(self.call('/api/drafts/draft_q')[0],404)
+        self.assertEqual(self.call('/api/drafts','POST',{'id':'draft_post','state':make('draft_post'),'revision':0})[0],200)
+        status,result,_=self.call('/api/drafts/draft_post/delete?revision=1','POST')
+        self.assertEqual(status,200);self.assertEqual(result['record']['status'],'deleted')
+        # Missing revision / empty DELETE body without query rejects clearly.
+        self.assertEqual(self.call('/api/drafts','POST',{'id':'draft_bad','state':make('draft_bad'),'revision':0})[0],200)
+        self.assertEqual(self.call('/api/drafts/draft_bad','DELETE')[0],422)
+        self.assertEqual(self.call('/api/drafts/draft_bad?revision=nope','DELETE')[0],422)
+        self.assertEqual(self.call('/api/drafts/draft_bad','PUT')[0],413)
 
     def test_ocr_from_retained_reference_without_reupload(self):
         _,body,_=self.upload();ref=body['attachment']

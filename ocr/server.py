@@ -323,18 +323,34 @@ class Handler(BaseHTTPRequestHandler):
             method = self.command
             parts = path.strip('/').split('/')
             kind = parts[1]
-            ident = parts[2] if len(parts) == 3 else None
-            if len(parts) > 3:
+            ident = parts[2] if len(parts) >= 3 else None
+            action = parts[3] if len(parts) == 4 else None
+            if len(parts) > 4 or (action and action != 'delete'):
                 raise records.RecordError("接口不存在",404)
+            qs = parse_qs(urlparse(self.path).query)
             body = {}
             if method != 'GET':
                 length = int(self.headers.get('Content-Length') or 0)
-                if not 0 < length <= 4 * 1024 * 1024:
+                if length > 4 * 1024 * 1024:
                     raise records.RecordError("草稿请求为空或超过 4MB",413)
-                body = json.loads(self.rfile.read(length))
-                if not isinstance(body,dict):
-                    raise records.RecordError("无效草稿请求")
+                if length > 0:
+                    body = json.loads(self.rfile.read(length))
+                    if not isinstance(body,dict):
+                        raise records.RecordError("无效草稿请求")
+                elif method in ('POST','PUT','PATCH') and not (kind=='drafts' and ident and action=='delete' and method=='POST'):
+                    # DELETE may omit a body (proxies often strip it); revision can come from ?revision=
+                    raise records.RecordError("草稿请求为空或超过 4MB",413)
+            def revision_of():
+                rev = body.get('revision')
+                if rev is None and qs.get('revision'):
+                    try:
+                        rev = int(qs['revision'][0])
+                    except (TypeError, ValueError):
+                        rev = qs['revision'][0]
+                return rev
             if method == 'GET':
+                if action:
+                    raise records.RecordError("此操作不受支持",405)
                 if kind == 'history':
                     from feishu_purchase import recover_history
                     recover_history(owner)
@@ -342,15 +358,18 @@ class Handler(BaseHTTPRequestHandler):
                     item = records.get_draft(owner,ident) if kind=='drafts' else records.get_history(owner,ident)
                     self._json(200, {"ok":True,"record":item})
                 else:
-                    qs = parse_qs(urlparse(self.path).query)
                     offset = int(qs.get('offset',['0'])[0])
                     if not 0 <= offset <= 100000:
                         raise records.RecordError("无效分页参数")
                     self._json(200, {"ok":True,**records.list_records(owner,kind,offset)})
-            elif kind == 'drafts' and ((method=='POST' and not ident) or (method=='PUT' and ident)):
+            elif kind == 'drafts' and ((method=='POST' and not ident) or (method=='PUT' and ident and not action)):
                 self._json(200, {"ok":True,"record":records.save_draft(owner,ident or body.get('id'),body)})
-            elif kind=='drafts' and ident and method in ('PATCH','DELETE'):
-                item = records.change_draft(owner,ident,body.get('revision'),body.get('title'),delete=method=='DELETE')
+            elif kind=='drafts' and ident and (
+                (method in ('PATCH','DELETE') and not action) or
+                (method=='POST' and action=='delete')
+            ):
+                delete = method=='DELETE' or action=='delete'
+                item = records.change_draft(owner,ident,revision_of(),None if delete else body.get('title'),delete=delete)
                 self._json(200, {"ok":True,"record":item})
             else:
                 raise records.RecordError("此操作不受支持",405)

@@ -173,7 +173,7 @@
     const target=session, owner=ownerId(), state=snapshot();
     const fingerprint=JSON.stringify(state);
     const job=async()=>{
-      if (target.submitted || owner!==ownerId()) return;
+      if (target.deleted || target.submitted || owner!==ownerId()) return;
       if(target.savedFingerprint===fingerprint) {
         if (session===target) setSaveStatus(JSON.stringify(snapshot())===fingerprint ? "已保存 · "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}) : "有未保存的修改…");
         if(manual) showToast("草稿已保存，可在我的报销继续");
@@ -288,6 +288,7 @@
     if (!button) return;
     const card=button.closest("[data-record-index]"), row=recordItems[Number(card.dataset.recordIndex)], action=button.dataset.recordAction;
     if (action==="rename") {card.querySelector(".record-rename").hidden=false;card.querySelector("input").focus();return;}
+    if (action==="delete" && !confirm("删除这份草稿？已提交记录不受影响。")) return;
     button.disabled=true;
     try {
       if (action==="detail") { historyDetail((await recordsAPI("/api/history/"+encodeURIComponent(row.instance_code))).record); return; }
@@ -311,9 +312,16 @@
         if(current) {session.recordRevision=result.record.revision;session.recordTitle=result.record.title;save();}
         await refreshRecords();
       } else if(action==="delete") {
-        if(!confirm("删除这份草稿？已提交记录不受影响。")) return;
-        await recordsAPI("/api/drafts/"+encodeURIComponent(row.id),"DELETE",{revision});
-        if(current) {clearTimeout(saveTimer);session=emptySession();setStage("upload");}
+        // Prefer query revision: DELETE bodies are often dropped by proxies/browsers.
+        await recordsAPI("/api/drafts/"+encodeURIComponent(row.id)+"?revision="+encodeURIComponent(revision),"DELETE");
+        if(current) {
+          clearTimeout(saveTimer);
+          session.deleted=true;
+          try { localStorage.removeItem(localKey()); } catch(_) {}
+          session=emptySession();
+          setStage("upload");
+        }
+        showToast("草稿已删除");
         await refreshRecords();
       }
     } catch(e) { showToast(e.message,7000);document.getElementById("records-message").textContent=e.message; }
