@@ -3,28 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>填空报销 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261109polish2" />
+  <title>报了么 | ANEVER 采购工作台</title>
+  <link rel="stylesheet" href="./styles.css?v=20261109glass1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
+  <div class="ambient" aria-hidden="true"></div>
   <header class="app-header">
     <div class="header-inner">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">填</div>
+        <div class="brand-mark" aria-hidden="true"><span>报</span></div>
         <div class="brand-text">
-          <h1>填空报销</h1>
-          <p id="brand-tagline">ANEVER 采购工作台</p>
+          <h1>报了么</h1>
+          <p id="brand-tagline">发票往里一扔，项目往下一选；该填的它问你，该交的它替你交。一报了之，完事儿。</p>
         </div>
       </div>
       <div class="header-actions">
-        <button type="button" class="btn btn-secondary" id="btn-records">我的报销</button>
+        <button type="button" class="btn btn-secondary btn-new" id="btn-reset">新建报销</button>
+        <button type="button" class="btn btn-ghost" id="btn-records">我的报销</button>
         <button type="button" class="btn btn-ghost" id="btn-ai-settings">AI 设置</button>
         <details class="workspace-menu">
           <summary class="btn btn-ghost">更多 <span aria-hidden="true">⌄</span></summary>
           <div class="workspace-menu-items">
             <button type="button" class="btn btn-ghost" id="btn-save-draft">保存草稿</button>
-            <button type="button" class="btn btn-ghost" id="btn-reset">新建报销</button>
             <a class="btn btn-ghost" href="./classic/index.html">经典填空</a>
           </div>
         </details>
@@ -244,9 +245,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261109polish2"></script>
-  <script src="./ocr-bridge.js?v=20261109polish2"></script>
-  <script src="./policy.js?v=20261109polish2"></script>
-  <script src="./app.js?v=20261109polish2"></script>
+  <script src="./ui.js?v=20261109glass1"></script>
+  <script src="./ocr-bridge.js?v=20261109glass1"></script>
+  <script src="./policy.js?v=20261109glass1"></script>
+  <script src="./app.js?v=20261109glass1"></script>
 </body>
 </html>
