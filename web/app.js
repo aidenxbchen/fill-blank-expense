@@ -321,7 +321,7 @@
       recordItems=more ? recordItems.concat(result.items) : result.items;
       recordsOffset=result.nextOffset;
       renderRecords();
-      message.textContent=recordItems.length ? "" : (tab==="drafts" ? "还没有草稿，开始填写后会自动保存。" : "还没有提交记录，成功发起采购申请后会出现在这里。");
+      message.textContent=recordItems.length ? "" : (tab==="drafts" ? "还没有进行中的报销。上传发票并登录后，草稿会自动出现在这里，可随时继续。" : "还没有已提交记录。完成「发起飞书采购申请」后，摘要会出现在这里；审批进度请在飞书查看。");
     } catch(e) { message.textContent=e.message; }
     finally { recordsLoading=false;controls.forEach(b=>{b.disabled=false;});document.getElementById("records-list").removeAttribute("aria-busy"); }
   }
@@ -1530,7 +1530,7 @@
     if (budgetsLoading && !approvedBudgets.length && !budgetWarning) {
       if (pill) pill.textContent = "…";
       if (hint) hint.textContent = "正在加载可用预算…";
-      grid.innerHTML = `<p class="budget-empty">正在加载可用预算…</p>`;
+      grid.innerHTML = `<p class="budget-empty is-loading">正在加载可用预算…</p>`;
       return;
     }
     if (pill) pill.textContent = String(approvedBudgets.length);
@@ -1540,8 +1540,8 @@
       return;
     }
     if (!approvedBudgets.length) {
-      if (hint) hint.textContent = "没有可用的已通过预算；除预付款项外，须先在飞书完成预算或出差审批。";
-      grid.innerHTML = `<p class="budget-empty">暂无已通过的预算</p>`;
+      if (hint) hint.textContent = "没有可用的已通过预算；除预付款项外，须先在飞书完成预算审批。";
+      grid.innerHTML = `<p class="budget-empty">暂无已通过的立项 / 变更预算。<span class="empty-next">去飞书完成预算审批后，点刷新或重新登录即可出现在这里。</span></p>`;
       return;
     }
     if (hint) hint.textContent = "点选一条已通过的预算，问答会自动带上项目，不必再手填。";
