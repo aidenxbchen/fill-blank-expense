@@ -437,6 +437,7 @@
             else if (inv.needsReview) state = "待核对";
             else state = "已识别";
             if (inv.corrections && inv.corrections.length) state += " · 已校对";
+            else if (inv.review_error) state += " · 未校对";
           }
           const disabled = parsing ? "disabled" : "";
           const cat = inv.category || "other";
@@ -547,6 +548,11 @@
         }
         const result = await parseInvoice(file, {attachment:entry.attachment});
         applyParsedInvoice(entry,result);
+        if (result.review_setup_needed) {
+          showToast("字段校对需要配置 AI：请打开顶栏「AI 设置」，推荐使用 Deepseek", 7000);
+        } else if (result.review_error) {
+          showToast("已识别，但文本校对未完成：" + result.review_error, 6000);
+        }
       } catch (err) {
         entry.status = "error";
         if (err.attachment) entry.attachment = err.attachment;
@@ -579,6 +585,7 @@
           raw: result.raw || null,
           extract_method: result.extract_method,
           review_model: result.review_model || "",
+          review_error: result.review_error || "",
           corrections: result.corrections || [],
           needsReview: !!result.needsReview,
         });
@@ -1280,6 +1287,11 @@
     document.getElementById("btn-save-draft").addEventListener("click",()=>{
       syncCurrentEditor();persistDraft(true).catch(e=>showToast(e.message,7000));
     });
+    document.getElementById("btn-ai-settings").addEventListener("click",openAiSettings);
+    document.getElementById("btn-close-ai-settings").addEventListener("click",closeAiSettings);
+    document.getElementById("btn-save-ai").addEventListener("click",saveAiSettings);
+    document.getElementById("btn-test-ai").addEventListener("click",testAiSettings);
+    document.getElementById("btn-clear-ai").addEventListener("click",clearAiSettings);
     document.getElementById("btn-records").addEventListener("click",openRecords);
     document.getElementById("btn-import-legacy").addEventListener("click",importLegacy);
     document.getElementById("btn-close-records").addEventListener("click",()=>{document.getElementById("records-modal").hidden=true;});
@@ -1392,6 +1404,146 @@
     }
   }
 
+  function aiSettingsForm() {
+    return {
+      baseUrl: (document.getElementById("ai-base-url").value || "").trim(),
+      apiKey: (document.getElementById("ai-api-key").value || "").trim(),
+      textModel: (document.getElementById("ai-text-model").value || "").trim(),
+      visionModel: (document.getElementById("ai-vision-model").value || "").trim(),
+    };
+  }
+
+  function setAiMessage(text, ok) {
+    const el = document.getElementById("ai-settings-message");
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("is-ok", !!ok && !!text);
+    el.classList.toggle("is-err", !ok && !!text);
+  }
+
+  function openAiSettings() {
+    if (!authUser) {
+      showToast("请先用飞书登录，再填写自己的 AI 接口（推荐 Deepseek）");
+      return;
+    }
+    document.getElementById("ai-settings-modal").hidden = false;
+    loadAiSettings();
+  }
+
+  function closeAiSettings() {
+    const modal = document.getElementById("ai-settings-modal");
+    if (modal) modal.hidden = true;
+  }
+
+  async function loadAiSettings() {
+    setAiMessage("正在读取…", true);
+    try {
+      const res = await fetch(apiBase() + "/api/ai-settings", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || "读取失败");
+      const s = data.settings || {};
+      const d = data.defaults || {};
+      const base = document.getElementById("ai-base-url");
+      const key = document.getElementById("ai-api-key");
+      const model = document.getElementById("ai-text-model");
+      const vision = document.getElementById("ai-vision-model");
+      if (base) {
+        base.placeholder = d.baseUrl || "https://api.deepseek.com/v1";
+        base.value = s.baseUrl || "";
+      }
+      if (model) {
+        model.placeholder = d.textModel || "deepseek-chat";
+        model.value = s.textModel || "";
+      }
+      if (vision) vision.value = s.visionModel || "";
+      if (key) {
+        key.value = "";
+        key.placeholder = s.hasApiKey
+          ? ("已保存 " + (s.apiKeyMasked || "sk-***"))
+          : "在 Deepseek 开放平台申请后粘贴";
+      }
+      const hint = document.getElementById("ai-key-hint");
+      if (hint) {
+        hint.textContent = s.hasApiKey
+          ? ("当前密钥：" + s.apiKeyMasked + "（留空保存则不更改）")
+          : "密钥只保存在服务器，页面不会再次显示原文";
+      }
+      setAiMessage(
+        data.configured
+          ? "已配置，字段校对将使用你的接口（推荐 Deepseek）"
+          : "尚未配置，将尝试本机校对；推荐填写 Deepseek",
+        true
+      );
+    } catch (e) {
+      setAiMessage((e && e.message) || "读取失败", false);
+    }
+  }
+
+  async function saveAiSettings() {
+    setAiMessage("正在保存…", true);
+    try {
+      const res = await fetch(apiBase() + "/api/ai-settings", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(aiSettingsForm()),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || "保存失败");
+      const key = document.getElementById("ai-api-key");
+      if (key) key.value = "";
+      await loadAiSettings();
+      setAiMessage("已保存。字段校对 / 文本 AI 将使用该接口。", true);
+      showToast("AI 设置已保存");
+    } catch (e) {
+      setAiMessage((e && e.message) || "保存失败", false);
+    }
+  }
+
+  async function testAiSettings() {
+    setAiMessage("正在测试连接…", true);
+    try {
+      const res = await fetch(apiBase() + "/api/ai-settings/test", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(aiSettingsForm()),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || "测试失败");
+      setAiMessage("连接成功" + (data.preview ? "（" + data.preview + "）" : ""), true);
+      showToast("AI 接口连接成功");
+    } catch (e) {
+      setAiMessage((e && e.message) || "测试失败", false);
+    }
+  }
+
+  async function clearAiSettings() {
+    if (!window.confirm("清除后将改回本机校对（若可用）。确定？")) return;
+    try {
+      const res = await fetch(apiBase() + "/api/ai-settings", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clear: true }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error((data && data.error) || "清除失败");
+      ["ai-base-url", "ai-api-key", "ai-text-model", "ai-vision-model"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+      await loadAiSettings();
+      setAiMessage("已清除，未配置时将尝试本机校对", true);
+      showToast("已清除 AI 设置");
+    } catch (e) {
+      setAiMessage((e && e.message) || "清除失败", false);
+    }
+  }
+
   async function refreshAuth() {
     const loginBtn = document.getElementById("btn-feishu-login");
     if (loginBtn) loginBtn.href = loginHref();
@@ -1445,6 +1597,8 @@
     clearTimeout(saveTimer);clearTimeout(fillingTimer);
     readyToSave=false;session=emptySession();
     document.getElementById("records-modal").hidden=true;
+    const aiModal = document.getElementById("ai-settings-modal");
+    if (aiModal) aiModal.hidden = true;
     authUser = null;
     window.__fillSuggestions=null;
     setStage("upload");

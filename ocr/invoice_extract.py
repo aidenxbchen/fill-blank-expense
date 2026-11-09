@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Invoice text/OCR extraction + local LLM review.
+"""Invoice text/OCR extraction + LLM review.
 
 Pipeline:
   PDF  → native text (pdftotext / PyMuPDF)
-  Image → preprocess (EXIF, resize, HEIC→JPEG) → Xiaomi-OCR full-text
-  Both → heuristic KIE → local LLM JSON review (fills gaps, checks 价税合计)
+  Image → preprocess (EXIF, resize, HEIC→JPEG) → local Xiaomi-OCR full-text
+  Both → heuristic KIE → text LLM JSON review (user API if configured, else local Ollama)
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ import urllib.error
 import urllib.request
 from io import BytesIO
 from typing import Any
+
+import ai_client
 
 DEFAULT_OLLAMA = "http://127.0.0.1:11434/v1"
 DEFAULT_MODEL = "longwayxu/xiaomi-ocr-0:bf16"
@@ -469,44 +471,41 @@ def coerce_fields(obj: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ollama_chat(payload: dict[str, Any], timeout: int = 180) -> str:
-    url = f"{ollama_base()}/chat/completions"
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-        method="POST",
+    """Local image OCR / vision chat via the shared OpenAI-compatible client."""
+    return ai_client.chat_completions(
+        base_url=ollama_base(),
+        api_key=os.environ.get("XIAOMI_OCR_API_KEY") or "",
+        model=payload.get("model") or ollama_model(),
+        messages=payload["messages"],
+        timeout=timeout,
+        temperature=payload.get("temperature", 0),
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        raise RuntimeError(f"Ollama HTTP {e.code}: {err_body[:500] or e.reason}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"无法连接 Ollama（{ollama_base()}）: {e.reason}") from e
 
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Ollama 返回非 JSON: {raw[:300]}") from e
 
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as e:
-        raise RuntimeError(f"Ollama 响应缺少 choices.message.content: {raw[:400]}") from e
+def resolve_review_endpoint(owner: str | None = None) -> tuple[dict[str, str], str]:
+    """User text AI first (recommended Deepseek); otherwise local Ollama review."""
+    user = ai_client.resolve_text_endpoint(owner)
+    if user:
+        return user, "user"
+    return {
+        "base_url": ollama_base(),
+        "api_key": os.environ.get("XIAOMI_OCR_API_KEY") or "",
+        "model": review_model(),
+    }, "ollama"
 
-    if isinstance(content, list):
-        texts = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "text":
-                texts.append(part.get("text") or "")
-            elif isinstance(part, str):
-                texts.append(part)
-        content = "\n".join(texts)
-    if not isinstance(content, str):
-        content = str(content)
-    return content
+
+def review_error_message(exc: BaseException, owner: str | None = None, used_source: str = "ollama") -> str:
+    configured = False
+    if owner:
+        try:
+            import ai_settings as settings
+
+            configured = settings.has_configured(owner)
+        except Exception:
+            configured = False
+    if not configured and used_source == "ollama" and ai_client.is_unreachable(exc):
+        return ai_client.SETUP_CTA
+    return ai_client.public_error(exc)
 
 
 def call_ollama_ocr_text(image_b64: str, mime: str) -> str:
@@ -569,7 +568,7 @@ def _value_in_text(value: Any, text: str) -> bool:
     return False
 
 
-def review_fields_with_llm(text: str, draft: dict[str, Any]) -> dict[str, Any] | None:
+def review_fields_with_llm(text: str, draft: dict[str, Any], owner: str | None = None) -> dict[str, Any] | None:
     if not (text or "").strip():
         return None
     draft_view = {
@@ -587,15 +586,18 @@ def review_fields_with_llm(text: str, draft: dict[str, Any]) -> dict[str, Any] |
         + "\n\n【初步抽取】\n"
         + json.dumps(draft_view, ensure_ascii=False)
     )
-    payload = {
-        "model": review_model(),
-        "temperature": 0,
-        "messages": [{"role": "user", "content": user}],
-    }
-    content = _ollama_chat(payload, timeout=90)
+    endpoint, source = resolve_review_endpoint(owner)
+    content = ai_client.chat_completions(
+        messages=[{"role": "user", "content": user}],
+        timeout=90,
+        temperature=0,
+        **endpoint,
+    )
     obj = parse_model_json(content)
     fields = coerce_fields(obj)
     fields["source"] = "llm-review"
+    fields["review_provider"] = source
+    fields["review_model"] = endpoint["model"]
     return fields
 
 
@@ -666,29 +668,35 @@ def merge_heuristic_and_review(
     return out
 
 
-def extract_fields_from_text(text: str, extract_method: str) -> dict[str, Any]:
+def extract_fields_from_text(text: str, extract_method: str, owner: str | None = None) -> dict[str, Any]:
     heuristic = parse_invoice_from_text(text, require_amount=False)
     reviewed = None
     review_error = ""
+    used_source = "ollama"
     try:
-        reviewed = review_fields_with_llm(text, heuristic)
+        _, used_source = resolve_review_endpoint(owner)
+        reviewed = review_fields_with_llm(text, heuristic, owner=owner)
     except Exception as e:
-        review_error = str(e)
+        review_error = review_error_message(e, owner=owner, used_source=used_source)
         sys.stderr.write(f"llm review failed: {e}\n")
 
     fields = merge_heuristic_and_review(heuristic, reviewed, text)
     fields["ok"] = True
     fields["raw"] = text[:4000]
     fields["extract_method"] = extract_method + ("+llm-review" if reviewed else "+heuristic")
-    fields["review_model"] = review_model() if reviewed else ""
+    fields["review_model"] = (reviewed or {}).get("review_model") or (review_model() if reviewed else "")
+    if reviewed:
+        fields["review_provider"] = reviewed.get("review_provider") or used_source
     if review_error:
         fields["review_error"] = review_error[:300]
+        if "AI 设置" in review_error:
+            fields["review_setup_needed"] = True
     if not fields.get("amount"):
         fields["needs_review"] = True
     return fields
 
 
-def parse_image_invoice(data: bytes, filename: str, mime: str) -> dict[str, Any]:
+def parse_image_invoice(data: bytes, filename: str, mime: str, owner: str | None = None) -> dict[str, Any]:
     prepared, prep_mime = prepare_image_for_ocr(data, mime, filename)
     b64 = base64.b64encode(prepared).decode("ascii")
 
@@ -701,7 +709,7 @@ def parse_image_invoice(data: bytes, filename: str, mime: str) -> dict[str, Any]
         sys.stderr.write(f"vision OCR text failed: {e}\n")
 
     if pdf_text_usable(ocr_text) or (ocr_text and len(ocr_text.strip()) >= 20):
-        fields = extract_fields_from_text(ocr_text, "vision-ocr")
+        fields = extract_fields_from_text(ocr_text, "vision-ocr", owner=owner)
         if fields.get("amount") or fields.get("merchant") or fields.get("invoice_no"):
             return fields
         # keep going to KIE fallback if almost nothing useful
@@ -710,7 +718,7 @@ def parse_image_invoice(data: bytes, filename: str, mime: str) -> dict[str, Any]
         kie, raw = call_ollama_vision(b64, prep_mime)
     except Exception as e:
         if ocr_text:
-            fields = extract_fields_from_text(ocr_text, "vision-ocr")
+            fields = extract_fields_from_text(ocr_text, "vision-ocr", owner=owner)
             fields["needs_review"] = True
             if ocr_error:
                 fields["ocr_error"] = ocr_error[:300]
@@ -723,13 +731,17 @@ def parse_image_invoice(data: bytes, filename: str, mime: str) -> dict[str, Any]
             parse_invoice_from_text(ocr_text, require_amount=False), kie, ocr_text
         )
         try:
-            reviewed = review_fields_with_llm(ocr_text, merged)
+            reviewed = review_fields_with_llm(ocr_text, merged, owner=owner)
             merged = merge_heuristic_and_review(merged, reviewed, ocr_text)
             merged["extract_method"] = "vision-ocr+kie+llm-review" if reviewed else "vision-ocr+kie"
-            merged["review_model"] = review_model() if reviewed else ""
+            merged["review_model"] = (reviewed or {}).get("review_model") or (review_model() if reviewed else "")
+            if reviewed:
+                merged["review_provider"] = reviewed.get("review_provider") or ""
         except Exception as e:
             merged["extract_method"] = "vision-ocr+kie"
-            merged["review_error"] = str(e)[:300]
+            merged["review_error"] = review_error_message(e, owner=owner)[:300]
+            if "AI 设置" in merged["review_error"]:
+                merged["review_setup_needed"] = True
         merged["ok"] = True
         merged["raw"] = ocr_text[:4000]
         return merged
@@ -742,7 +754,7 @@ def parse_image_invoice(data: bytes, filename: str, mime: str) -> dict[str, Any]
     return kie
 
 
-def parse_uploaded_invoice(data: bytes, filename: str, mime: str) -> dict[str, Any]:
+def parse_uploaded_invoice(data: bytes, filename: str, mime: str, owner: str | None = None) -> dict[str, Any]:
     is_pdf = (mime or "") == "application/pdf" or (filename or "").lower().endswith(".pdf")
     if is_pdf:
         try:
@@ -750,7 +762,7 @@ def parse_uploaded_invoice(data: bytes, filename: str, mime: str) -> dict[str, A
         except Exception:
             pdf_text = ""
         if pdf_text_usable(pdf_text):
-            fields = extract_fields_from_text(pdf_text, "pdf-text")
+            fields = extract_fields_from_text(pdf_text, "pdf-text", owner=owner)
             if fields.get("amount") or fields.get("merchant") or fields.get("invoice_no"):
                 return fields
             sys.stderr.write("pdf-text usable but fields weak, falling back to raster OCR\n")
@@ -758,18 +770,18 @@ def parse_uploaded_invoice(data: bytes, filename: str, mime: str) -> dict[str, A
             png, png_mime = pdf_to_png_bytes(data)
         except Exception as e:
             if pdf_text:
-                fields = extract_fields_from_text(pdf_text, "pdf-text")
+                fields = extract_fields_from_text(pdf_text, "pdf-text", owner=owner)
                 fields["needs_review"] = True
                 fields["ocr_error"] = f"PDF 无可用文本且首页转 PNG 失败: {e}"[:300]
                 return fields
             raise RuntimeError(f"PDF 无可用文本且首页转 PNG 失败: {e}") from e
-        out = parse_image_invoice(png, (filename or "upload.pdf").rsplit(".", 1)[0] + ".png", png_mime)
+        out = parse_image_invoice(png, (filename or "upload.pdf").rsplit(".", 1)[0] + ".png", png_mime, owner=owner)
         method = out.get("extract_method") or "vision-ocr"
         if not str(method).startswith("vision-pdf"):
             out["extract_method"] = "vision-pdf+" + str(method)
         return out
 
-    return parse_image_invoice(data, filename, mime)
+    return parse_image_invoice(data, filename, mime, owner=owner)
 
 
 def probe_ollama() -> bool:

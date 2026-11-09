@@ -2,8 +2,9 @@
 """
 Local OCR bridge for fill-blank-expense.
 
-POST multipart invoice → text PDF parse or image OCR, then local LLM review.
-See invoice_extract.py for the pipeline.
+POST multipart invoice → text PDF parse or image OCR, then LLM review
+(user-configured OpenAI-compatible API if set, else local Ollama).
+See invoice_extract.py and ai_client.py for the pipeline.
 
 Bind: 127.0.0.1:18790
 """
@@ -33,6 +34,8 @@ import feishu_oauth as auth
 import expense_data
 import expense_records as records
 from feishu_purchase import handle_create, handle_schema, definition, public_schema
+import ai_client
+import ai_settings
 from invoice_extract import (
     ollama_base,
     ollama_model,
@@ -189,6 +192,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+        if self._ai_settings_request(path):
+            return
         if self._records_request(path):
             return
         if path == "/api/auth/feishu/login":
@@ -213,12 +218,23 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "backend": "ollama-openai-compat",
-                    "features": {"invoiceOriginals": True, "historySuggestions": True, "draftsAndHistory": True},
+                    "features": {
+                        "invoiceOriginals": True,
+                        "historySuggestions": True,
+                        "draftsAndHistory": True,
+                        "userAiConfigurable": True,
+                    },
                     "model": ollama_model(),
                     "reviewModel": review_model(),
                     "pipeline": "pdf-text|vision-ocr-text → heuristic → llm-review",
                     "ollamaReachable": reachable,
                     "endpoint": ollama_base(),
+                    "userAiConfigurable": True,
+                    "aiProviderHint": "deepseek",
+                    "recommendedProvider": ai_client.RECOMMENDED_PROVIDER,
+                    "recommendedBaseUrl": ai_client.RECOMMENDED_BASE_URL,
+                    "recommendedModel": ai_client.RECOMMENDED_MODEL,
+                    "ocrNote": ai_client.OCR_NOTE,
                 },
             )
             return
@@ -236,6 +252,8 @@ class Handler(BaseHTTPRequestHandler):
                         "GET /api/budgets",
                         "POST /api/parse-invoice",
                         "POST /api/feishu-expense",
+                        "GET/PUT /api/ai-settings",
+                        "POST /api/ai-settings/test",
                     ],
                 },
             )
@@ -255,11 +273,47 @@ class Handler(BaseHTTPRequestHandler):
         return owner
 
     def do_PUT(self):
-        if not self._records_request(urlparse(self.path).path):
+        path = urlparse(self.path).path
+        if self._ai_settings_request(path):
+            return
+        if not self._records_request(path):
             self._json(404, {"ok":False,"error":"not found"})
 
     do_PATCH = do_PUT
     do_DELETE = do_PUT
+
+    def _ai_settings_request(self, path):
+        if path not in ("/api/ai-settings", "/api/ai-settings/test"):
+            return False
+        try:
+            owner = self._owner()
+            method = self.command
+            body = {}
+            if method != "GET":
+                length = int(self.headers.get("Content-Length") or 0)
+                if length < 0 or length > 32 * 1024:
+                    raise ai_settings.SettingsError("设置内容过大", 413)
+                raw = self.rfile.read(length) if length else b"{}"
+                body = json.loads(raw.decode("utf-8") or "{}")
+                if not isinstance(body, dict):
+                    raise ai_settings.SettingsError("无效的设置内容")
+            if path == "/api/ai-settings" and method == "GET":
+                self._json(200, ai_settings.public_view(owner))
+            elif path == "/api/ai-settings" and method == "PUT":
+                self._json(200, ai_settings.save(owner, body))
+            elif path == "/api/ai-settings/test" and method == "POST":
+                self._json(200, ai_settings.test_connection(owner, body))
+            else:
+                raise ai_settings.SettingsError("此操作不受支持", 405)
+        except auth.FeishuAPIError as e:
+            self._json(e.http_status if e.http_status in (401, 403) else 502, {"ok": False, "error": str(e)})
+        except ai_settings.SettingsError as e:
+            self._json(e.status, {"ok": False, "error": str(e)})
+        except json.JSONDecodeError:
+            self._json(422, {"ok": False, "error": "设置数据格式不正确"})
+        except Exception:
+            self._json(503, {"ok": False, "error": "AI 设置暂时不可用，请稍后重试"})
+        return True
 
     def _records_request(self, path):
         if path not in ("/api/drafts", "/api/history") and not path.startswith(("/api/drafts/", "/api/history/")):
@@ -317,6 +371,8 @@ class Handler(BaseHTTPRequestHandler):
         if "fallback" in qs and qs["fallback"] and qs["fallback"][0] == "mock":
             pass
 
+        if self._ai_settings_request(path):
+            return
         if self._records_request(path):
             return
         if path == "/api/auth/logout":
@@ -398,7 +454,7 @@ class Handler(BaseHTTPRequestHandler):
                     original, data = expense_data.resolve_file(owner,meta['attachment'])
                     filename, mime = original['name'], original['mime']
                     try:
-                        out=dict(parse_uploaded_invoice(data,filename,mime))
+                        out=dict(parse_uploaded_invoice(data,filename,mime,owner=owner))
                         out.update(ok=True,attachment=expense_data.public_file(original))
                         self._json(200,out)
                     except Exception as e:
@@ -439,7 +495,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok":True,"attachment":attachment})
             return
         try:
-            out = parse_uploaded_invoice(data, filename, mime)
+            out = parse_uploaded_invoice(data, filename, mime, owner=owner)
         except Exception as e:
             self._json(
                 502,
@@ -469,6 +525,7 @@ def main() -> None:
         f"  ollama={ollama_base()}\n"
         f"  GET  /api/health\n"
         f"  GET  /api/auth/feishu/login | /api/auth/me | /api/budgets\n"
+        f"  GET/PUT /api/ai-settings  POST /api/ai-settings/test\n"
         f"  POST /api/parse-invoice (multipart file=...)\n"
         f"  POST /api/feishu-expense (native purchase approval)\n"
         f"  feishu_oauth={'configured' if os.environ.get('FEISHU_APP_ID') else 'missing FEISHU_*'}",

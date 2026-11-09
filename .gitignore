@@ -10,3 +10,4 @@ __pycache__/
 
 .expense-data.sqlite3*
 .invoice-files/
+.baoxiao-secrets-key

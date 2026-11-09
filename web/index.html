@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>填空报销 · 丢发票就问完</title>
-  <link rel="stylesheet" href="./styles.css?v=20261109records1" />
+  <link rel="stylesheet" href="./styles.css?v=20261109ai1" />
 </head>
 <body class="delight-body">
   <header class="app-header">
@@ -26,6 +26,7 @@
           </div>
         </div>
         <a class="btn btn-ghost" href="./classic/index.html" title="旧版按场景填空">经典填空</a>
+        <button type="button" class="btn btn-ghost" id="btn-ai-settings">AI 设置</button>
         <button type="button" class="btn btn-secondary" id="btn-records">我的报销</button>
         <button type="button" class="btn btn-ghost" id="btn-save-draft">保存草稿</button>
         <button type="button" class="btn btn-ghost" id="btn-reset">新建报销</button>
@@ -192,10 +193,48 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="ai-settings-modal" hidden role="dialog" aria-modal="true" aria-labelledby="ai-settings-title">
+    <div class="modal ai-settings-modal">
+      <div class="modal-header">
+        <h3 id="ai-settings-title">AI 设置</h3>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-close-ai-settings">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="ai-recommend">
+          <strong>推荐使用 Deepseek</strong>
+          <p>默认接口 <code>https://api.deepseek.com/v1</code>（请带上 <code>/v1</code>），文本模型 <code>deepseek-chat</code>。请到 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">Deepseek 开放平台</a> 申请 API Key，填入下方即可。</p>
+          <p class="section-hint">图片文字识别默认仍用本机 OCR；字段校对 / 文本 AI 用你配置的接口（推荐 Deepseek）。问答目前仍是规则题，以后若接入大模型也会走这里。</p>
+        </div>
+        <form id="ai-settings-form" class="ai-settings-form" autocomplete="off">
+          <label>API Base URL
+            <input id="ai-base-url" type="url" placeholder="https://api.deepseek.com/v1" spellcheck="false" />
+          </label>
+          <label>API Key
+            <input id="ai-api-key" type="password" placeholder="在 Deepseek 开放平台申请后粘贴" autocomplete="new-password" spellcheck="false" />
+            <small id="ai-key-hint">密钥只保存在服务器，保存后页面只显示掩码，不会再次给出原文。</small>
+          </label>
+          <label>文本 / 校对模型
+            <input id="ai-text-model" type="text" placeholder="deepseek-chat" spellcheck="false" />
+          </label>
+          <label>视觉 / OCR 模型（可选）
+            <input id="ai-vision-model" type="text" placeholder="留空则继续使用本机 OCR" spellcheck="false" />
+            <small>当前图片识别仍走本机 OCR，此栏仅预留，不会把发票图发到你的云端接口。</small>
+          </label>
+        </form>
+        <div id="ai-settings-message" role="status"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="btn-clear-ai">清除设置</button>
+        <button type="button" class="btn btn-secondary" id="btn-test-ai">测试连接</button>
+        <button type="button" class="btn btn-primary" id="btn-save-ai">保存</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="./ocr-bridge.js?v=20261109records1"></script>
-  <script src="./policy.js?v=20261109records1"></script>
-  <script src="./app.js?v=20261109records1"></script>
+  <script src="./ocr-bridge.js?v=20261109ai1"></script>
+  <script src="./policy.js?v=20261109ai1"></script>
+  <script src="./app.js?v=20261109ai1"></script>
 </body>
 </html>

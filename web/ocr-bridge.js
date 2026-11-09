@@ -29,10 +29,10 @@
       throw new Error("OCR 服务未就绪");
     }
     if (data.ollamaReachable === false) {
-      throw new Error(
-        "OCR 桥接已启动，但 Ollama 不可达（" +
+      console.info(
+        "本机 OCR 暂不可达（" +
           (data.endpoint || "http://127.0.0.1:11434/v1") +
-          "）。请先 ollama serve 并 pull 模型。"
+          "）。图片识别可能失败；字段校对可用顶栏「AI 设置」（推荐 Deepseek）。"
       );
     }
     return data;
@@ -109,6 +109,8 @@
       raw: data.raw,
       extract_method: data.extract_method || "",
       review_model: data.reviewModel || data.review_model || "",
+      review_error: data.review_error || data.reviewError || "",
+      review_setup_needed: !!data.review_setup_needed,
       corrections: Array.isArray(data.corrections) ? data.corrections : [],
       needsReview: !!data.needs_review || amount == null,
     };

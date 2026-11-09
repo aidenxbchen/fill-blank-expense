@@ -7,7 +7,7 @@
 ## 产品故事（默认体验）
 
 1. **丢发票**：先用飞书登录，一个大拖放区，一次多张 PDF / 图片，不必先选场景或按天找槽位。
-2. **识别**：`/api/parse-invoice`：文字 PDF 抽文本；图片先经 Xiaomi-OCR 抽全文，再启发式抽取，并用本地大模型校对（默认 `longwayxu/xiaomi-ocr-0:bf16` 文本模式，避免 8GB Mini 再加载 `gemma:7b` 把视觉模型挤出显存。可用环境变量 `INVOICE_REVIEW_MODEL=gemma:7b` 改用 Gemma）。
+2. **识别**：`/api/parse-invoice`：文字 PDF 抽文本；图片先经本机 Xiaomi-OCR 抽全文，再启发式抽取，并用文本大模型校对。登录后可在顶栏「AI 设置」填写自己的 OpenAI 兼容接口（**推荐使用 Deepseek**，默认 `https://api.deepseek.com/v1` + `deepseek-chat`）。未配置时回退到本机 Ollama 校对。
 3. **汇总表**：识别完成后出现可编辑汇总表（日期 / 商户 / 发票号码 / 金额 / 类别）。用户确认或手改后，**以表格为准**进入问答和草稿。
 4. **问答**：按项目名称组织逐票问题，本地历史常用答案置顶高亮（仍需用户选择），从飞书实时读取采购申请定义，**一次只问一个问题**，收集采购方式、项目、采购事由、关联预算，以及当前方式的科目/规格/数量等必填项。七种方式按定义切换明细；合同/预付多收集收款信息，京东收集采购清单，差旅收集费用类型。
 5. **草稿**：可编辑明细与「识别汇总」同步；金额、日期、商户、发票号均取确认后的表格。采购专用字段在行内「采购明细」展开编辑。
@@ -35,9 +35,9 @@
 ```
 
 - 前端：http://127.0.0.1:5173
-- OCR / API：`GET /api/health` · `POST /api/parse-invoice` · `POST /api/feishu-expense`（真实采购审批） · `GET /api/purchase-schema`（实时字段选项）
+- OCR / API：`GET /api/health` · `POST /api/parse-invoice` · `POST /api/feishu-expense`（真实采购审批） · `GET /api/purchase-schema`（实时字段选项） · `GET/PUT /api/ai-settings` · `POST /api/ai-settings/test`
 - 飞书登录：`GET /api/auth/feishu/login` → 回调 `/api/auth/feishu/callback` · `GET /api/auth/me` · `POST /api/auth/logout` · `GET /api/budgets`（当前用户已通过的立项/变更/出差）
-- 在页面点「用飞书登录」，授权后可点选已通过预算，问答会自动带上项目
+- 在页面点「用飞书登录」，授权后可点选已通过预算，问答会自动带上项目；顶栏「AI 设置」可填写自己的大模型接口
 - 凭证放仓库根目录 `.env`（见 `.env.example`，不要提交）。需配置重定向 URL `https://baoxiao.xbchen.top/api/auth/feishu/callback`
 - 隧道：`baoxiao.xbchen.top` 的 `/api` → OCR `:18790`，其余 → web `:5173`
 
@@ -76,8 +76,19 @@ node --check web/app.js
 1. **文字 PDF**：`pdftotext -layout` / PyMuPDF 抽文本。
 2. **图片**（JPG/PNG/WebP/HEIC）：先纠正 EXIF、缩到最长边 2048 并转 JPEG，再用 `longwayxu/xiaomi-ocr-0:bf16` **识别全部可见文字**（不再让视觉模型直接猜 JSON 金额——它容易把未税「合计」299.11 当成价税合计 338.00）。
 3. **启发式 KIE**：从全文抓价税合计、销售方、开票日期、发票号码。
-4. **本地 LLM 校对**：把原文 + 初解析再送进 `INVOICE_REVIEW_MODEL`（默认仍是 Xiaomi-OCR 的文本聊天模式，无需云端 key）。校对结果必须能在原文中找到，且启发式已经命中「价税合计」时不会被较弱猜测覆盖。
+4. **文本 LLM 校对**：把原文 + 初解析送进统一的 `ocr/ai_client.py`。若当前登录用户已在「AI 设置」填写接口，则用该接口（推荐 Deepseek / `deepseek-chat`）；否则回退本机 `INVOICE_REVIEW_MODEL`。校对结果必须能在原文中找到，且启发式已经命中「价税合计」时不会被较弱猜测覆盖。都不可用时会提示去配置 AI，而不是悄悄跳过。
 5. 文本稀疏的 PDF 仍回退到首页栅格化 + 上述图片管道。
+
+## AI 设置
+
+所有大模型调用都经过 `ocr/ai_client.py` 的 OpenAI 兼容 `chat/completions`。登录用户可在顶栏打开「AI 设置」填写：
+
+- API Base URL（Deepseek 示例：`https://api.deepseek.com/v1`，请带上 `/v1`）
+- API Key（按用户 `open_id` 加密存在 `.expense-data.sqlite3`，接口只回 `sk-***` + 后四位；可用环境变量 `BAOXIAO_SECRETS_KEY` 作为加密密钥）
+- 文本 / 校对模型（推荐 `deepseek-chat`）
+- 可选视觉模型（当前图片识别仍走本机 OCR，此栏预留）
+
+图片文字识别默认仍用本机 OCR；字段校对 / 文本 AI 用你配置的接口（推荐 Deepseek）。问答暂未接大模型，但客户端预留了 `chat_for_qa` 钩子，以后不会再散落 URL 和密钥。
 
 桥接失败时前端 mock 仅用于无 OCR 本地点点看。
 
@@ -87,5 +98,5 @@ node --check web/app.js
 
 ## 尚未实现
 
-- LLM 问答（结构已预留）
+- LLM 问答（`ai_client.chat_for_qa` 已预留，当前仍是规则题 + 历史建议）
 - 与 invoice-assistant 深度对接

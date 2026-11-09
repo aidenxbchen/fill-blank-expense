@@ -67,6 +67,11 @@ def database():
           );
           CREATE INDEX IF NOT EXISTS submission_list ON submission_history(owner,submitted_at DESC);
           CREATE INDEX IF NOT EXISTS fill_lookup ON fill_observations(owner,field,updated_at);
+          CREATE TABLE IF NOT EXISTS ai_settings (
+            owner TEXT PRIMARY KEY, base_url TEXT NOT NULL, api_key_enc TEXT NOT NULL,
+            text_model TEXT NOT NULL, vision_model TEXT NOT NULL DEFAULT '',
+            updated_at INTEGER NOT NULL
+          );
         ''')
         with con:
             yield con

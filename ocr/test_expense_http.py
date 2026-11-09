@@ -28,14 +28,19 @@ class ExpenseHTTPTests(unittest.TestCase):
         self.addCleanup(self.close_server)
         self.base='http://127.0.0.1:'+str(self.http.server_port)
         self.session={'access_token':'private-not-printed','user':{'openId':'alice'}}
+        env=patch.dict('os.environ',{'BAOXIAO_SECRETS_KEY':'http-test-secret'},clear=False)
+        env.start();self.addCleanup(env.stop)
         for obj,key,val in [(server.auth,'get_session',self.session),(server.auth,'ensure_fresh_session',self.session),(server,'definition',SCHEMA)]:
             patcher=patch.object(obj,key,return_value=val);patcher.start();self.addCleanup(patcher.stop)
 
     def close_server(self):
         self.http.shutdown();self.http.server_close();self.thread.join(2)
 
-    def request(self,path,raw,content_type):
-        req=urllib.request.Request(self.base+path,data=raw,headers={'Content-Type':content_type},method='POST')
+    def request(self,path,raw=None,content_type='application/json',method=None):
+        headers={}
+        if content_type: headers['Content-Type']=content_type
+        if method is None: method='POST' if raw is not None else 'GET'
+        req=urllib.request.Request(self.base+path,data=raw,headers=headers,method=method)
         try:response=urllib.request.urlopen(req,timeout=5)
         except urllib.error.HTTPError as e:response=e
         with response:return response.status,json.load(response),response.headers
@@ -68,6 +73,35 @@ class ExpenseHTTPTests(unittest.TestCase):
         status,result,_=self.request('/api/fill-history',json.dumps(body).encode(),'application/json')
         self.assertEqual(status,200);self.assertTrue(result['suggestions']['rows']['inv1']['科目'])
         self.assertEqual(self.request('/api/fill-suggestions',json.dumps(body).encode(),'application/json')[0],200)
+
+    def test_health_exposes_user_ai_flags_without_keys(self):
+        status,body,_=self.request('/api/health')
+        self.assertEqual(status,200)
+        self.assertTrue(body['userAiConfigurable'])
+        self.assertEqual(body['aiProviderHint'],'deepseek')
+        self.assertEqual(body['recommendedModel'],'deepseek-chat')
+        dumped=json.dumps(body)
+        self.assertNotIn('apiKey', dumped)
+        self.assertNotIn('sk-', dumped)
+
+    def test_ai_settings_require_login_and_mask_saved_key(self):
+        with patch.object(server.auth,'get_session',return_value=None):
+            self.assertEqual(self.request('/api/ai-settings')[0],401)
+            self.assertEqual(self.request('/api/ai-settings',b'{}',method='PUT')[0],401)
+        payload=json.dumps({
+            'baseUrl':'https://api.deepseek.com/v1',
+            'apiKey':'sk-http-secret-key99',
+            'textModel':'deepseek-chat',
+        }).encode()
+        status,body,_=self.request('/api/ai-settings',payload,method='PUT')
+        self.assertEqual(status,200)
+        self.assertTrue(body['configured'])
+        self.assertEqual(body['settings']['apiKeyMasked'],'sk-***ey99')
+        self.assertNotIn('sk-http-secret-key99', json.dumps(body))
+        status,again,_=self.request('/api/ai-settings')
+        self.assertEqual(status,200)
+        self.assertEqual(again['settings']['apiKeyMasked'],'sk-***ey99')
+        self.assertNotIn('sk-http-secret-key99', json.dumps(again))
 
 
 if __name__=='__main__':unittest.main()
