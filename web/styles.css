@@ -1374,7 +1374,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 /* —— Responsive —— */
 @media (max-width: 1000px) {
-  #stage-upload { grid-template-columns: 280px minmax(0, 1fr); }
+  /* triad owns columns; do not force old 280px+1fr stage grid */
+  #stage-upload { grid-template-columns: minmax(0, 1fr); }
   .header-inner { gap: 12px; }
   .auth-box { padding-left: 12px; }
   .header-actions { gap: 6px; }
@@ -1432,10 +1433,17 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .stage-item:not(:last-child)::after { display: none; }
   .stage-dot { width: 20px; height: 20px; font-size: 12px; }
   .page { padding: 20px 16px calc(32px + env(safe-area-inset-bottom)); }
-  #stage-upload { gap: 16px; }
+  #stage-upload {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
   .upload-triad {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
+  }
+  .upload-triad > .triad-card {
+    width: 100%;
+    max-width: 100%;
   }
   .triad-card,
   .dropzone.triad-card { min-height: 0; }
