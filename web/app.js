@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261109workspace1";
+  const ASSET_V = "20261109invoicecontent1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -728,7 +728,12 @@
     const q = window.ExpensePolicy ? window.ExpensePolicy.nextQuestion(invs, session.answers, policy) : null;
     if (!q) return;
     const last = session.chat[session.chat.length - 1];
-    if (last && last.role === "assistant" && last.meta && last.meta.qid === q.id) return;
+    if (last && last.role === "assistant" && last.meta && last.meta.qid === q.id) {
+      // Refresh only the unanswered prompt when resuming an older draft or
+      // correcting invoice content. Keep its ID and answered history intact.
+      last.text = q.text + (q.hint ? `\n${q.hint}` : "");
+      return;
+    }
     // avoid duplicating same question text if already last
     if (last && last.role === "assistant" && last.text === q.text) {
       if (!last.meta) last.meta = { qid: q.id };

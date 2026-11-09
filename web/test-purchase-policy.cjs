@@ -42,3 +42,79 @@ const nextMethod=window.ExpensePolicy.nextQuestion(inv,{});
 assert.equal(nextMethod.chips[0],'个人垫付');
 assert.equal(nextMethod.recommended.evidence,4);
 console.log('Project subjects, ranked suggestions, deleted options and explicit selection verified');
+
+// All invoice references use confirmed content, never a merchant or serial suffix.
+const invoiceQuestions = (rows, given=answers) => window.ExpensePolicy.buildQuestionQueue(rows,given)
+  .filter(q=>q.id.startsWith('purchase:个人垫付:') && !q.id.includes(':shared:'));
+const meal={id:'meal-row',category:'meal',amount:'241.00',date:'2026-11-03',merchant:'测试商户，不作主语',invoiceNo:'SYNTHETIC000001',fileName:'餐饮-1103-241.pdf'};
+const mealQs=invoiceQuestions([meal]);
+assert.equal(mealQs[0].text,'餐费 ¥241 在【公共办公】里属于哪个科目？');
+assert.equal(mealQs[0].hint,'2026-11-03');
+assert.equal(mealQs[0].id,'purchase:个人垫付:meal-row:个人垫付科目');
+assert.equal(mealQs.find(q=>q.id.endsWith(':规格')).text,'餐费 ¥241 在【公共办公】里的规格是？');
+assert.equal(mealQs.find(q=>q.id.endsWith(':数量')).text,'餐费 ¥241 在【公共办公】里的数量是？');
+for(const q of mealQs) {
+  assert.ok(!/发票尾号|第\s*\d+\s*张票/.test(q.text+'\n'+q.hint));
+  assert.ok(!q.text.includes(meal.merchant));
+  assert.ok(!q.hint.includes('¥241'),'avoid redundant amount in the hint');
+  assert.ok(!q.text.includes(meal.invoiceNo) && !q.hint.includes(meal.invoiceNo));
+}
+for(const [category,label] of Object.entries({meal:'餐费',lodging:'住宿',entertainment:'招待',purchase:'采购',transit:'交通',gift:'礼品',other:'其他'})) {
+  const q=invoiceQuestions([{...meal,category,amount:'241.50'}])[0];
+  assert.equal(q.text,`${label} ¥241.5 在【公共办公】里属于哪个科目？`);
+}
+const twins=invoiceQuestions([meal,{...meal,id:'another-meal',amount:241,date:'2026-11-04'}]);
+assert.equal(twins[0].text,'餐费 ¥241（11-03） 在【公共办公】里属于哪个科目？');
+assert.equal(twins.find(q=>q.id.includes(':another-meal:')).text,'餐费 ¥241（11-04） 在【公共办公】里属于哪个科目？');
+assert.ok(twins.every(q=>q.hint===''),'do not repeat dates already in the question');
+assert.equal(new Set(twins.map(q=>q.id)).size,twins.length,'stable, distinct answer keys');
+// Multiple invoices with different content do not need numbering or date suffixes.
+const distinct=invoiceQuestions([meal,{...meal,id:'hotel-row',category:'lodging'}]);
+assert.equal(distinct[0].text,mealQs[0].text);
+assert.equal(distinct.find(q=>q.id.includes(':hotel-row:')).text,'住宿 ¥241 在【公共办公】里属于哪个科目？');
+for(const fileName of ['餐饮-1103-241.pdf','/synthetic/餐饮-1103-241.png','C:\\synthetic\\餐饮-1103-241.jpg']) {
+  assert.equal(invoiceQuestions([{...meal,category:'',fileName}])[0].text,'餐饮-1103-241 ¥241 在【公共办公】里属于哪个科目？');
+}
+for(const fileName of ['', '123456789.pdf',meal.merchant+'.pdf']) {
+  assert.equal(invoiceQuestions([{...meal,category:null,fileName}])[0].text,'这笔 ¥241 在【公共办公】里属于哪个科目？');
+}
+for(const amount of ['',null,undefined,'not-a-number']) {
+  const text=invoiceQuestions([{...meal,amount}])[0].text;
+  assert.ok(text.startsWith('餐费 在【公共办公】'));
+  assert.ok(!/NaN|undefined|¥0/.test(text),'do not invent an absent amount');
+}
+// Completing a field still advances one question at a time using the old key.
+const afterSubject={...answers,[mealQs[0].id]:mealQs[0].chips[0]};
+assert.equal(window.ExpensePolicy.nextQuestion([meal],afterSubject).id,'purchase:个人垫付:meal-row:规格');
+const learnedMeal={...meal,id:'corrected-row'};
+const ranked=invoiceQuestions([learnedMeal])[0];
+assert.equal(ranked.chips[0],options[2]);
+assert.equal(ranked.recommended.evidence,3);
+assert.ok(ranked.text.startsWith('餐费 ¥241 '));
+console.log('Content labels, amounts, duplicate dates, filename fallback, stable answer keys and ranked suggestions verified');
+
+// A resumed draft can end with the old wording for the same unanswered ID.
+// Execute the actual app function without starting the app or making requests.
+const appSource=fs.readFileSync('web/app.js','utf8');
+const ensureStart=appSource.indexOf('  function ensureCurrentQuestionAsked() {');
+const ensureEnd=appSource.indexOf('\n  function ',ensureStart+1);
+assert.ok(ensureStart>=0 && ensureEnd>ensureStart);
+const history={id:'answered-message',role:'assistant',text:'已回答的历史问题',meta:{qid:'purpose'}};
+const pending={id:'existing-message',role:'assistant',text:'第 1 张票在【公共办公】里属于哪个科目？\n发票尾号 SYN001',meta:{qid:mealQs[0].id}};
+const resumed={chat:[history,pending],answers};
+vm.runInNewContext(appSource.slice(ensureStart,ensureEnd)+'\nensureCurrentQuestionAsked();ensureCurrentQuestionAsked();',{
+  window,session:resumed,okInvoices:()=>[meal],pushChat:()=>assert.fail('must not append a duplicate prompt')
+});
+assert.equal(resumed.chat.length,2);
+assert.equal(pending.id,'existing-message');
+assert.equal(pending.meta.qid,mealQs[0].id);
+assert.equal(pending.text,mealQs[0].text+'\n2026-11-03');
+assert.equal(history.text,'已回答的历史问题');
+const answeredSession={chat:[history,{id:'answer',role:'user',text:'办公费'}],answers:afterSubject};
+let pushed;
+vm.runInNewContext(appSource.slice(ensureStart,ensureEnd)+'\nensureCurrentQuestionAsked();',{
+  window,session:answeredSession,okInvoices:()=>[meal],pushChat:(role,text,meta)=>{pushed={role,text,meta};}
+});
+assert.equal(pushed.meta.qid,'purchase:个人垫付:meal-row:规格');
+assert.equal(pushed.text,'餐费 ¥241 在【公共办公】里的规格是？\n2026-11-03');
+console.log('Resumed unanswered prompt refreshed without duplicate messages or rewriting answered history');

@@ -1,9 +1,29 @@
 /** Purchase interview: the live Feishu definition decides required fields. */
 (function (global) {
   "use strict";
-  const CAT_LABEL = {lodging:"住宿", meal:"餐饮", entertainment:"招待", purchase:"采购", transit:"交通", gift:"礼品", other:"其他"};
+  const CAT_LABEL = {lodging:"住宿", meal:"餐费", entertainment:"招待", purchase:"采购", transit:"交通", gift:"礼品", other:"其他"};
   const POLICY = {name:"飞书采购申请", version:2};
   const present = v => v != null && String(v).trim() && v !== "（跳过）";
+  function invoiceContent(inv) {
+    let label = Object.prototype.hasOwnProperty.call(CAT_LABEL, inv.category) ? CAT_LABEL[inv.category] : "";
+    if (!label) {
+      const stem = String(inv.fileName || "").split(/[\\/]/).pop().replace(/\.[a-z0-9]{1,8}$/i, "").replace(/\s+/g, " ").trim();
+      // A filename may supply readable content, but never promote the merchant
+      // or an invoice-number-only filename into the question's subject.
+      if (stem && stem !== String(inv.merchant || "").trim() && !/^\d+$/.test(stem) && !/发票尾号|^第\s*\d+\s*张票/.test(stem)) {
+        label = [...stem].slice(0, 24).join("") + ([...stem].length > 24 ? "…" : "");
+      }
+    }
+    const raw = inv.amount;
+    const amount = raw != null && typeof raw !== "boolean" && String(raw).trim() !== "" ? Number(raw) : NaN;
+    const money = Number.isFinite(amount) ? ` ¥${amount.toLocaleString("zh-CN", {useGrouping:false, maximumFractionDigits:2})}` : "";
+    return `${label || "这笔"}${money}`;
+  }
+  function invoiceDate(inv) {
+    const date = String(inv.date || "").trim();
+    const match = date.match(/^\d{4}[-/](\d{2})[-/](\d{2})(?:$|T)/);
+    return match ? `${match[1]}-${match[2]}` : date;
+  }
   function buildQuestionQueue(invoices, answers) {
     answers = answers || {};
     const schema = global.__purchaseSchema;
@@ -36,9 +56,18 @@
       if (["账户名称","银行账户","收款账号","开户支行"].includes(w.name))
         ask(`purchase:${method.name}:shared:${w.name}`, `本次所有明细的${w.name}是？`, [], "如各行收款信息不同，请分开提交申请。");
     }
-    for (const [index, inv] of (invoices || []).entries()) {
+    const invoiceRows = invoices || [];
+    const contentCounts = new Map();
+    for (const inv of invoiceRows) {
+      const content = invoiceContent(inv);
+      contentCounts.set(content, (contentCounts.get(content) || 0) + 1);
+    }
+    for (const inv of invoiceRows) {
       const project = answers.costCenter || (answers.selectedBudget || {}).project || "待选项目";
-      const ticket = (invoices || []).length > 1 ? `第 ${index+1} 张票` : "这张票";
+      const content = invoiceContent(inv);
+      const date = invoiceDate(inv);
+      const needsDate = contentCounts.get(content) > 1 && Boolean(date);
+      const ticket = needsDate ? `${content}（${date}）` : content;
       for (const w of method.fields) {
         if (!w.required || ["金额","名称","账户名称","银行账户","收款账号","开户支行"].includes(w.name)) continue;
         let chips = w.options || [];
@@ -53,9 +82,8 @@
         if (present(v) && (!w.options.length || w.options.includes(v)) && (w.type !== "number" || Number.isFinite(Number(v)) && Number(v)>0)) continue;
         const field = w.name.includes("科目") ? "科目" : w.name;
         const rank = ordered(chips, (((learned.rows || {})[inv.id] || {})[field]), Boolean(w.options.length));
-        const text = field === "科目" ? `${ticket}在【${project}】里属于哪个科目？` : `${ticket}在【${project}】里的${w.name}是？`;
-        const amount = Number(inv.amount);
-        const hint = [inv.date, inv.invoiceNo ? `发票尾号 ${String(inv.invoiceNo).slice(-6)}` : "", Number.isFinite(amount) ? `¥${amount.toFixed(2)}` : ""].filter(Boolean).join(" · ");
+        const text = field === "科目" ? `${ticket} 在【${project}】里属于哪个科目？` : `${ticket} 在【${project}】里的${w.name}是？`;
+        const hint = needsDate ? "" : String(inv.date || "");
         q.push({id, text, hint, ...rank, required:true, input:"chips+text", numeric:w.type === "number", options:w.options});
       }
     }
