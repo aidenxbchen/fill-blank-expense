@@ -1,6 +1,6 @@
 """Local invoice originals and user-confirmed filling observations (SQLite).
 
-No OAuth secrets or bank details are stored here. Opaque file IDs are scoped to
+No OAuth secrets are stored here. Drafts may contain user-entered payment details. Opaque file IDs are scoped to
 OAuth open_id; filenames/paths supplied by clients are never filesystem paths.
 """
 from __future__ import annotations
@@ -50,6 +50,22 @@ def database():
             amount_bucket TEXT NOT NULL, updated_at INTEGER NOT NULL,
             PRIMARY KEY(owner, draft_id, invoice_id, field)
           );
+          CREATE TABLE IF NOT EXISTS drafts (
+            owner TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL,
+            state_json TEXT NOT NULL, stage TEXT NOT NULL, revision INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL, instance_code TEXT,
+            PRIMARY KEY(owner,id)
+          );
+          CREATE INDEX IF NOT EXISTS draft_list ON drafts(owner,status,updated_at DESC);
+          CREATE TABLE IF NOT EXISTS submission_history (
+            owner TEXT NOT NULL, instance_code TEXT NOT NULL, request_id TEXT NOT NULL,
+            draft_id TEXT, title TEXT NOT NULL, project TEXT NOT NULL, total TEXT NOT NULL,
+            status TEXT NOT NULL, submitted_at INTEGER NOT NULL, approval_url TEXT NOT NULL,
+            receipt_json TEXT NOT NULL, snapshot_json TEXT NOT NULL,
+            PRIMARY KEY(owner,instance_code), UNIQUE(owner,request_id)
+          );
+          CREATE INDEX IF NOT EXISTS submission_list ON submission_history(owner,submitted_at DESC);
           CREATE INDEX IF NOT EXISTS fill_lookup ON fill_observations(owner,field,updated_at);
         ''')
         with con:

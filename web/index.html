@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>填空报销 · 丢发票就问完</title>
-  <link rel="stylesheet" href="./styles.css?v=20261109files1" />
+  <link rel="stylesheet" href="./styles.css?v=20261109records1" />
 </head>
 <body class="delight-body">
   <header class="app-header">
@@ -26,11 +26,14 @@
           </div>
         </div>
         <a class="btn btn-ghost" href="./classic/index.html" title="旧版按场景填空">经典填空</a>
-        <button type="button" class="btn btn-ghost" id="btn-reset">清空会话</button>
+        <button type="button" class="btn btn-secondary" id="btn-records">我的报销</button>
+        <button type="button" class="btn btn-ghost" id="btn-save-draft">保存草稿</button>
+        <button type="button" class="btn btn-ghost" id="btn-reset">新建报销</button>
       </div>
     </div>
   </header>
 
+  <div class="save-strip" role="status" aria-live="polite"><span id="draft-save-status">登录后可保存草稿，随时继续填写</span></div>
   <nav class="stage-rail" aria-label="流程进度">
     <ol class="stage-list" id="stage-list">
       <li class="stage-item is-active" data-stage="upload"><span class="stage-dot">1</span><span class="stage-name">丢发票</span></li>
@@ -170,10 +173,29 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="records-modal" hidden role="dialog" aria-modal="true" aria-labelledby="records-title">
+    <div class="modal records-modal">
+      <div class="modal-header"><h3 id="records-title">我的报销</h3><button type="button" class="btn btn-ghost" id="btn-close-records">关闭</button></div>
+      <div class="modal-body">
+        <p class="section-hint">草稿会保留发票原件和填写进度。已提交记录保留当时的摘要，审批进度请在飞书查看。</p>
+        <div class="records-tabs" role="tablist" aria-label="记录类型">
+          <button type="button" class="btn btn-secondary" role="tab" aria-selected="true" data-record-tab="drafts">进行中</button>
+          <button type="button" class="btn btn-ghost" role="tab" aria-selected="false" data-record-tab="history">已提交</button>
+          <button type="button" class="btn btn-ghost" id="btn-refresh-records">刷新</button>
+        </div>
+        <button type="button" class="btn btn-ghost" id="btn-import-legacy" hidden>恢复旧版本机草稿（校验当前用户原件）</button>
+        <div id="records-message" role="status"></div>
+        <div id="records-list"></div>
+        <button type="button" class="btn btn-secondary" id="btn-more-records" hidden>加载更多</button>
+        <div id="record-detail" hidden></div>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status"></div>
 
-  <script src="./ocr-bridge.js?v=20261109files1"></script>
-  <script src="./policy.js?v=20261109files1"></script>
-  <script src="./app.js?v=20261109files1"></script>
+  <script src="./ocr-bridge.js?v=20261109records1"></script>
+  <script src="./policy.js?v=20261109records1"></script>
+  <script src="./app.js?v=20261109records1"></script>
 </body>
 </html>

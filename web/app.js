@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261109files1";
+  const ASSET_V = "20261109records1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -70,42 +70,245 @@
     return "¥" + x.toFixed(2);
   }
 
+  let saveTimer, saveQueue = Promise.resolve(), readyToSave = false;
+  let recordsTab = "drafts", recordsOffset = null, recordItems = [], recordsLoading = false;
+  const ownerId = () => authUser && authUser.openId;
+  const localKey = () => STORAGE_KEY + ":" + ownerId();
+
+  function stripPreview({previewUrl,...rest}) { return rest; }
+
+  function snapshot() {
+    const {stage,draftId,answers,chat,draft,parseErrors,lastFeishu,selectedBudgetId,composerText} = session;
+    return JSON.parse(JSON.stringify({stage,draftId,answers,chat,draft,parseErrors,lastFeishu,selectedBudgetId,composerText,
+      invoices:session.invoices.map(({previewUrl,...rest})=>rest)}));
+  }
+
   function save() {
-    try {
-      const slim = {
-        stage: session.stage,
-        draftId: session.draftId,
-        invoices: session.invoices.map(stripPreview),
-        answers: session.answers,
-        chat: session.chat,
-        draft: session.draft,
-        parseErrors: session.parseErrors,
-        lastFeishu: session.lastFeishu,
-        selectedBudgetId: session.selectedBudgetId,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
-    } catch (e) {
-      console.warn("save failed", e);
+    if (!ownerId() || !readyToSave) return;
+    try { localStorage.setItem(localKey(), JSON.stringify({state:snapshot(),revision:session.recordRevision || 0,
+      title:session.recordTitle || "",submitted:!!session.submitted})); }
+    catch (_) { setSaveStatus("本机缓存不可用，请点保存草稿确认服务器已保存"); }
+    clearTimeout(saveTimer);
+    if (!session.submitted && !session.saveConflict) {
+      setSaveStatus("有未保存的修改…");
+      saveTimer = setTimeout(()=>persistDraft(false).catch(()=>{}),900);
     }
   }
 
-  function stripPreview(inv) {
-    const { previewUrl, ...rest } = inv;
-    return rest;
+  function restoreState(state, metadata={}) {
+    document.getElementById("draft-meta").replaceChildren();
+    document.getElementById("detail-sheets").replaceChildren();
+    document.getElementById("invoice-summary-body").replaceChildren();
+    session = Object.assign(emptySession(),state);
+    session.invoices = Array.isArray(session.invoices) ? session.invoices : [];
+    session.answers = session.answers || {};
+    session.chat = Array.isArray(session.chat) ? session.chat : [];
+    session.recordRevision = metadata.revision || 0;
+    session.recordTitle = metadata.title || "";
+    session.submitted = !!metadata.submitted || !!(session.lastFeishu && session.lastFeishu.ok);
+    session.invoices.forEach(i=>{
+      if (i.status === "parsing") { i.status="error"; i.error="上次识别未完成，请核对后手动补全或重新上传"; }
+    });
   }
 
-  function load() {
+  async function load() {
+    if (!ownerId()) return;
+    let hadLocal = false;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      session = Object.assign(emptySession(), data);
-      if (!Array.isArray(session.invoices)) session.invoices = [];
-      if (!session.answers) session.answers = {};
-      if (!Array.isArray(session.chat)) session.chat = [];
+      const raw = JSON.parse(localStorage.getItem(localKey()) || "null");
+      if (raw && raw.state) {
+        hadLocal = true;
+        restoreState(raw.state,raw);
+        if (session.recordRevision && !session.submitted) {
+          try {
+            const result=await recordsAPI("/api/drafts/"+encodeURIComponent(session.draftId));
+            if (result.record.revision > session.recordRevision) restoreState(result.record.state,result.record);
+          } catch(e) {
+            if (e.status===404) { session=emptySession(); showToast("上次草稿已删除或提交，可在我的报销查看"); }
+            else showToast("暂时无法核对服务器草稿，保留本机内容；保存时会检查版本",6000);
+          }
+        }
+      }
+    } catch(e) { setSaveStatus("本机缓存读取失败，请从我的报销继续草稿"); }
+    if (hadLocal) return;
+    try {
+      const listed = await recordsAPI("/api/drafts?offset=0");
+      if (listed.items && listed.items.length) {
+        const data = await recordsAPI("/api/drafts/"+encodeURIComponent(listed.items[0].id));
+        restoreState(data.record.state, data.record);
+        setSaveStatus("已恢复最近一份草稿，也可在「我的报销」查看全部");
+        showToast("已恢复最近一份未完成的报销");
+      }
     } catch (e) {
-      console.warn("load failed", e);
+      setSaveStatus("暂时无法读取云端草稿，可稍后点「我的报销」重试");
     }
+  }
+
+  function setSaveStatus(text) {
+    const el=document.getElementById("draft-save-status");
+    if (el) el.textContent=text;
+  }
+
+  async function recordsAPI(path, method="GET", body) {
+    const response=await fetch(apiBase()+path,{method,credentials:"include",cache:"no-store",
+      headers:body ? {"Content-Type":"application/json"} : {},body:body ? JSON.stringify(body) : undefined,
+      signal:AbortSignal.timeout(15000)});
+    const result=await response.json();
+    if (!response.ok || !result.ok) { const err=new Error(result.error || "记录读取失败"); err.status=response.status; throw err; }
+    return result;
+  }
+
+  function persistDraft(manual) {
+    clearTimeout(saveTimer);
+    if (!ownerId()) return manual ? Promise.reject(new Error("请先用飞书登录")) : Promise.resolve();
+    if (session.submitted) { setSaveStatus("已提交 · 可在我的报销查看历史"); return Promise.resolve(); }
+    if (!manual && !session.invoices.length && !Object.keys(session.answers).length) {
+      setSaveStatus("填写内容会自动保存，也可以随时点保存草稿"); return Promise.resolve();
+    }
+    const target=session, owner=ownerId(), state=snapshot();
+    const fingerprint=JSON.stringify(state);
+    const job=async()=>{
+      if (target.submitted || owner!==ownerId()) return;
+      if(target.savedFingerprint===fingerprint) {
+        if (session===target) setSaveStatus("已保存 · "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}));
+        if(manual) showToast("草稿已保存，可在我的报销继续");
+        return;
+      }
+      if (target.saveConflict) throw new Error("草稿版本冲突，请从我的报销重新打开；当前内容保留在本机");
+      setSaveStatus("正在保存草稿…");
+      try {
+        const result=await recordsAPI("/api/drafts/"+encodeURIComponent(state.draftId),"PUT",{state,revision:target.recordRevision || 0});
+        target.savedFingerprint=fingerprint;
+        target.recordRevision=result.record.revision;
+        target.recordTitle=result.record.title;
+        if (session===target && owner===ownerId()) {
+          localStorage.setItem(localKey(),JSON.stringify({state:snapshot(),revision:target.recordRevision,title:target.recordTitle,submitted:false}));
+          setSaveStatus("已保存 · "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}));
+          if (manual) showToast("草稿已保存，稍后可在「我的报销」继续");
+        }
+      } catch(e) {
+        if (e.status===409 || e.status===404) target.saveConflict=true;
+        if (session===target) setSaveStatus("保存未完成："+e.message);
+        throw e;
+      }
+    };
+    const pending=saveQueue.catch(()=>{}).then(job);
+    saveQueue=pending;
+    return pending;
+  }
+
+  function syncCurrentEditor() {
+    if(session.submitted) return;
+    if (session.stage==="upload") syncSummaryFromDom();
+    else if (session.stage==="draft") syncDraftFromDom();
+    if (session.stage==="interview") session.composerText=document.getElementById("chat-input").value;
+  }
+
+  function busyEditing() {
+    if (submitting || answering || session.invoices.some(i=>i.status==="parsing")) {
+      showToast("正在识别或处理回答，请完成后再切换记录；当前草稿仍可保存"); return true;
+    }
+    return false;
+  }
+
+  async function openRecords() {
+    if (!ownerId()) { showToast("请先用飞书登录，查看自己的草稿和历史"); return; }
+    document.getElementById("records-modal").hidden=false;
+    document.getElementById("btn-import-legacy").hidden=!localStorage.getItem(STORAGE_KEY);
+    await refreshRecords();
+  }
+
+  async function importLegacy() {
+    if(busyEditing()) return;
+    try {
+      syncCurrentEditor();await persistDraft(false);
+      const old=JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if(!old) return;
+      old.draftId=uid("draft");
+      const result=await recordsAPI("/api/drafts/"+old.draftId,"PUT",{state:old,revision:0});
+      restoreState(old,result.record);clearTimeout(saveTimer);
+      localStorage.removeItem(STORAGE_KEY);
+      document.getElementById("records-modal").hidden=true;
+      setStage(session.stage);showToast("旧版填写内容已恢复并保存为草稿");
+    } catch(e) {showToast("无法导入："+e.message,7000);}
+  }
+
+  async function refreshRecords(more=false) {
+    if (recordsLoading) return;
+    recordsLoading=true;
+    const tab=recordsTab;
+    const message=document.getElementById("records-message");
+    message.textContent="正在读取…";
+    try {
+      const result=await recordsAPI("/api/"+tab+"?offset="+(more ? recordsOffset : 0));
+      if(tab!==recordsTab) return;
+      recordItems=more ? recordItems.concat(result.items) : result.items;
+      recordsOffset=result.nextOffset;
+      renderRecords();
+      message.textContent=recordItems.length ? "" : (tab==="drafts" ? "还没有草稿，开始填写后会自动保存。" : "还没有提交记录，成功发起采购申请后会出现在这里。");
+    } catch(e) { message.textContent=e.message; }
+    finally { recordsLoading=false; }
+  }
+
+  function renderRecords() {
+    const stageName={upload:"识别汇总",interview:"问答中",draft:"核对草稿",submit:"待提交"};
+    document.getElementById("records-list").innerHTML=recordItems.map((r,index)=>`<article class="record-card" data-record-index="${index}">
+      <div><h4>${esc(r.title)}</h4><p class="muted-sm">${esc(r.project || "项目待选")} · ${recordsTab==="drafts" ? esc(stageName[r.stage])+" · "+r.invoiceCount+" 张发票" : esc(formatMoney(r.total))+" · 已提交"}</p>
+      <p class="muted-sm">${esc(new Date((r.updated_at || r.submitted_at)*1000).toLocaleString("zh-CN"))}${r.serialNumber ? " · 单号 "+esc(r.serialNumber) : ""}</p></div>
+      ${recordsTab==="drafts" ? `<div class="record-actions"><button type="button" class="btn btn-primary btn-sm" data-record-action="continue">继续填写</button><button type="button" class="btn btn-ghost btn-sm" data-record-action="rename">重命名</button><button type="button" class="btn btn-ghost btn-sm" data-record-action="delete">删除</button></div>
+      <div class="record-rename" hidden><input aria-label="草稿名称" maxlength="160" value="${esc(r.title)}"><button type="button" class="btn btn-secondary btn-sm" data-record-action="save-title">保存名称</button></div>` : '<button type="button" class="btn btn-secondary" data-record-action="detail">查看摘要</button>'}
+      </article>`).join("");
+    document.getElementById("btn-more-records").hidden=recordsOffset==null;
+  }
+
+  function historyDetail(r) {
+    const c=r.snapshot.claim, answers=c.answers || {};
+    const detail=document.getElementById("record-detail");
+    const names=r.snapshot.attachmentNames || [];
+    const rows=(c.invoices || []).map(i=>`<tr><td>${esc(i.date)}</td><td>${esc(i.merchant)}</td><td>${esc(i.invoiceNo)}</td><td>${esc(formatMoney(i.amount))}</td><td>${Object.entries(answers).filter(([k])=>k.startsWith("purchase:"+c.purchaseMethod+":"+i.id+":")).map(([k,v])=>esc(k.split(":").pop())+"："+esc(v)).join("<br>")}</td></tr>`).join("");
+    detail.hidden=false;
+    detail.innerHTML=`<h4>${esc(r.title)}</h4><p>${esc(c.costCenter)} · ${esc(c.purchaseMethod)} · 合计 ${esc(formatMoney(r.total))}</p><p>${esc(c.purpose)}</p>
+      <p>关联审批：${esc((c.selectedBudget || {}).title || "未关联")}</p><p>状态：已提交（实时进度请在飞书查看）</p><p>单号：${esc(r.serialNumber || "同步中")} · 实例：${esc(r.instance_code)}</p>
+      <div class="table-wrap"><table class="sheet-table"><thead><tr><th>日期</th><th>商户</th><th>发票号</th><th>金额</th><th>采购明细</th></tr></thead><tbody>${rows}</tbody></table></div><p>发票附件：${names.map(esc).join("、") || "无"}</p>`;
+    if (/^https:\/\//.test(r.approval_url)) { const a=document.createElement("a"); a.href=r.approval_url;a.target="_blank";a.rel="noopener noreferrer";a.className="btn btn-primary";a.textContent="打开飞书采购申请";detail.append(a); }
+    detail.scrollIntoView({block:"nearest",behavior:"smooth"});
+  }
+
+  async function recordAction(event) {
+    const button=event.target.closest("[data-record-action]");
+    if (!button) return;
+    const card=button.closest("[data-record-index]"), row=recordItems[Number(card.dataset.recordIndex)], action=button.dataset.recordAction;
+    if (action==="rename") {card.querySelector(".record-rename").hidden=false;card.querySelector("input").focus();return;}
+    button.disabled=true;
+    try {
+      if (action==="detail") { historyDetail((await recordsAPI("/api/history/"+encodeURIComponent(row.instance_code))).record); return; }
+      if (busyEditing()) return;
+      syncCurrentEditor();
+      await persistDraft(false); // Flush before switching or mutating a listed current draft.
+      await saveQueue;
+      const current=row.id===session.draftId;
+      const revision=current ? session.recordRevision : row.revision;
+      if(action==="continue") {
+        const data=await recordsAPI("/api/drafts/"+encodeURIComponent(row.id));
+        clearTimeout(saveTimer);
+        restoreState(data.record.state,data.record);
+        document.getElementById("records-modal").hidden=true;
+        await refreshFillSuggestions(false);
+        setStage(session.stage);
+        document.getElementById("chat-input").value=session.composerText || "";
+        showToast("已恢复草稿，接着上次的位置继续");
+      } else if(action==="save-title") {
+        const result=await recordsAPI("/api/drafts/"+encodeURIComponent(row.id),"PATCH",{revision,title:card.querySelector("input").value});
+        if(current) {session.recordRevision=result.record.revision;session.recordTitle=result.record.title;save();}
+        await refreshRecords();
+      } else if(action==="delete") {
+        if(!confirm("删除这份草稿？已提交记录不受影响。")) return;
+        await recordsAPI("/api/drafts/"+encodeURIComponent(row.id),"DELETE",{revision});
+        if(current) {clearTimeout(saveTimer);session=emptySession();setStage("upload");}
+        await refreshRecords();
+      }
+    } catch(e) { showToast(e.message,7000);document.getElementById("records-message").textContent=e.message; }
+    finally {button.disabled=false;}
   }
 
   function showToast(msg, ms) {
@@ -150,6 +353,7 @@
   /* ---------- stage chrome ---------- */
 
   function setStage(stage) {
+    if (session.submitted && stage !== "submit") { showToast("这份采购已提交，可在我的报销查看摘要；继续填新单请点新建报销"); stage="submit"; }
     session.stage = stage;
     document.querySelectorAll(".stage-item").forEach((el) => {
       const s = el.getAttribute("data-stage");
@@ -241,7 +445,7 @@
             .join("");
           const dateType = /^\d{4}-\d{2}-\d{2}$/.test(inv.date || "") || !inv.date ? "date" : "text";
           return `<tr data-inv="${esc(inv.id)}" class="${err ? "is-error" : parsing ? "is-busy" : "is-ok"}">
-            <td class="td-file" title="${esc(inv.fileName || "")}">${esc(inv.fileName || "发票")}<small>${inv.attachment ? "原件已保存" : "需要补传原件"}</small><button type="button" class="btn btn-ghost btn-sm" data-reattach="${esc(inv.id)}" ${disabled}>${inv.attachment ? "更换原件" : "补传原件"}</button></td>
+            <td class="td-file" title="${esc(inv.fileName || "")}">${esc(inv.fileName || "发票")}<small>${inv.attachment ? "原件已保存" : "需要补传原件"}</small><button type="button" class="btn btn-ghost btn-sm" data-reattach="${esc(inv.id)}" ${disabled}>${inv.attachment ? "更换原件" : "补传原件"}</button>${err && inv.attachment ? `<button type="button" class="btn btn-secondary btn-sm" data-reparse="${esc(inv.id)}">用原件重新识别</button>` : ""}</td>
             <td><input data-sum="date" type="${dateType}" value="${esc(inv.date || "")}" ${disabled} /></td>
             <td><input data-sum="merchant" type="text" value="${esc(inv.merchant || "")}" ${disabled} /></td>
             <td><input data-sum="invoiceNo" type="text" value="${esc(inv.invoiceNo || "")}" ${disabled} /></td>
@@ -302,6 +506,8 @@
   }
 
   async function handleFiles(fileList) {
+    if (session.submitted) { showToast("这份采购已提交，请点新建报销"); return; }
+    if(submitting) return;
     const files = Array.from(fileList || []);
     if (!files.length) return;
     if (!authUser) { showToast("请先用飞书登录，再上传发票；原件会随采购申请提交"); return; }
@@ -333,28 +539,14 @@
       save();
 
       try {
-        const result = await parseInvoice(file, {});
-        const parsedAmount = result.amount;
-        const amount =
-          parsedAmount == null || (Number(parsedAmount) === 0 && result.needsReview)
-            ? ""
-            : parsedAmount;
-        Object.assign(entry, {
-          status: "ok",
-          attachment: result.attachment || null,
-          amount,
-          merchant: result.merchant || file.name.replace(/\.[^.]+$/, ""),
-          date: result.date || "",
-          invoiceNo: result.invoiceNo || "",
-          category: normalizeCategory(result.category),
-          confidence: result.confidence || 0,
-          source: result.source || "",
-          raw: result.raw || null,
-          extract_method: result.extract_method,
-          review_model: result.review_model || "",
-          corrections: result.corrections || [],
-          needsReview: !!result.needsReview,
-        });
+        if(window.__storeInvoiceFile) {
+          entry.attachment=await window.__storeInvoiceFile(file);
+          save();
+          // Persist the original reference BEFORE starting potentially slow OCR.
+          await persistDraft(false);
+        }
+        const result = await parseInvoice(file, {attachment:entry.attachment});
+        applyParsedInvoice(entry,result);
       } catch (err) {
         entry.status = "error";
         if (err.attachment) entry.attachment = err.attachment;
@@ -366,6 +558,41 @@
       renderUpload();
       save();
     }
+  }
+
+  function applyParsedInvoice(entry,result) {
+        const parsedAmount = result.amount;
+        const amount =
+          parsedAmount == null || (Number(parsedAmount) === 0 && result.needsReview)
+            ? ""
+            : parsedAmount;
+        Object.assign(entry, {
+          status: "ok",
+          attachment: result.attachment || null,
+          amount,
+          merchant: result.merchant || entry.fileName.replace(/\.[^.]+$/, ""),
+          date: result.date || "",
+          invoiceNo: result.invoiceNo || "",
+          category: normalizeCategory(result.category),
+          confidence: result.confidence || 0,
+          source: result.source || "",
+          raw: result.raw || null,
+          extract_method: result.extract_method,
+          review_model: result.review_model || "",
+          corrections: result.corrections || [],
+          needsReview: !!result.needsReview,
+        });
+  }
+
+  async function retryStoredOCR(inv) {
+    if(busyEditing()) return;
+    syncSummaryFromDom();
+    inv.status="parsing";save();renderUpload();
+    try {
+      const result=await parseInvoice(null,{attachment:inv.attachment});
+      applyParsedInvoice(inv,result);
+    } catch(e) {inv.status="error";inv.error=e.message;showToast(e.message,6000);}
+    save();renderUpload();
   }
 
   function normalizeCategory(c) {
@@ -461,10 +688,11 @@
     }
 
     ensureCurrentQuestionAsked();
+    save();
 
     if (log) {
       log.innerHTML = session.chat
-        .map((m) => `<div class="chat-bubble chat-${m.role}"><div class="chat-bubble-inner">${esc(m.text)}</div></div>`)
+        .map((m) => `<div class="chat-bubble chat-${m.role==="user" ? "user" : "assistant"}"><div class="chat-bubble-inner">${esc(m.text)}</div></div>`)
         .join("");
       log.scrollTop = log.scrollHeight;
     }
@@ -737,7 +965,7 @@
   }
 
   function buildFeishuPayload() {
-    syncDraftFromDom();
+    if (session.stage==="draft") syncDraftFromDom();
     const d = session.draft;
     return {draftId:session.draftId,claim:{purchaseMethod:d.purchaseMethod, purpose:d.purpose, costCenter:d.costCenter,
       invoices:okInvoices().map(({id,date,merchant,invoiceNo,amount,category,note,fileName,source,attachment})=>({id,date,merchant,invoiceNo,amount,category,note,fileName,source,attachment})), answers:{...session.answers},
@@ -746,6 +974,8 @@
 
   function renderSubmit() {
     const prev = document.getElementById("submit-preview");
+    const submitButton=document.getElementById("btn-feishu-submit");
+    submitButton.textContent=session.submitted ? "查看已提交结果" : "发起飞书采购申请";
     if (!session.draft) buildDraft();
     const c = buildFeishuPayload().claim;
     if (prev) prev.innerHTML = `
@@ -759,16 +989,25 @@
   let submitting = false;
   async function submitFeishu() {
     if (submitting) return;
+    if (session.submitted) { showResultModal(session.lastFeishu); return; }
     if (!authUser) { showToast("请先用飞书登录"); return; }
     if (okInvoices().some(i=>!i.attachment)) { showToast("还有发票缺少原件，请在识别汇总补传后再提交"); setStage("upload"); return; }
     const payload = buildFeishuPayload();
     const pending = window.ExpensePolicy.nextQuestion(payload.claim.invoices, {...session.answers, ...payload.claim});
     if (pending) { showToast("还缺采购必填项，先补齐这一问"); setStage("interview"); return; }
     submitting = true;
+    document.querySelector("main").inert=true;
     const button = document.getElementById("btn-feishu-submit");
     button.disabled = true;
     button.textContent = "正在发起采购申请…";
     let result;
+    try {
+      await persistDraft(true);
+      payload.draftRevision=session.recordRevision;
+    } catch(e) {
+      submitting=false;document.querySelector("main").inert=false;button.disabled=false;button.textContent="发起飞书采购申请";
+      showToast("请先保存草稿："+e.message,7000);return;
+    }
     try {
       const res = await fetch(apiBase() + "/api/feishu-expense", {
         method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)
@@ -781,11 +1020,15 @@
       result = {ok:false, error:"未收到飞书创建确认，请先检查飞书「已发起」，重试时会防止重复创建。"};
     } finally {
       submitting = false;
+      document.querySelector("main").inert=false;
       button.disabled = false;
       button.textContent = "发起飞书采购申请";
     }
     session.lastFeishu = result;
+    if (result.ok) {session.submitted=true;clearTimeout(saveTimer);}
     save();
+    if(result.ok) setSaveStatus(result.historyWarning || "已提交 · 可在我的报销查看历史");
+    if (session.stage === "submit") renderSubmit();
     showResultModal(result);
     showToast(result.ok ? "采购申请已发起":"提交未完成，请查看原因");
   }
@@ -913,6 +1156,8 @@
         refreshUploadActions();
       });
       summaryEl.addEventListener("click", (e) => {
+        const retry=e.target.closest("[data-reparse]");
+        if(retry) {const inv=session.invoices.find(i=>i.id===retry.dataset.reparse);if(inv) retryStoredOCR(inv);return;}
         const btn = e.target.closest("[data-remove]");
         if (!btn) return;
         const id = btn.getAttribute("data-remove");
@@ -930,6 +1175,7 @@
       const inputEl = document.getElementById("chat-input");
       submitAnswer(inputEl.value);
       inputEl.value = "";
+      session.composerText="";save();
       inputEl.focus();
     });
     document.getElementById("chat-input").addEventListener("keydown", (e) => {
@@ -1026,16 +1272,33 @@
       });
     }
 
-    document.getElementById("btn-reset").addEventListener("click", () => {
-      if (!confirm("清空当前会话（发票、问答、草稿）？")) return;
-      session = emptySession();
-      localStorage.removeItem(STORAGE_KEY);
-      setStage("upload");
-      showToast("已清空");
+    document.getElementById("btn-reset").addEventListener("click", async () => {
+      if(busyEditing()) return;
+      try { syncCurrentEditor();await persistDraft(false);clearTimeout(saveTimer);session=emptySession();setStage("upload");showToast("已新建，上份草稿可在我的报销继续"); }
+      catch(e) {showToast("请先处理保存问题："+e.message,7000);}
     });
+    document.getElementById("btn-save-draft").addEventListener("click",()=>{
+      syncCurrentEditor();persistDraft(true).catch(e=>showToast(e.message,7000));
+    });
+    document.getElementById("btn-records").addEventListener("click",openRecords);
+    document.getElementById("btn-import-legacy").addEventListener("click",importLegacy);
+    document.getElementById("btn-close-records").addEventListener("click",()=>{document.getElementById("records-modal").hidden=true;});
+    document.getElementById("btn-refresh-records").addEventListener("click",()=>refreshRecords());
+    document.getElementById("btn-more-records").addEventListener("click",()=>refreshRecords(true));
+    document.getElementById("records-list").addEventListener("click",recordAction);
+    document.querySelectorAll("[data-record-tab]").forEach(b=>b.addEventListener("click",async()=>{
+      if(recordsLoading) return;
+      recordsTab=b.dataset.recordTab;
+      document.querySelectorAll("[data-record-tab]").forEach(t=>{t.setAttribute("aria-selected",String(t===b));t.classList.toggle("btn-secondary",t===b);t.classList.toggle("btn-ghost",t!==b);});
+      document.getElementById("record-detail").hidden=true;
+      await refreshRecords();
+    }));
+    document.getElementById("chat-input").addEventListener("input",e=>{session.composerText=e.target.value;save();});
+    window.addEventListener("pagehide",()=>{save();});
   }
 
   function selectBudget(id) {
+    if(session.submitted || submitting) return;
     const b = approvedBudgets.find((x) => x.instanceId === id || x.instanceCode === id);
     if (!b) return;
     session.selectedBudgetId = b.instanceId;
@@ -1171,13 +1434,21 @@
   }
 
   async function logout() {
+    if(busyEditing()) return;
+    try { syncCurrentEditor();await persistDraft(false);await saveQueue; } catch(e) {showToast("请先保存草稿再退出："+e.message,7000);return;}
     try {
       await fetch(apiBase() + "/api/auth/logout", {
         method: "POST",
         credentials: "include",
       });
     } catch (e) {}
+    clearTimeout(saveTimer);clearTimeout(fillingTimer);
+    readyToSave=false;session=emptySession();
+    document.getElementById("records-modal").hidden=true;
     authUser = null;
+    window.__fillSuggestions=null;
+    setStage("upload");
+    setSaveStatus("已退出，登录后可在我的报销继续草稿");
     budgetWarning = "";
     approvedBudgets = [];
     window.__approvedBudgets = [];
@@ -1207,7 +1478,6 @@
   }
 
   async function init() {
-    load();
     bind();
     consumeAuthQuery();
     try {
@@ -1217,12 +1487,16 @@
       window.__purchaseSchema = data;
     } catch (err) { showToast(err.message, 10000); }
     await refreshAuth();
+    await load();
+    readyToSave=true;
     await refreshFillSuggestions(false);
     // restore stage
     const stage = session.stage || "upload";
     if (stage === "interview" && !okInvoices().length) session.stage = "upload";
     if (stage === "draft" && !session.draft && !okInvoices().length) session.stage = "upload";
     setStage(session.stage || "upload");
+    document.getElementById("chat-input").value=session.composerText || "";
+    if (session.submitted) setSaveStatus("已提交 · 可在我的报销查看历史");
   }
 
   if (document.readyState === "loading") {

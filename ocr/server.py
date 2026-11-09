@@ -31,6 +31,7 @@ from feishu_oauth import (
 )
 import feishu_oauth as auth
 import expense_data
+import expense_records as records
 from feishu_purchase import handle_create, handle_schema, definition, public_schema
 from invoice_extract import (
     ollama_base,
@@ -152,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
         else:
             self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:5173")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
         self.send_header(
             "Access-Control-Allow-Headers",
             "Content-Type, Accept",
@@ -188,6 +189,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+        if self._records_request(path):
+            return
         if path == "/api/auth/feishu/login":
             handle_login(self)
             return
@@ -210,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "backend": "ollama-openai-compat",
-                    "features": {"invoiceOriginals": True, "historySuggestions": True},
+                    "features": {"invoiceOriginals": True, "historySuggestions": True, "draftsAndHistory": True},
                     "model": ollama_model(),
                     "reviewModel": review_model(),
                     "pipeline": "pdf-text|vision-ocr-text → heuristic → llm-review",
@@ -251,6 +254,62 @@ class Handler(BaseHTTPRequestHandler):
         if not owner: raise auth.FeishuAPIError(401, {"error":"登录身份不完整，请重新登录"})
         return owner
 
+    def do_PUT(self):
+        if not self._records_request(urlparse(self.path).path):
+            self._json(404, {"ok":False,"error":"not found"})
+
+    do_PATCH = do_PUT
+    do_DELETE = do_PUT
+
+    def _records_request(self, path):
+        if path not in ("/api/drafts", "/api/history") and not path.startswith(("/api/drafts/", "/api/history/")):
+            return False
+        try:
+            owner = self._owner()
+            method = self.command
+            parts = path.strip('/').split('/')
+            kind = parts[1]
+            ident = parts[2] if len(parts) == 3 else None
+            if len(parts) > 3:
+                raise records.RecordError("接口不存在",404)
+            body = {}
+            if method != 'GET':
+                length = int(self.headers.get('Content-Length') or 0)
+                if not 0 < length <= 4 * 1024 * 1024:
+                    raise records.RecordError("草稿请求为空或超过 4MB",413)
+                body = json.loads(self.rfile.read(length))
+                if not isinstance(body,dict):
+                    raise records.RecordError("无效草稿请求")
+            if method == 'GET':
+                if kind == 'history':
+                    from feishu_purchase import recover_history
+                    recover_history(owner)
+                if ident:
+                    item = records.get_draft(owner,ident) if kind=='drafts' else records.get_history(owner,ident)
+                    self._json(200, {"ok":True,"record":item})
+                else:
+                    qs = parse_qs(urlparse(self.path).query)
+                    offset = int(qs.get('offset',['0'])[0])
+                    if not 0 <= offset <= 100000:
+                        raise records.RecordError("无效分页参数")
+                    self._json(200, {"ok":True,**records.list_records(owner,kind,offset)})
+            elif kind == 'drafts' and ((method=='POST' and not ident) or (method=='PUT' and ident)):
+                self._json(200, {"ok":True,"record":records.save_draft(owner,ident or body.get('id'),body)})
+            elif kind=='drafts' and ident and method in ('PATCH','DELETE'):
+                item = records.change_draft(owner,ident,body.get('revision'),body.get('title'),delete=method=='DELETE')
+                self._json(200, {"ok":True,"record":item})
+            else:
+                raise records.RecordError("此操作不受支持",405)
+        except auth.FeishuAPIError as e:
+            self._json(e.http_status if e.http_status in (401,403) else 502, {"ok":False,"error":str(e)})
+        except records.RecordError as e:
+            self._json(e.status, {"ok":False,"error":str(e)})
+        except (ValueError, TypeError, KeyError, AttributeError):
+            self._json(422, {"ok":False,"error":"草稿数据格式不正确"})
+        except Exception:
+            self._json(503, {"ok":False,"error":"记录暂时不可用，当前内容仍保留在本机，请稍后重试"})
+        return True
+
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
@@ -258,6 +317,8 @@ class Handler(BaseHTTPRequestHandler):
         if "fallback" in qs and qs["fallback"] and qs["fallback"][0] == "mock":
             pass
 
+        if self._records_request(path):
+            return
         if path == "/api/auth/logout":
             handle_logout(self)
             return
@@ -333,6 +394,16 @@ class Handler(BaseHTTPRequestHandler):
                 data = part["data"]
             elif ctype.lower().startswith("application/json"):
                 meta = json.loads(body.decode("utf-8"))
+                if path=="/api/parse-invoice" and meta.get("attachment"):
+                    original, data = expense_data.resolve_file(owner,meta['attachment'])
+                    filename, mime = original['name'], original['mime']
+                    try:
+                        out=dict(parse_uploaded_invoice(data,filename,mime))
+                        out.update(ok=True,attachment=expense_data.public_file(original))
+                        self._json(200,out)
+                    except Exception as e:
+                        self._json(502,{"ok":False,"error":str(e),"attachment":expense_data.public_file(original)})
+                    return
                 b64 = meta.get("image_base64") or meta.get("base64")
                 if not b64:
                     raise ValueError("JSON 需含 image_base64")

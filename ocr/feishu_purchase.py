@@ -19,6 +19,8 @@ from urllib.parse import urlencode, urlparse
 import feishu_oauth as auth
 import approval_files
 import expense_data
+import expense_records
+import time
 
 APPROVAL_CODE = "D448D0FB-77DB-4640-9650-1FB99512888C"
 CREATE_URL = "https://open.feishu.cn/open-apis/approval/v4/instances/initiate"
@@ -204,7 +206,27 @@ def _db():
     os.chmod(DB_PATH, 0o600)
     db = sqlite3.connect(DB_PATH)
     db.execute("CREATE TABLE IF NOT EXISTS submissions (id TEXT PRIMARY KEY, status TEXT, receipt TEXT)")
+    if 'history_source' not in {r[1] for r in db.execute('PRAGMA table_info(submissions)')}:
+        db.execute("ALTER TABLE submissions ADD COLUMN history_source TEXT NOT NULL DEFAULT ''")
+        db.commit()
     return db
+
+
+def save_history(source, receipt):
+    expense_records.record_submission(source['owner'],source.get('draftId'),source['claim'],receipt,source.get('submittedAt'))
+
+
+def recover_history(owner):
+    # Only this OAuth owner's outbox is eligible. Never retry an approval create.
+    with _submit_lock, closing(_db()) as db:
+        rows=db.execute("SELECT receipt,history_source FROM submissions WHERE status='created' AND history_source!=''").fetchall()
+    for raw,meta in rows:
+        try:
+            source=json.loads(meta)
+            if source.get('owner')==owner:
+                save_history(source,json.loads(raw))
+        except Exception:
+            continue
 
 
 def create_purchase(sess, body):
@@ -224,12 +246,25 @@ def create_purchase(sess, body):
     with _submit_lock, closing(_db()) as db:
         previous = db.execute("SELECT status, receipt FROM submissions WHERE id=?", (request_id,)).fetchone()
         if previous:
-            if previous[0] == "created": return json.loads(previous[1])
+            if previous[0] == "created":
+                receipt=json.loads(previous[1])
+                source={'owner':actor['openId'],'draftId':body.get('draftId'),'claim':json.loads(json.dumps(claim)),'submittedAt':int(time.time())}
+                for invoice,(meta,_) in zip(source['claim']['invoices'],files): invoice['attachment']=expense_data.public_file(meta)
+                try: save_history(source,receipt)
+                except Exception: receipt['historyWarning']='采购已发起，历史同步暂失败；请稍后在我的报销刷新'
+                return receipt
             raise ValidationError(f"该申请提交结果待确认（请求号 {request_id}），请先在飞书「已发起」核对，勿重复提交")
+        if body.get('draftId'):
+            with expense_data.database() as con:
+                draft=con.execute('SELECT status,revision FROM drafts WHERE owner=? AND id=?',(actor['openId'],body['draftId'])).fetchone()
+            if draft and draft['status']!='active':
+                raise ValidationError('此草稿已提交或删除，请从我的报销查看记录，填写新单请新建报销')
+            if draft and body.get('draftRevision') is not None and draft['revision']!=body['draftRevision']:
+                raise ValidationError('草稿在其他页面发生变化，请重新打开核对后提交')
         # File upload failure happens before any approval is initiated.
         codes = approval_files.file_codes(actor["openId"], files)
         approval_files.add_attachment(form, schema, codes)
-        db.execute("INSERT INTO submissions VALUES (?, 'pending', '')", (request_id,))
+        db.execute("INSERT INTO submissions(id,status,receipt) VALUES (?, 'pending', '')", (request_id,))
         db.commit()
         try:
             obj = auth.http_json("POST", CREATE_URL, token=sess["access_token"], payload={"approval_code": APPROVAL_CODE,
@@ -261,8 +296,12 @@ def create_purchase(sess, body):
             receipt["attachmentsConfirmed"] = any(w.get("type")=="attachmentV2" and len(w.get("value") or []) >= len(codes) for w in saved_form)
         except Exception:
             pass
-        db.execute("UPDATE submissions SET status='created', receipt=? WHERE id=?", (json.dumps(receipt, ensure_ascii=False), request_id))
+        source={'owner':actor['openId'],'draftId':body.get('draftId'),'claim':json.loads(json.dumps(claim)),'submittedAt':int(time.time())}
+        for invoice,(meta,_) in zip(source['claim']['invoices'],files): invoice['attachment']=expense_data.public_file(meta)
+        db.execute("UPDATE submissions SET status='created', receipt=?,history_source=? WHERE id=?", (json.dumps(receipt, ensure_ascii=False),json.dumps(source,ensure_ascii=False),request_id))
         db.commit()
+        try: save_history(source,receipt)
+        except Exception: receipt['historyWarning']='采购已发起，历史同步暂失败；请稍后在我的报销刷新' 
         try:
             if body.get("draftId"):
                 expense_data.record_fills(actor["openId"], body["draftId"], claim, public_schema(schema))

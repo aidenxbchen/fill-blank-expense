@@ -2269,3 +2269,20 @@ button {
 .chip.is-recommended { border-color: var(--primary, #305d48); background: #e9f3ec; color: #214d35; font-weight: 650; }
 .chip.is-recommended small { margin-left: 7px; font-size: 0.72em; opacity: 0.8; }
 .td-file small { display:block; font-size: 0.78em; opacity: 0.75; margin: 5px 0; }
+
+/* Persistent progress and personal records. */
+.save-strip { max-width: 1200px; margin: 8px auto 0; padding: 0 24px; color: var(--muted); font-size: .8rem; }
+.records-modal { width: min(900px, calc(100vw - 32px)); max-width: 900px; }
+.records-modal .modal-body { max-height: 76vh; overflow: auto; }
+.records-tabs, .record-actions, .record-rename { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.records-tabs { margin-bottom: 16px; }
+#records-message { color: var(--muted); margin: 12px 0; }
+.record-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.record-card h4 { margin: 0 0 6px; overflow-wrap: anywhere; }
+.record-card p { margin: 4px 0; }
+.record-rename { width: 100%; }
+.record-rename[hidden] { display: none; }
+.record-rename input { flex: 1; min-width: 180px; font: inherit; padding: 9px; border: 1px solid var(--border); border-radius: 8px; }
+#record-detail { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; overflow-wrap: anywhere; }
+.records-tabs [aria-selected="true"] { box-shadow: 0 0 0 2px var(--accent-ring); }
+@media (max-width: 720px) { .header-inner { flex-wrap: wrap; } .header-actions { gap: 6px; } .record-actions { width: 100%; } }

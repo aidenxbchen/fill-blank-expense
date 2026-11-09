@@ -48,7 +48,7 @@
     await checkHealth();
 
     var form = new FormData();
-    form.append("file", file, file.name || "invoice");
+    if (!opts.attachment) form.append("file", file, file.name || "invoice");
     if (opts.categoryHint) form.append("categoryHint", opts.categoryHint);
     if (opts.dayDate) form.append("dayDate", opts.dayDate);
 
@@ -56,7 +56,8 @@
       method: "POST",
       mode: "cors",
       credentials: "include",
-      body: form,
+      headers: opts.attachment ? {"Content-Type":"application/json"} : {},
+      body: opts.attachment ? JSON.stringify({attachment:opts.attachment}) : form,
     });
 
     var text = await res.text();
