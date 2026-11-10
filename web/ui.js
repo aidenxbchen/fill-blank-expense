@@ -68,13 +68,15 @@
     return () => observer.disconnect();
   }
 
-  const api = {run, bindDialogs};
+  const needsAiSetup = data => !Boolean(data && data.configured && data.settings && data.settings.hasApiKey);
+  const api = {run, bindDialogs, needsAiSetup};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ExpenseUI = api;
 })(typeof window !== "undefined" ? window : globalThis);
 
 /* Blessing card shuffle */
 (function () {
+  if (typeof document === "undefined") return;
   const card = document.getElementById('blessing-card');
   const btn = document.getElementById('btn-blessing-shuffle');
   const zh = document.getElementById('blessing-zh');
@@ -86,7 +88,7 @@
     { zh: '归来如初', en: 'Return as we first met', note: '把心事安稳地放回口袋' },
     { zh: '山河远阔', en: 'Mountains wide, rivers long', note: '你要的答案会按时抵达' },
     { zh: '星河入梦', en: 'A river of stars into dreams', note: '今晚的账，也温柔结清' },
-    { zh: '一纸清欢', en: 'A quiet joy on paper', note: '报销烦心事，留给报了么' },
+    { zh: '一纸清欢', en: 'A quiet joy on paper', note: '报销烦心事，留给报了呗' },
     { zh: '月色正好', en: 'The moonlight is just right', note: '慢慢填，也不晚' },
     { zh: '万事顺意', en: 'May all go as you wish', note: '点一点，世界轻一点' },
     { zh: '花开有时', en: 'Flowers bloom in their season', note: '这笔费用，终会安放妥当' }

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>报了么 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261109card3" />
+  <title>报了呗 | ANEVER 采购工作台</title>
+  <link rel="stylesheet" href="./styles.css?v=20261110bei1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -13,7 +13,7 @@
     <div class="ambient-grid"></div>
     <div class="ambient-rings"></div>
     <div class="ambient-frame"></div>
-    <div class="ambient-mark">报了么</div>
+    <div class="ambient-mark">报了呗</div>
     <div class="ambient-grain"></div>
     <div class="ambient-vignette"></div>
   </div>
@@ -22,12 +22,12 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <picture>
-            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261109card3" />
-            <img src="./assets/logo-zbs.png?v=20261109card3" alt="" width="44" height="44" />
+            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261110bei1" />
+            <img src="./assets/logo-zbs.png?v=20261110bei1" alt="" width="44" height="44" />
           </picture>
         </div>
         <div class="brand-text">
-          <h1>报了么</h1>
+          <h1>报了呗</h1>
           <p id="brand-tagline">发票放进去了，唠唠就完事了。</p>
           <div class="save-strip" data-state="idle">
             <span class="save-indicator" aria-hidden="true"></span>
@@ -256,6 +256,25 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="ai-first-use-modal" hidden role="dialog" aria-modal="true" aria-labelledby="ai-first-use-title" aria-describedby="ai-first-use-copy">
+    <div class="modal">
+      <div class="modal-header"><h3 id="ai-first-use-title">首次使用，请填写自己的 AI API</h3></div>
+      <div class="modal-body" id="ai-first-use-copy">
+        <p>欢迎使用报了呗。请先为当前飞书账号配置自己的 AI API，推荐使用 Deepseek。</p>
+        <div class="ai-recommend">
+          <strong>Deepseek 推荐设置</strong>
+          <p>接口地址：<code>https://api.deepseek.com/v1</code><br />文本模型：<code>deepseek-chat</code></p>
+        </div>
+        <p>密钥按飞书账号分别保存，绝不会使用其他人的 API Key。</p>
+        <p class="section-hint">图片仍可使用本机 OCR；没有配置时，字段校对也会尝试本机模型。填写自己的 API 可获得更好的字段校对效果。</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="btn-ai-remind-later">稍后填写</button>
+        <button type="button" class="btn btn-primary" id="btn-ai-remind-configure">填写我的 AI API</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop" id="ai-settings-modal" hidden role="dialog" aria-modal="true" aria-labelledby="ai-settings-title">
     <div class="modal ai-settings-modal">
       <div class="modal-header">
@@ -296,9 +315,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261109card3"></script>
-  <script src="./ocr-bridge.js?v=20261109card3"></script>
-  <script src="./policy.js?v=20261109card3"></script>
-  <script src="./app.js?v=20261109card3"></script>
+  <script src="./ui.js?v=20261110bei1"></script>
+  <script src="./ocr-bridge.js?v=20261110bei1"></script>
+  <script src="./policy.js?v=20261110bei1"></script>
+  <script src="./app.js?v=20261110bei1"></script>
 </body>
 </html>

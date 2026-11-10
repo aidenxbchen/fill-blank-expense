@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261109ocrResume1";
+  const ASSET_V = "20261110bei1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -24,6 +24,7 @@
   let approvedBudgets = [];
   let budgetWarning = "";
   let budgetsLoading = false;
+  let aiSetupOwner = null, aiSetupConfigured = null, aiSetupEpoch = 0;
 
   const SHEET_KIND_META = {
     meal: { kind: "meal", title: "餐饮表" },
@@ -609,6 +610,8 @@
     const files = Array.from(fileList || []);
     if (!files.length) return;
     if (!authUser) { showToast("请先用飞书登录，再上传发票；原件会随采购申请提交"); return; }
+
+    remindAiOnUpload();
 
     syncSummaryFromDom();
     const queued=files.map(file=>({file,entry:{
@@ -1471,6 +1474,8 @@
     const saveNow=()=>{syncCurrentEditor();return persistDraft(true).catch(e=>showToast(e.message,7000));};
     document.getElementById("btn-save-draft").addEventListener("click",event=>window.ExpenseUI.run(event.currentTarget,saveNow,"正在保存…"));
     document.getElementById("btn-retry-save").addEventListener("click",event=>window.ExpenseUI.run(event.currentTarget,session.saveConflict ? openRecords : saveNow,"正在处理…"));
+    document.getElementById("btn-ai-remind-configure").addEventListener("click",openAiSettings);
+    document.getElementById("btn-ai-remind-later").addEventListener("click",()=>{document.getElementById("ai-first-use-modal").hidden=true;});
     document.getElementById("btn-ai-settings").addEventListener("click",openAiSettings);
     document.getElementById("btn-close-ai-settings").addEventListener("click",closeAiSettings);
     const aiControls=["btn-save-ai","btn-test-ai","btn-clear-ai"].map(id=>document.getElementById(id));
@@ -1619,11 +1624,55 @@
     el.classList.toggle("is-err", !ok && !!text);
   }
 
+  // Page-memory only. A fresh login/refresh always checks this account again.
+  function setAiSetupStatus(data, owner, changed = false) {
+    if (!owner || owner !== ownerId()) return;
+    aiSetupOwner = owner;
+    aiSetupConfigured = !window.ExpenseUI.needsAiSetup(data);
+    if (changed) aiSetupEpoch++; // A write supersedes older in-flight reads.
+    if (aiSetupConfigured) document.getElementById("ai-first-use-modal").hidden = true;
+  }
+
+  async function checkAiSetup(remind) {
+    const owner = ownerId(), epoch = aiSetupEpoch;
+    if (!owner) return null;
+    try {
+      const res = await fetch(apiBase() + "/api/ai-settings", {
+        credentials:"include", cache:"no-store", signal:AbortSignal.timeout(10000)
+      });
+      const data = await res.json();
+      if (owner !== ownerId() || epoch !== aiSetupEpoch) return null;
+      if (!res.ok || !data.ok) throw new Error(data.error || "读取失败");
+      setAiSetupStatus(data, owner);
+      if (remind && !aiSetupConfigured) {
+        if (!document.querySelector('.modal-backdrop:not([hidden])')) document.getElementById("ai-first-use-modal").hidden = false;
+        else showToast("请在 AI 设置填写自己的 API，推荐 Deepseek；不会使用其他人的密钥",7000);
+      }
+      return aiSetupConfigured;
+    } catch (e) {
+      if (owner === ownerId() && epoch === aiSetupEpoch) showToast("暂时无法核对 AI 设置，请在 AI 设置中重试；仍可使用本机 OCR",7000);
+      return null;
+    }
+  }
+
+  function remindAiOnUpload() {
+    const owner=ownerId();
+    const notify=()=>showToast("尚未填写自己的 AI API：请打开 AI 设置，推荐 Deepseek。现在继续使用本机 OCR / 校对，不会使用他人的密钥。",9000);
+    if (aiSetupOwner===owner && aiSetupConfigured===false) notify();
+    else if (aiSetupOwner!==owner || aiSetupConfigured==null) {
+      // A slow settings endpoint must not delay queuing or uploading originals.
+      checkAiSetup(false).then(configured=>{
+        if (configured===false && owner===ownerId() && aiSetupConfigured===false) notify();
+      });
+    }
+  }
+
   function openAiSettings() {
     if (!authUser) {
       showToast("请先用飞书登录，再填写自己的 AI 接口（推荐 Deepseek）");
       return;
     }
+    document.getElementById("ai-first-use-modal").hidden = true;
     document.getElementById("ai-settings-modal").hidden = false;
     loadAiSettings();
   }
@@ -1634,6 +1683,7 @@
   }
 
   async function loadAiSettings() {
+    const owner=ownerId(), epoch=aiSetupEpoch;
     setAiMessage("正在读取…", true);
     try {
       const res = await fetch(apiBase() + "/api/ai-settings", {
@@ -1642,6 +1692,8 @@
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error((data && data.error) || "读取失败");
+      if (owner !== ownerId() || epoch !== aiSetupEpoch) return;
+      setAiSetupStatus(data, owner);
       const s = data.settings || {};
       const d = data.defaults || {};
       const base = document.getElementById("ai-base-url");
@@ -1685,6 +1737,7 @@
   }
 
   async function saveAiSettings() {
+    const owner=ownerId();
     setAiMessage("正在保存…", true);
     try {
       const res = await fetch(apiBase() + "/api/ai-settings", {
@@ -1694,7 +1747,9 @@
         body: JSON.stringify(aiSettingsForm()),
       });
       const data = await res.json();
+      if (owner !== ownerId()) return;
       if (!res.ok || !data.ok) throw new Error((data && data.error) || "保存失败");
+      setAiSetupStatus(data, owner, true);
       const key = document.getElementById("ai-api-key");
       if (key) key.value = "";
       await loadAiSettings();
@@ -1724,6 +1779,7 @@
   }
 
   async function clearAiSettings() {
+    const owner=ownerId();
     if (!window.confirm("清除后将改回本机校对（若可用）。确定？")) return;
     try {
       const res = await fetch(apiBase() + "/api/ai-settings", {
@@ -1733,7 +1789,9 @@
         body: JSON.stringify({ clear: true }),
       });
       const data = await res.json();
+      if (owner !== ownerId()) return;
       if (!res.ok || !data.ok) throw new Error((data && data.error) || "清除失败");
+      setAiSetupStatus(data, owner, true);
       ["ai-base-url", "ai-api-key", "ai-text-model", "ai-vision-model"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.value = "";
@@ -1792,9 +1850,13 @@
     }
     renderAuth();
     if (authUser) {
+      aiSetupOwner=ownerId();aiSetupConfigured=null;aiSetupEpoch++;
+      checkAiSetup(true);
       // Do not block login toast / page paint on slow budget listing.
       loadBudgets();
     } else {
+      aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;
+      document.getElementById("ai-first-use-modal").hidden=true;
       budgetsLoading = false;
       budgetWarning = "";
       approvedBudgets = [];
@@ -1818,6 +1880,8 @@
     const aiModal = document.getElementById("ai-settings-modal");
     if (aiModal) aiModal.hidden = true;
     authUser = null;
+    aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;
+    document.getElementById("ai-first-use-modal").hidden=true;
     window.__fillSuggestions=null;
     setStage("upload");
     setSaveStatus("已退出，登录后可在我的报销继续草稿");

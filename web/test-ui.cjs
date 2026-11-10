@@ -17,7 +17,7 @@ function fixture(sourceRoot = path.join(__dirname, '..')) {
     {name:'金额',type:'amount',required:true,options:[]}
   ]},{name:'预付款项',fields:[]}]};
   const bootstrap = function(schema) {
-    const demo=window.__demo={calls:[],failSave:false,failSubmit:true,failAI:false,holdOCR:false};
+    const demo=window.__demo={calls:[],failSave:false,failSubmit:true,failAI:false,holdOCR:false,aiConfigured:false};
     const budget={instanceId:'demo-budget',project:'公共办公',title:'公共办公预算（示例）',kind:'init',subjects:[{name:'办公用品'}],totalAmount:20000};
     const invoices=[{id:'example-a',fileName:'示例发票 A.pdf',status:'ok',amount:128,merchant:'示例商户 A',date:'2026-11-09',invoiceNo:'EXAMPLE0001',category:'purchase',attachment:{fileId:'example-original-a'},source:'fixture'},
       {id:'example-b',fileName:'示例发票 B.png',status:'ok',amount:46,merchant:'示例商户 B',date:'2026-11-08',invoiceNo:'EXAMPLE0002',category:'transit',attachment:{fileId:'example-original-b'},source:'fixture',needsReview:true}];
@@ -44,7 +44,10 @@ function fixture(sourceRoot = path.join(__dirname, '..')) {
         await new Promise(r=>setTimeout(r,120));
         data={ok:true,suggestions:{global:{},rows:{'example-a':{'科目':[{value:'办公用品',probability:.8}]}}}};
       }
-      else if(route==='/api/ai-settings') data={ok:true,settings:{},defaults:{baseUrl:'https://api.deepseek.com/v1',textModel:'deepseek-chat'}};
+      else if(route==='/api/ai-settings') {
+        if(method==='PUT') demo.aiConfigured=!body.clear;
+        data={ok:true,configured:demo.aiConfigured,settings:{hasApiKey:demo.aiConfigured,apiKeyMasked:'example-masked'},defaults:{baseUrl:'https://api.deepseek.com/v1',textModel:'deepseek-chat'}};
+      }
       else if(route==='/api/ai-settings/test') {await new Promise(r=>setTimeout(r,120));status=503;data={ok:false,error:'示例：连接超时，请检查接口地址后重试'};}
       else if(route==='/api/invoice-files') {await new Promise(r=>setTimeout(r,150));data={ok:true,attachment:{fileId:'example-new-original'}};}
       else if(route==='/api/parse-invoice') {
