@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261110bei1" />
+  <link rel="stylesheet" href="./styles.css?v=20261110qty1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -22,8 +22,8 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <picture>
-            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261110bei1" />
-            <img src="./assets/logo-zbs.png?v=20261110bei1" alt="" width="44" height="44" />
+            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261110qty1" />
+            <img src="./assets/logo-zbs.png?v=20261110qty1" alt="" width="44" height="44" />
           </picture>
         </div>
         <div class="brand-text">
@@ -146,7 +146,7 @@
                 <th>发票号码</th>
                 <th>金额</th>
                 <th>类别</th>
-                <th>状态</th>
+                <th>数量 / 单位</th><th>状态</th>
                 <th></th>
               </tr>
             </thead>
@@ -179,6 +179,7 @@
           <div class="chat-log" id="chat-log" aria-live="polite"></div>
           <div class="chat-composer" id="chat-composer">
             <div class="chip-row" id="chip-row"></div>
+            <div id="bank-profile-tools" hidden><div id="bank-quick-list" class="bank-profile-list"></div><button type="button" class="btn btn-secondary" id="btn-bank-profiles">新增 / 管理银行档案</button></div>
             <div class="composer-row">
               <input type="text" id="chat-input" aria-label="回答当前问题" placeholder="输入回答，回车发送" autocomplete="off" />
               <button type="button" class="btn btn-primary" id="btn-send-answer">发送</button>
@@ -222,6 +223,26 @@
       </div>
     </section>
   </main>
+
+  <div class="modal-backdrop" id="bank-profiles-modal" hidden role="dialog" aria-modal="true" aria-labelledby="bank-profiles-title">
+    <div class="modal bank-profiles-modal">
+      <div class="modal-header"><h3 id="bank-profiles-title">银行档案，一次填写</h3><button type="button" class="btn btn-ghost" id="btn-close-bank-profiles">关闭</button></div>
+      <div class="modal-body">
+        <p class="section-hint">本应用内的同事可共享点选；仅创建者可修改或停用。选择后一起填入账号、开户行和户名。</p>
+        <div class="bank-profile-toolbar"><label for="bank-profile-side">档案类型</label><select id="bank-profile-side"><option value="counterparty">对方 / 收款账户</option><option value="ours">我方账户</option></select><button type="button" class="btn btn-ghost btn-sm" id="btn-refresh-bank-profiles">刷新列表</button></div>
+        <div id="bank-profile-list" class="bank-profile-list" aria-live="polite"></div>
+        <form id="bank-profile-form" class="bank-profile-form">
+          <h4>新增 / 修改档案</h4>
+          <label>简称<input name="title" required maxlength="80" placeholder="例如：基本户、常用供应商" /></label>
+          <label>户名<input name="holder" maxlength="120" placeholder="合同审批需要填写户名" /></label>
+          <label>银行账号<input name="account" required inputmode="numeric" autocomplete="off" pattern="[0-9 ]{6,60}" placeholder="填写完整账号" /></label>
+          <label>开户行 / 支行<input name="bank" required maxlength="160" placeholder="填写开户银行及支行" /></label>
+          <p id="bank-profile-error" class="bank-profile-error" role="alert"></p>
+          <div class="bank-profile-toolbar"><button type="submit" class="btn btn-primary" id="bank-profile-save">保存并填入</button><button type="button" class="btn btn-ghost" id="btn-bank-profile-new">清空，新增另一份</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
 
   <div class="modal-backdrop" id="result-modal" hidden role="dialog" aria-modal="true" aria-labelledby="result-title">
     <div class="modal">
@@ -315,9 +336,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261110bei1"></script>
-  <script src="./ocr-bridge.js?v=20261110bei1"></script>
-  <script src="./policy.js?v=20261110bei1"></script>
-  <script src="./app.js?v=20261110bei1"></script>
+  <script src="./ui.js?v=20261110qty1"></script>
+  <script src="./ocr-bridge.js?v=20261110qty1"></script>
+  <script src="./policy.js?v=20261110qty1"></script>
+  <script src="./app.js?v=20261110qty1"></script>
 </body>
 </html>

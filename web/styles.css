@@ -1639,3 +1639,23 @@ button:disabled { cursor: not-allowed; opacity: .55; }
     transform: none !important;
   }
 }
+
+/* Paired bank profiles reuse the workspace material and existing dialog shell. */
+.invoice-quantity { display:flex; gap:6px; min-width:130px; }
+.invoice-quantity input:first-child { width:60px; }
+.invoice-quantity input:last-child { width:74px; }
+.bank-profile-list { display:grid; gap:10px; margin:14px 0; }
+.bank-profile-item { display:flex; align-items:center; gap:8px; border:1px solid var(--border, #d8e1e9); border-radius:16px; background:rgba(255,255,255,.58); overflow:hidden; }
+.bank-profile-choice { flex:1; min-width:0; display:grid; gap:5px; text-align:left; border:0; padding:15px; background:transparent; color:inherit; cursor:pointer; font:inherit; }
+.bank-profile-choice:hover { background:rgba(220,234,245,.45); }
+.bank-profile-choice span,.bank-profile-choice small { overflow-wrap:anywhere; color:var(--muted, #526477); font-size:.8rem; }
+.bank-profile-actions { display:flex; flex-wrap:wrap; padding-right:8px; }
+.bank-profile-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.bank-profile-toolbar select { min-height:44px; border:1px solid #d0dae5; border-radius:12px; padding:8px 12px; font:inherit; background:rgba(255,255,255,.8); color:inherit; }
+.bank-profile-form { display:grid; grid-template-columns:1fr 1fr; gap:14px; border-top:1px solid #d8e1e9; padding-top:18px; margin-top:20px; }
+.bank-profile-form h4,.bank-profile-form .bank-profile-toolbar,.bank-profile-error { grid-column:1/-1; margin:0; }
+.bank-profile-form label { display:grid; gap:7px; font-size:.85rem; }
+.bank-profile-form input { width:100%; min-width:0; min-height:44px; border:1px solid #cbd7e2; border-radius:12px; padding:10px 12px; font:inherit; background:rgba(255,255,255,.85); color:inherit; }
+.bank-profile-error { color:#963e36; font-size:.85rem; }
+#bank-profile-tools .bank-profile-choice:active { transform:scale(.98); }
+@media(max-width:600px) { .bank-profile-form { grid-template-columns:1fr; } .bank-profile-item { align-items:stretch; } .bank-profile-actions { flex-direction:column; justify-content:center; } }

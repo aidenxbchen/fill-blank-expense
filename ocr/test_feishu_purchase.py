@@ -47,7 +47,7 @@ class FormTests(unittest.TestCase):
         c=claim_for();c['selectedBudget']=None
         with self.assertRaisesRegex(p.ValidationError,'选择'):p.build_form(SCHEMA,c)
         c=claim_for();c['answers'].pop('purchase:个人垫付:inv1:规格')
-        with self.assertRaisesRegex(p.ValidationError,'规格'):p.build_form(SCHEMA,c)
+        self.assertTrue(p.build_form(SCHEMA,c), 'missing quantity/unit auto-default without another question')
         c=claim_for('预付款项');c['selectedBudget']=None
         self.assertTrue(p.build_form(SCHEMA,c))
 

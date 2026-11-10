@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261110bei1";
+  const ASSET_V = "20261110qty1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -142,6 +142,7 @@
     session = Object.assign(emptySession(),state);
     session.invoices = Array.isArray(session.invoices) ? session.invoices : [];
     session.answers = session.answers || {};
+    window.ExpensePolicy.restoreInvoiceQuantities(session.invoices,session.answers);
     session.chat = Array.isArray(session.chat) ? session.chat : [];
     session.recordRevision = metadata.revision || 0;
     session.recordTitle = metadata.title || "";
@@ -220,6 +221,100 @@
     const result=await response.json();
     if (!response.ok || !result.ok) { const err=new Error(result.error || "记录读取失败"); err.status=response.status; throw err; }
     return result;
+  }
+
+  let bankProfiles = [], bankProfilesOwner = null, bankTargetSide = 'counterparty', bankEditing = null;
+  function activeBankMethod() {
+    return ((window.__purchaseSchema || {}).methods || []).find(m=>m.name === session.answers.purchaseMethod);
+  }
+  async function loadBankProfiles() {
+    const owner=ownerId();
+    if(!owner) throw new Error('请先用飞书登录');
+    const result=await recordsAPI('/api/filling-profiles');
+    if(owner!==ownerId()) throw new Error('登录身份已改变，请重新打开档案');
+    bankProfiles=result.items || [];bankProfilesOwner=owner;return bankProfiles;
+  }
+  function bankChoices(side, compact=false) {
+    const items=bankProfiles.filter(p=>p.side===side);
+    if(!items.length) return '<p class="section-hint">还没有档案。新增一对账号与开户行，以后点一下即可填入。</p>';
+    return items.map(p=>`<div class="bank-profile-item"><button type="button" class="bank-profile-choice" data-bank-use="${esc(p.id)}"><strong>${esc(p.title)}</strong><span>${esc(p.fields.bank)} · 尾号 ${esc(p.fields.account.slice(-4))}</span><small>${esc(p.fields.holder || (p.side==='ours' ? '我方账户' : '对方账户'))} · ${esc(p.createdBy)} 创建</small></button>${!compact && p.canEdit ? `<div class="bank-profile-actions"><button type="button" class="btn btn-ghost btn-sm" data-bank-edit="${esc(p.id)}">修改</button><button type="button" class="btn btn-ghost btn-sm" data-bank-disable="${esc(p.id)}">停用</button></div>` : ''}</div>`).join('');
+  }
+  function renderBankTools(q) {
+    const tools=document.getElementById('bank-profile-tools'), isBank=!!q && q.input==='bank-profile';
+    tools.hidden=!isBank;
+    document.querySelector('#chat-composer .composer-row').hidden=isBank;
+    if(!isBank) return;
+    bankTargetSide=q.bankSide;
+    document.getElementById('bank-quick-list').innerHTML=bankProfilesOwner===ownerId() ? bankChoices(q.bankSide,true) : '<p class="section-hint">正在读取共享档案…</p>';
+    if(bankProfilesOwner!==ownerId()) loadBankProfiles().then(()=>{if(session.stage==='interview')renderInterview();}).catch(e=>{
+      document.getElementById('bank-quick-list').innerHTML='<p class="section-hint">'+esc(e.message)+'；点下方按钮重试。</p>';
+    });
+  }
+  function renderBankModal() {
+    document.getElementById('bank-profile-list').innerHTML=bankChoices(document.getElementById('bank-profile-side').value);
+  }
+  function clearBankForm() {
+    bankEditing=null;document.getElementById('bank-profile-form').reset();
+    document.getElementById('bank-profile-save').textContent='保存并填入';
+    document.getElementById('bank-profile-error').textContent='';
+  }
+  async function openBankProfiles(side) {
+    if(busyEditing())return;
+    bankTargetSide=side || 'counterparty';clearBankForm();
+    document.getElementById('bank-profile-side').value=bankTargetSide;
+    document.getElementById('bank-profile-list').innerHTML='<p class="section-hint">正在读取共享档案…</p>';
+    document.getElementById('bank-profiles-modal').hidden=false;
+    try {await loadBankProfiles();renderBankModal();}
+    catch(e) {document.getElementById('bank-profile-error').textContent=e.message;}
+  }
+  function useBankProfile(profile) {
+    if(busyEditing() || bankProfilesOwner!==ownerId())return;
+    const method=activeBankMethod();
+    if(!method)return showToast('请先选择采购方式');
+    if(profile.side!==bankTargetSide)return showToast('档案已保存；当前字段需要'+(bankTargetSide==='ours' ? '我方' : '对方收款')+'档案，请切回对应类型选择');
+    // Snapshot current edits before replacing the pair, never copy a partial pair.
+    if(session.stage==='draft')syncDraftFromDom();
+    const targets=method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name) && window.ExpensePolicy.bankSide(w.name)===bankTargetSide);
+    if(!targets.length)return showToast('当前采购表单没有此类银行字段');
+    if(targets.some(w=>w.required && window.ExpensePolicy.bankRole(w.name)==='holder') && !profile.fields.holder)
+      return showToast('此采购方式需要户名，请修改档案补齐户名后再选');
+    window.ExpensePolicy.applyBankProfile(method,session.answers,profile,bankTargetSide);
+    document.getElementById('bank-profiles-modal').hidden=true;
+    if(session.stage==='interview') {pushChat('user',`已选择「${profile.title}」，账号与开户行已一起填入。`);renderInterview();}
+    else {buildDraft();renderDraft();}
+    save();showToast('银行信息已成对填入');
+  }
+  async function bankListAction(event) {
+    const button=event.target.closest('[data-bank-use],[data-bank-edit],[data-bank-disable]');if(!button)return;
+    const id=button.dataset.bankUse || button.dataset.bankEdit || button.dataset.bankDisable;
+    const profile=bankProfiles.find(p=>p.id===id);if(!profile)return;
+    if(button.hasAttribute('data-bank-use'))return useBankProfile(profile);
+    if(!profile.canEdit)return;
+    if(button.hasAttribute('data-bank-edit')) {
+      bankEditing=profile;document.getElementById('bank-profile-side').value=profile.side;
+      for(const [key,value] of Object.entries({title:profile.title,...profile.fields}))document.getElementById('bank-profile-form').elements[key].value=value;
+      document.getElementById('bank-profile-save').textContent='更新并填入';
+      document.getElementById('bank-profile-form').elements.title.focus({preventScroll:true});return;
+    }
+    await window.ExpenseUI.run(button,async()=>{
+      try {await recordsAPI('/api/filling-profiles/'+profile.id,'DELETE',{revision:profile.revision});await loadBankProfiles();renderBankModal();if(bankEditing && bankEditing.id===profile.id)clearBankForm();showToast('已停用；已填写的报销不会被改动');}
+      catch(e){document.getElementById('bank-profile-error').textContent=e.message;}
+    },'正在停用…');
+  }
+  async function saveBankProfile(event) {
+    event.preventDefault();const owner=ownerId(),draftId=session.draftId,methodName=session.answers.purchaseMethod;
+    const form=event.currentTarget,button=document.getElementById('bank-profile-save');
+    await window.ExpenseUI.run(button,async()=>{
+      document.getElementById('bank-profile-error').textContent='';
+      const body={kind:'bank',side:document.getElementById('bank-profile-side').value,title:form.elements.title.value,
+        fields:{holder:form.elements.holder.value,account:form.elements.account.value,bank:form.elements.bank.value},revision:bankEditing && bankEditing.revision};
+      try {
+        const result=await recordsAPI('/api/filling-profiles'+(bankEditing ? '/'+bankEditing.id : ''),bankEditing ? 'PATCH' : 'POST',body);
+        if(owner!==ownerId())return;
+        await loadBankProfiles();renderBankModal();clearBankForm();
+        if(draftId===session.draftId && methodName===session.answers.purchaseMethod)useBankProfile(result.profile);
+      } catch(e) {document.getElementById('bank-profile-error').textContent=e.message+'；填写内容已保留，请重试。';}
+    },'正在保存…');
   }
 
   function persistDraft(manual) {
@@ -546,6 +641,7 @@
             <td data-label="发票号码"><input aria-label="发票号码" data-sum="invoiceNo" type="text" value="${esc(inv.invoiceNo || "")}" ${disabled} /></td>
             <td data-label="金额"><input aria-label="发票金额" data-sum="amount" inputmode="decimal" value="${esc(shownAmount)}" ${disabled} /></td>
             <td data-label="类别"><select aria-label="发票类别" data-sum="category" ${disabled}>${options}</select></td>
+            <td data-label="数量 / 单位"><div class="invoice-quantity"><input aria-label="票面数量" data-sum="quantity" ${(inv.items || []).length>1 ? "readonly" : ""} inputmode="decimal" value="${esc((window.ExpensePolicy.quantityUnit(inv)).quantity)}" ${disabled} /><input aria-label="票面单位" data-sum="unit" ${(inv.items || []).length>1 ? "readonly" : ""} value="${esc((window.ExpensePolicy.quantityUnit(inv)).unit)}" ${disabled} /></div><small>${(inv.items || []).length>1 ? "合开按一批" : inv.quantityMode==='invoice' ? "来自票面" : inv.quantityMode==='legacy' ? "保留原草稿填写" : "缺项使用默认值，可核对"}</small></td>
             <td data-label="处理状态"><span class="invoice-state${parsing && inv.phase!=="queued" ? " is-processing" : ""}">${esc(state)}</span></td>
             <td><button type="button" class="btn btn-ghost btn-sm" data-remove="${esc(inv.id)}" ${parsing ? "disabled" : ""} aria-label="移除${esc(inv.fileName || "发票")}">×</button></td>
           </tr>`;
@@ -624,14 +720,14 @@
       entry.phase="uploading";renderUpload();
       try {
         if(window.__storeInvoiceFile) {
-          entry.attachment=await window.__storeInvoiceFile(file);
+          entry.attachment=await window.__storeInvoiceFile(file,{draftId:session.draftId,invoiceId:entry.id});
           save();
           // Persist the original reference BEFORE starting potentially slow OCR.
           await persistDraft(false);
         }
         syncSummaryFromDom();
         entry.phase="recognizing";renderUpload();
-        const result=await parseInvoice(file,{attachment:entry.attachment});
+        const result=await parseInvoice(file,{attachment:entry.attachment,draftId:session.draftId,invoiceId:entry.id});
         // Capture edits to OTHER rows before replacing the DOM. This row is still
         // parsing, so its empty disabled inputs must never overwrite the result.
         syncSummaryFromDom();
@@ -644,6 +740,7 @@
         else if(result.review_error) showToast("已识别，但文本校对未完成："+result.review_error,6000);
       } catch(err) {
         syncSummaryFromDom();
+        if(err.duplicate) {session.invoices=session.invoices.filter(i=>i!==entry);showToast(err.message,9000);renderUpload();save();continue;}
         entry.status="error";entry.phase="";
         if(err.attachment) entry.attachment=err.attachment;
         entry.error=(err && err.message) || String(err);
@@ -677,6 +774,11 @@
         : result.merchant || (entry.fileName || "").replace(/\.[^.]+$/, ""),
       date: edited.date ? entry.date : result.date || "",
       invoiceNo: edited.invoiceNo ? entry.invoiceNo : result.invoiceNo || "",
+      invoiceCode: result.invoiceCode || entry.invoiceCode || '',
+      items: result.items || entry.items || [],
+      quantity: edited.quantity ? entry.quantity : result.quantity,
+      unit: edited.unit ? entry.unit : result.unit || '',
+      quantityMode: result.quantityMode || 'default',
       // Never overwrite a user-picked 类别 when concurrent OCR finishes.
       category: edited.category ? entry.category : normalizeCategory(result.category),
       confidence: result.confidence || 0,
@@ -720,7 +822,7 @@
     try {
       const attachment = await ensureAttachment(inv);
       if (!attachment) throw new Error("缺少已存原件，请补传后再识别");
-      const result = await parseInvoice(null, { attachment });
+      const result = await parseInvoice(null, { attachment,draftId:session.draftId,invoiceId:inv.id });
       syncSummaryFromDom();
       applyParsedInvoice(inv, result);
       renderUpload();
@@ -872,6 +974,7 @@
     }
 
     const q = window.ExpensePolicy ? window.ExpensePolicy.nextQuestion(invs, session.answers, policy) : null;
+    renderBankTools(q);
     if (!q) {
       chipRow.innerHTML = "";
       document.getElementById("chat-input").disabled = true;
@@ -1042,7 +1145,7 @@
       const schema = window.__purchaseSchema || {projects:[], methods:[]};
       const choices = (items, current) => items.map(x=>`<option value="${esc(x)}" ${x===current ? "selected":""}>${esc(x)}</option>`).join("");
       const method = schema.methods.find(m=>m.name === d.purchaseMethod);
-      const sharedFields = method ? method.fields.filter(w=>["账户名称","银行账户","收款账号","开户支行"].includes(w.name)).map(w=>{
+      const sharedFields = method ? method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name)).map(w=>{
         const key = `purchase:${method.name}:shared:${w.name}`;
         return `<div class="field"><label>${esc(w.name)}（所有行共用）</label><input aria-label="${esc(w.name)}" data-answer="${esc(key)}" value="${esc(session.answers[key] || "")}" /></div>`;
       }).join("") : "";
@@ -1052,6 +1155,7 @@
         <div class="field"><label>采购方式</label><select aria-label="采购方式" data-meta="purchaseMethod">${choices(schema.methods.map(m=>m.name),d.purchaseMethod)}</select></div>
         <div class="field"><label>关联审批</label><span>${esc((session.answers.selectedBudget || {}).title || "未选择（仅预付款项可不选）")}</span></div>
         ${sharedFields}
+        ${method && sharedFields ? [...new Set(method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name)).map(w=>window.ExpensePolicy.bankSide(w.name)))].map(side=>`<button type="button" class="btn btn-secondary" data-open-bank="${side}">点选${side==='ours' ? '我方' : '收款'}银行档案 / 新增</button>`).join('') : ''}
       </div><p class="section-hint">修改采购方式后，请返回问答补齐对应必填项。金额、日期、商户、票号与识别汇总同步。</p>`;
     }
 
@@ -1140,7 +1244,7 @@
   function purchaseRowFields(invoiceId) {
     const method = ((window.__purchaseSchema || {}).methods || []).find(m=>m.name === session.draft.purchaseMethod);
     if (!method) return "";
-    return `<details><summary>采购明细</summary>${method.fields.filter(w=>!["金额","名称","备注","账户名称","银行账户","收款账号","开户支行"].includes(w.name)).map(w=>{
+    return `<details><summary>采购明细</summary>${method.fields.filter(w=>!["金额","名称","备注","数量","规格","单位"].includes(w.name) && !window.ExpensePolicy.bankRole(w.name)).map(w=>{
       const shared = ["账户名称","银行账户","收款账号","开户支行"].includes(w.name);
       const key = `purchase:${method.name}:${shared ? "shared":invoiceId}:${w.name}`;
       const value = session.answers[key] || "";
@@ -1153,7 +1257,7 @@
     if (session.stage==="draft") syncDraftFromDom();
     const d = session.draft;
     return {draftId:session.draftId,claim:{purchaseMethod:d.purchaseMethod, purpose:d.purpose, costCenter:d.costCenter,
-      invoices:okInvoices().map(({id,date,merchant,invoiceNo,amount,category,note,fileName,source,attachment})=>({id,date,merchant,invoiceNo,amount,category,note,fileName,source,attachment})), answers:{...session.answers},
+      invoices:okInvoices().map(({id,date,merchant,invoiceNo,invoiceCode,items,quantity,unit,amount,category,note,fileName,source,attachment})=>({id,date,merchant,invoiceNo,invoiceCode,items,quantity,unit,amount,category,note,fileName,source,attachment})), answers:{...session.answers},
       selectedBudget:session.answers.selectedBudget || null}};
   }
 
@@ -1323,7 +1427,7 @@
         button.disabled=true;
         try {
           syncSummaryFromDom();
-          inv.attachment = await window.__storeInvoiceFile(file);
+          inv.attachment = await window.__storeInvoiceFile(file,{draftId:session.draftId,invoiceId:inv.id});
           inv.fileName = file.name; save(); showToast("原件已补传，识别汇总中的填写保持不变");
         } catch (err) { showToast(err.message,6000); }
         finally { syncSummaryFromDom(); renderUpload(); }
@@ -1410,6 +1514,15 @@
       syncDraftFromDom();
     });
     document.getElementById("draft-meta").addEventListener("input", () => syncDraftFromDom());
+    document.getElementById("draft-meta").addEventListener("click",event=>{const b=event.target.closest('[data-open-bank]');if(b)openBankProfiles(b.dataset.openBank);});
+    document.getElementById('btn-bank-profiles').addEventListener('click',()=>openBankProfiles(bankTargetSide));
+    document.getElementById('btn-close-bank-profiles').addEventListener('click',()=>{document.getElementById('bank-profiles-modal').hidden=true;});
+    document.getElementById('btn-refresh-bank-profiles').addEventListener('click',event=>window.ExpenseUI.run(event.currentTarget,async()=>{try{await loadBankProfiles();renderBankModal();}catch(e){document.getElementById('bank-profile-error').textContent=e.message;}},'正在读取…'));
+    document.getElementById('bank-profile-side').addEventListener('change',()=>{clearBankForm();renderBankModal();});
+    document.getElementById('bank-profile-form').addEventListener('submit',saveBankProfile);
+    document.getElementById('btn-bank-profile-new').addEventListener('click',clearBankForm);
+    document.getElementById('bank-profile-list').addEventListener('click',bankListAction);
+    document.getElementById('bank-quick-list').addEventListener('click',bankListAction);
     document.getElementById("detail-sheets").addEventListener("click", (e) => {
       const add = e.target.closest("[data-add-row]");
       if (add) {
@@ -1880,6 +1993,7 @@
     const aiModal = document.getElementById("ai-settings-modal");
     if (aiModal) aiModal.hidden = true;
     authUser = null;
+    bankProfiles=[];bankProfilesOwner=null;document.getElementById('bank-profiles-modal').hidden=true;
     aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;
     document.getElementById("ai-first-use-modal").hidden=true;
     window.__fillSuggestions=null;

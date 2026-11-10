@@ -48,7 +48,7 @@
     await checkHealth();
 
     var form = new FormData();
-    if (!opts.attachment) form.append("file", file, file.name || "invoice");
+    if (!opts.attachment) {form.append("file", file, file.name || "invoice");if(opts.draftId)form.append("draftId",opts.draftId);if(opts.invoiceId)form.append("invoiceId",opts.invoiceId);}
     if (opts.categoryHint) form.append("categoryHint", opts.categoryHint);
     if (opts.dayDate) form.append("dayDate", opts.dayDate);
 
@@ -57,7 +57,7 @@
       mode: "cors",
       credentials: "include",
       headers: opts.attachment ? {"Content-Type":"application/json"} : {},
-      body: opts.attachment ? JSON.stringify({attachment:opts.attachment}) : form,
+      body: opts.attachment ? JSON.stringify({attachment:opts.attachment,draftId:opts.draftId,invoiceId:opts.invoiceId}) : form,
     });
 
     var text = await res.text();
@@ -74,6 +74,7 @@
         "OCR 失败 HTTP " + res.status;
       var error = new Error(msg);
       error.attachment = data && data.attachment;
+      error.duplicate = !!(data && data.duplicate);
       throw error;
     }
 
@@ -100,6 +101,7 @@
       merchant: data.merchant != null ? String(data.merchant) : "",
       date: data.date || opts.dayDate || "",
       invoiceNo: data.invoice_no || data.invoiceNo || "",
+      invoiceCode:data.invoice_code || data.invoiceCode || "", items:data.items || [], quantity:data.quantity, unit:data.unit || "", quantityMode:data.quantity_mode || "default",
       category: category,
       confidence:
         typeof data.confidence === "number"
@@ -116,11 +118,12 @@
     };
   }
 
-  window.__storeInvoiceFile = async function (file) {
+  window.__storeInvoiceFile = async function (file, context) {
     var form = new FormData(); form.append("file", file, file.name || "invoice.pdf");
+    if(context && context.draftId)form.append("draftId",context.draftId);if(context && context.invoiceId)form.append("invoiceId",context.invoiceId);
     var response = await fetch(OCR_BASE + "/api/invoice-files", {method:"POST", credentials:"include", body:form});
     var result = await response.json();
-    if (!response.ok || !result.ok || !result.attachment) throw new Error(result.error || "原件保存失败");
+    if (!response.ok || !result.ok || !result.attachment) {var e=new Error(result.error || "原件保存失败");e.duplicate=!!result.duplicate;throw e;}
     return result.attachment;
   };
   window.__invoiceOCR = invoiceOCR;

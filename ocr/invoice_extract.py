@@ -22,6 +22,7 @@ from io import BytesIO
 from typing import Any
 
 import ai_client
+import invoice_items
 
 DEFAULT_OLLAMA = "http://127.0.0.1:11434/v1"
 DEFAULT_MODEL = "longwayxu/xiaomi-ocr-0:bf16"
@@ -48,6 +49,9 @@ OCR_KIE_PROMPT = """你是中国发票关键信息抽取（KIE）助手。请从
   - lodging = 住宿/酒店
   - meal = 餐饮/饭店
   - other = 交通、服装、办公或其他
+- invoice_code: string，发票代码；原文无则空字符串
+- check_code: string，校验码；原文无则空字符串
+- items: 数组，每项含 name(货物或应税劳务名称), specification(规格型号), unit(单位), quantity(数量), unit_price(单价), amount(金额)；只取票面明细，未知字段空值，不能编造
 - confidence: number 0 到 1，对本次抽取整体把握
 
 只输出 JSON，例如：
@@ -66,6 +70,9 @@ REVIEW_PROMPT = """你是中国增值税发票字段校对助手。下面给出�
   - lodging = 住宿/酒店
   - meal = 餐饮/饭店
   - other = 交通、服装、办公或其他
+- invoice_code: string，发票代码；原文无则空字符串
+- check_code: string，校验码；原文无则空字符串
+- items: 数组，每项含 name(货物或应税劳务名称), specification(规格型号), unit(单位), quantity(数量), unit_price(单价), amount(金额)；只取票面明细，未知字段空值，不能编造
 - confidence: number 0 到 1
 - corrections: string[]，你改动了什么；没改则为 []
 
@@ -405,6 +412,9 @@ def parse_invoice_from_text(text: str, require_amount: bool = False) -> dict[str
             "confidence": conf,
         }
     )
+    detail=invoice_items.from_text(t)
+    fields.update(detail)
+    fields.update(invoice_items.quantity_unit(detail))
     fields["source"] = "text-heuristic"
     fields["amount_via"] = amount_via
     if amount is None:
@@ -459,6 +469,10 @@ def coerce_fields(obj: dict[str, Any]) -> dict[str, Any]:
         corrections = [str(corrections)]
 
     return {
+        "invoice_code": str(obj.get("invoice_code") or obj.get("invoiceCode") or ""),
+        "check_code": str(obj.get("check_code") or ""),
+        "items": invoice_items.normalize_items(obj.get("items") or obj.get("line_items") or []),
+        **invoice_items.quantity_unit(obj),
         "amount": amount,
         "merchant": merchant,
         "date": date,
@@ -654,6 +668,19 @@ def merge_heuristic_and_review(
             out["confidence"] = max(float(out.get("confidence") or 0), float(reviewed["confidence"]))
         except (TypeError, ValueError):
             pass
+
+    for key in ('invoice_code', 'check_code'):
+        take(key, reviewed.get(key) or '', require_in_text=True)
+    candidate = invoice_items.normalize_items(reviewed.get('items') or [])
+    # Prefer deterministic table rows; accept model details only with text evidence.
+    existing=invoice_items.normalize_items(out.get('items') or [])
+    if candidate and len(candidate)>=len(existing) and (len(candidate)>len(existing) or any(not r.get('quantity') or not r.get('unit') for r in existing or [{}])) and all(
+        (not r['name'] or _value_in_text(r['name'], text)) and
+        (not r['quantity'] or _value_in_text(r['quantity'], text)) and
+        (not r['unit'] or _value_in_text(r['unit'], text)) for r in candidate
+    ):
+        out['items'] = candidate;out.pop('quantity',None);out.pop('unit',None)
+    out.update(invoice_items.quantity_unit(out))
 
     # unique notes
     seen = set()

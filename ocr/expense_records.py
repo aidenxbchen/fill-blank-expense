@@ -10,6 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 
 import expense_data as data
+import invoice_registry as registry
 
 
 class RecordError(ValueError):
@@ -110,6 +111,9 @@ def save_draft(owner, id, body):
         if not row and revision != 0:
             raise RecordError('草稿不存在，请从我的报销重新打开',404)
         title = clean_title(body['title']) if body.get('title') is not None else (row['title'] if row else title_for(body['state']))
+        try:
+            registry.sync_draft(con,owner,id,body['state']['invoices'],project=(body['state'].get('answers') or {}).get('costCenter') or '')
+        except registry.DuplicateError as e: raise RecordError(str(e),409)
         if row:
             con.execute('UPDATE drafts SET state_json=?,stage=?,title=?,revision=revision+1,updated_at=? WHERE owner=? AND id=?',
                         (raw,body['state']['stage'],title,now,owner,id))
@@ -132,6 +136,8 @@ def change_draft(owner,id,revision,title=None,delete=False):
         if row['revision']!=revision:
             raise RecordError('草稿已在其他页面更新，请刷新后重试',409)
         if delete:
+            try: registry.release_draft(con,owner,id)
+            except registry.DuplicateError as e: raise RecordError(str(e),409)
             # Tombstone prevents late debounced saves resurrecting a deleted draft.
             con.execute("UPDATE drafts SET status='deleted',state_json='{}',revision=revision+1,updated_at=? WHERE owner=? AND id=?",(int(time.time()),owner,id))
         else:
@@ -169,6 +175,10 @@ def record_submission(owner, draft_id, claim, receipt, submitted_at=None):
     now=submitted_at or int(time.time())
     with data.database() as con:
         con.execute('BEGIN IMMEDIATE')
+        previous=con.execute('SELECT draft_id FROM submission_history WHERE owner=? AND request_id=?',(owner,receipt['requestId'])).fetchone()
+        if previous:
+            if previous['draft_id']!=draft_id: raise RecordError('这张发票已在其他报销中提交',409)
+            return  # Successful snapshots and occupancy are immutable on replay.
         row=con.execute('SELECT * FROM drafts WHERE owner=? AND id=?',(owner,draft_id)).fetchone()
         state=json.loads(row['state_json']) if row and row['status']!='deleted' else None
         title=row['title'] if row else title_for({'answers':{'costCenter':claim.get('costCenter')},'invoices':invoices})
@@ -176,6 +186,7 @@ def record_submission(owner, draft_id, claim, receipt, submitted_at=None):
         con.execute('INSERT OR IGNORE INTO submission_history VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                     (owner,receipt['instanceCode'],receipt['requestId'],draft_id,title,claim.get('costCenter') or '',total,
                      'submitted',now,receipt['approvalUrl'],json.dumps(receipt,ensure_ascii=False),json.dumps(snapshot,ensure_ascii=False)))
+        registry.sync_draft(con,owner,draft_id or 'submit_'+receipt['requestId'],claim['invoices'],'submitted',claim.get('costCenter') or '')
         if row and row['status']=='active':
             con.execute("UPDATE drafts SET status='submitted',instance_code=?,revision=revision+1,updated_at=? WHERE owner=? AND id=?",
                         (receipt['instanceCode'],now,owner,draft_id))

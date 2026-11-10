@@ -32,21 +32,38 @@
 
   /** Referent for Q&A: 项目名称 + 金额 only. Never 尾号 / 第 N 张 / merchant. */
   function invoiceReferent(inv, invoices) {
-    const item = invoiceItemName(inv);
-    const amt = invoiceAmountLabel(inv);
-    let base = amt ? `${item} ${amt}` : item;
-    const peers = (invoices || []).filter(other =>
-      other !== inv &&
-      invoiceItemName(other) === item &&
-      invoiceAmountLabel(other) === amt
-    );
-    if (peers.length) {
-      const short = invoiceShortDate(inv);
-      if (short) base = `${base} (${short})`;
-    }
-    return base;
+    return invoiceAmountLabel(inv) || '这笔采购';
   }
 
+  function quantityUnit(inv) {
+    const items=Array.isArray(inv.items) ? inv.items : [];
+    if(items.length>1) return {quantity:1,unit:'份/批',batch:true};
+    const row=items[0] || inv, quantity=Number(inv.quantity || row.quantity), unit=inv.unit || row.unit;
+    return {quantity:Number.isFinite(quantity)&&quantity>0 ? quantity : 1,unit:unit || '份/批',batch:false};
+  }
+  function restoreInvoiceQuantities(invoices,answers) {
+    const method=answers.purchaseMethod;
+    for(const inv of invoices || []) {
+      if((inv.items || []).length || inv.quantity!=null || inv.unit)continue;
+      const q=Number(answers[`purchase:${method}:${inv.id}:数量`]);
+      const unit=answers[`purchase:${method}:${inv.id}:单位`] || answers[`purchase:${method}:${inv.id}:规格`];
+      if(Number.isFinite(q) && q>0 && unit) {inv.quantity=q;inv.unit=unit;inv.quantityMode='legacy';}
+    }
+  }
+  function bankRole(name) {
+    if(/户名|账户名称/.test(name))return 'holder';
+    if(/开户|支行|银行名称/.test(name))return 'bank';
+    if(/账号|银行账户|付款账户/.test(name))return 'account';
+    return '';
+  }
+  function bankSide(name) {return /我方|付款/.test(name) ? 'ours' : 'counterparty';}
+  function applyBankProfile(method, answers, profile, side='counterparty') {
+    for(const w of method.fields) {
+      const role=bankRole(w.name);
+      if(role && bankSide(w.name)===side) answers[`purchase:${method.name}:shared:${w.name}`]=String(profile.fields[role] || '');
+    }
+    return answers;
+  }
   function buildQuestionQueue(invoices, answers) {
     answers = answers || {};
     const schema = global.__purchaseSchema;
@@ -75,23 +92,30 @@
         q.push({id:"selectBudget", text:"这次采购关联哪一条已通过的预算？", hint:budgets.length ? "点选后会自动关联该审批。":"暂无可用预算，请返回首页检查登录和预算权限。预付款项以外必须有关联审批。", chips:budgets.map((b,i)=>`${i+1}. ${b.title || b.project} · ${b.serialId || b.instanceId.slice(0,8)}`), required:true, input:"chips", budgetIds:budgets.map(b=>b.instanceId)});
       }
     }
-    for (const w of method.fields) {
-      if (["账户名称","银行账户","收款账号","开户支行"].includes(w.name))
-        ask(`purchase:${method.name}:shared:${w.name}`, `本次所有明细的${w.name}是？`, [], "如各行收款信息不同，请分开提交申请。");
+    for (const side of ['counterparty','ours']) {
+      const fields=method.fields.filter(w=>bankRole(w.name) && bankSide(w.name)===side);
+      if(fields.some(w=>w.required && !present(answers[`purchase:${method.name}:shared:${w.name}`])))
+        q.push({id:`bank:${method.name}:${side}`,text:side==='ours' ? '这次采购使用哪份我方银行档案？' : '这次采购使用哪份收款银行档案？',hint:'账号和开户行成对录入；可点选共享档案，或新增并保存。',input:'bank-profile',bankSide:side,required:true,chips:[]});
     }
     const list = invoices || [];
+    restoreInvoiceQuantities(list,answers);
+    for(const inv of list) {
+      const auto=quantityUnit(inv);
+      for(const field of method.fields.filter(w=>['数量','单位','规格'].includes(w.name))) {
+        const key=`purchase:${method.name}:${inv.id}:${field.name}`;
+        answers[key]=String(field.name==='数量' ? auto.quantity : auto.unit);
+      }
+    }
     for (const inv of list) {
       const project = answers.costCenter || (answers.selectedBudget || {}).project || "待选项目";
       const referent = invoiceReferent(inv, list);
       for (const w of method.fields) {
-        if (!w.required || ["金额","名称","账户名称","银行账户","收款账号","开户支行"].includes(w.name)) continue;
+        if (!w.required || bankRole(w.name) || ["金额","名称","数量","规格","单位"].includes(w.name)) continue;
         let chips = w.options || [];
         if (w.name.includes("科目")) {
           const names = ((answers.selectedBudget || {}).subjects || []).map(s=>s.name || s["科目"] || s["费用科目"]);
           chips = [...chips.filter(x=>names.includes(x)), ...chips.filter(x=>!names.includes(x))];
         }
-        if (w.name === "规格") chips = ["次","份","件","台","套"];
-        if (w.name === "数量") chips = ["1","2","3"];
         const id = `purchase:${method.name}:${inv.id}:${w.name}`;
         const v = answers[id];
         if (present(v) && (!w.options.length || w.options.includes(v)) && (w.type !== "number" || Number.isFinite(Number(v)) && Number(v)>0)) continue;
@@ -105,7 +129,7 @@
     }
     return q;
   }
-  global.ExpensePolicy = {POLICY, CAT_LABEL, buildQuestionQueue, invoiceItemName, invoiceAmountLabel, invoiceReferent,
+  global.ExpensePolicy = {POLICY, CAT_LABEL, buildQuestionQueue, restoreInvoiceQuantities, quantityUnit, bankRole, bankSide, applyBankProfile, invoiceItemName, invoiceAmountLabel, invoiceReferent,
     remainingCount:(i,a)=>buildQuestionQueue(i,a).length,
     nextQuestion:(i,a)=>buildQuestionQueue(i,a)[0] || null};
 })(window);

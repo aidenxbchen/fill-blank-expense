@@ -79,7 +79,7 @@ class RecordTests(unittest.TestCase):
 
     def test_pagination_and_empty_user(self):
         for i in range(31):
-            state=copy.deepcopy(self.state);state['draftId']='draft_'+str(i)
+            state=copy.deepcopy(self.state);state['draftId']='draft_'+str(i);state['invoices'][0].pop('attachment',None)
             records.save_draft('alice',state['draftId'],{'revision':0,'state':state})
         page=records.list_records('alice','drafts')
         self.assertEqual(len(page['items']),30);self.assertEqual(page['nextOffset'],30)

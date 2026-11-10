@@ -15,7 +15,7 @@ function fixture(sourceRoot = path.join(__dirname, '..')) {
     {name:'规格',type:'input',required:true,options:[]},
     {name:'数量',type:'number',required:true,options:[]},
     {name:'金额',type:'amount',required:true,options:[]}
-  ]},{name:'预付款项',fields:[]}]};
+  ]},{name:'预付款项',fields:[{name:'银行账户',type:'input',required:true,options:[]},{name:'收款账号',type:'input',required:true,options:[]},{name:'开户支行',type:'input',required:true,options:[]}] }]};
   const bootstrap = function(schema) {
     const demo=window.__demo={calls:[],failSave:false,failSubmit:true,failAI:false,holdOCR:false,aiConfigured:false};
     const budget={instanceId:'demo-budget',project:'公共办公',title:'公共办公预算（示例）',kind:'init',subjects:[{name:'办公用品'}],totalAmount:20000};
@@ -24,6 +24,7 @@ function fixture(sourceRoot = path.join(__dirname, '..')) {
     const state={stage:'upload',draftId:'draft-example',invoices,answers:{costCenter:'公共办公',purchaseMethod:'个人垫付',purpose:'采购办公用品',selectedBudget:budget},selectedBudgetId:budget.instanceId,chat:[],draft:null,parseErrors:[]};
     const memory=new Map([['fill-blank-expense:delight:v1:demo-owner',JSON.stringify({state,revision:0})]]);
     Object.defineProperty(window,'localStorage',{value:{getItem:k=>memory.get(k)||null,setItem:(k,v)=>memory.set(k,v),removeItem:k=>memory.delete(k)}});
+    const profiles=[];
     demo.state=()=>JSON.parse(memory.get('fill-blank-expense:delight:v1:demo-owner')||'null');
     window.fetch=async (url,options={})=>{
       const route=new URL(url,'https://fixture.invalid').pathname, method=options.method||'GET';
@@ -44,12 +45,19 @@ function fixture(sourceRoot = path.join(__dirname, '..')) {
         await new Promise(r=>setTimeout(r,120));
         data={ok:true,suggestions:{global:{},rows:{'example-a':{'科目':[{value:'办公用品',probability:.8}]}}}};
       }
+      else if(route.startsWith('/api/filling-profiles')) {
+        const id=route.split('/')[3];
+        if(method==='POST') {const profile={...body,id:'profile-'+(profiles.length+1),revision:1,createdBy:'体验账号',canEdit:true};profiles.push(profile);data={ok:true,profile};}
+        else if(method==='DELETE') {const index=profiles.findIndex(p=>p.id===id);if(index>=0)profiles.splice(index,1);}
+        else if(method==='PATCH') {const index=profiles.findIndex(p=>p.id===id);profiles[index]={...profiles[index],...body,revision:body.revision+1};data={ok:true,profile:profiles[index]};}
+        else data={ok:true,items:profiles};
+      }
       else if(route==='/api/ai-settings') {
         if(method==='PUT') demo.aiConfigured=!body.clear;
         data={ok:true,configured:demo.aiConfigured,settings:{hasApiKey:demo.aiConfigured,apiKeyMasked:'example-masked'},defaults:{baseUrl:'https://api.deepseek.com/v1',textModel:'deepseek-chat'}};
       }
       else if(route==='/api/ai-settings/test') {await new Promise(r=>setTimeout(r,120));status=503;data={ok:false,error:'示例：连接超时，请检查接口地址后重试'};}
-      else if(route==='/api/invoice-files') {await new Promise(r=>setTimeout(r,150));data={ok:true,attachment:{fileId:'example-new-original'}};}
+      else if(route==='/api/invoice-files') {await new Promise(r=>setTimeout(r,150));if(demo.duplicateUpload){status=409;data={ok:false,duplicate:true,error:'这张发票已在【公共办公】 ¥128.00的报销中使用（进行中）'};}else data={ok:true,attachment:{fileId:'example-new-original'}};}
       else if(route==='/api/parse-invoice') {
         await new Promise(r=>{demo.resolveOCR=r;if(!demo.holdOCR)setTimeout(r,150);});
         data={amount:99,merchant:'合成测试商户',date:'2026-11-09',invoice_no:'EXAMPLE0003',category:'purchase',attachment:{fileId:'example-new-original'},source:'fixture'};

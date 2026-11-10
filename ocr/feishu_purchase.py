@@ -19,6 +19,8 @@ from urllib.parse import urlencode, urlparse
 import feishu_oauth as auth
 import approval_files
 import expense_data
+import invoice_registry
+import invoice_items
 import expense_records
 import time
 
@@ -122,6 +124,9 @@ def build_form(form, claim):
             val = answers.get(key, "")
             if name == "金额":
                 val = amount
+            elif name in ("数量","单位","规格"):
+                auto=invoice_items.quantity_unit(inv)
+                val=auto["quantity"] if name=="数量" else auto["unit"]
             elif name == "名称":
                 val = inv.get("merchant") or inv.get("fileName") or ""
             elif name == "备注":
@@ -129,7 +134,7 @@ def build_form(form, claim):
             elif name in ("账户名称", "银行账户", "收款账号", "开户支行"):
                 val = answers.get(f"purchase:{method}:shared:{name}", "")
             if w.get("required") and not str(val).strip():
-                raise ValidationError(f"【{project}】第 {row_number} 张票还缺{name}，请返回问答补充")
+                raise ValidationError(f"【{project}】¥{amount:.2f} 还缺{name}，请返回问答补充")
             if val == "" and not w.get("required"):
                 continue
             if w["type"] == "radioV2":
@@ -244,9 +249,17 @@ def create_purchase(sess, body):
     canonical = json.dumps([actor["openId"], form, [{"sha256":r["sha256"],"name":r["name"]} for r,raw in files]], ensure_ascii=False, sort_keys=True)
     request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, hashlib.sha256(canonical.encode()).hexdigest()))
     with _submit_lock, closing(_db()) as db:
-        previous = db.execute("SELECT status, receipt FROM submissions WHERE id=?", (request_id,)).fetchone()
+        previous = db.execute("SELECT status, receipt, history_source FROM submissions WHERE id=?", (request_id,)).fetchone()
         if previous:
             if previous[0] == "created":
+                stored_source=json.loads(previous[2]) if previous[2] else None
+                if stored_source is None:
+                    with expense_data.database() as con:
+                        historical=con.execute('SELECT draft_id FROM submission_history WHERE owner=? AND request_id=?',(actor['openId'],request_id)).fetchone()
+                    if not historical: raise ValidationError('该发票已有成功回执，请先在我的报销或飞书核对原单')
+                    stored_source={'draftId':historical['draft_id']}
+                if stored_source.get('draftId')!=body.get('draftId'):
+                    raise ValidationError('这张发票已在其他报销中提交，请查看原报销记录')
                 receipt=json.loads(previous[1])
                 source={'owner':actor['openId'],'draftId':body.get('draftId'),'claim':json.loads(json.dumps(claim)),'submittedAt':int(time.time())}
                 for invoice,(meta,_) in zip(source['claim']['invoices'],files): invoice['attachment']=expense_data.public_file(meta)
@@ -261,9 +274,14 @@ def create_purchase(sess, body):
                 raise ValidationError('此草稿已提交或删除，请从我的报销查看记录，填写新单请新建报销')
             if draft and body.get('draftRevision') is not None and draft['revision']!=body['draftRevision']:
                 raise ValidationError('草稿在其他页面发生变化，请重新打开核对后提交')
+        registry_draft=body.get('draftId') or 'submit_'+request_id
+        try: invoice_registry.submission(actor['openId'],registry_draft,claim['invoices'],claim.get('costCenter') or '',phase='active')
+        except invoice_registry.DuplicateError as e: raise ValidationError(str(e))
         # File upload failure happens before any approval is initiated.
         codes = approval_files.file_codes(actor["openId"], files)
         approval_files.add_attachment(form, schema, codes)
+        try: invoice_registry.submission(actor['openId'],registry_draft,claim['invoices'],claim.get('costCenter') or '',phase='pending',revision=body.get('draftRevision'))
+        except invoice_registry.DuplicateError as e: raise ValidationError(str(e))
         db.execute("INSERT INTO submissions(id,status,receipt) VALUES (?, 'pending', '')", (request_id,))
         db.commit()
         try:
@@ -275,6 +293,7 @@ def create_purchase(sess, body):
             # Only an explicit Feishu rejection proves that creation did not happen.
             if e.feishu_code is not None and e.feishu_code != 60012 and e.http_status < 500:
                 db.execute("DELETE FROM submissions WHERE id=?", (request_id,)); db.commit()
+                invoice_registry.reject_submission(actor["openId"],registry_draft)
             raise
         data = obj.get("data") or {}
         code = data.get("instance_code")

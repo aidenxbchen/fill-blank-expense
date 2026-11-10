@@ -31,6 +31,8 @@ from feishu_oauth import (
     load_dotenv as load_feishu_dotenv,
 )
 import feishu_oauth as auth
+import invoice_registry
+import filling_profiles
 import expense_data
 import expense_records as records
 from feishu_purchase import handle_create, handle_schema, definition, public_schema
@@ -192,6 +194,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+        if self._profiles_request(path):
+            return
         if self._ai_settings_request(path):
             return
         if self._records_request(path):
@@ -237,6 +241,9 @@ class Handler(BaseHTTPRequestHandler):
                     "backend": "ollama-openai-compat",
                     "features": {
                         "invoiceOriginals": True,
+                        "invoiceDedupe": True,
+                        "invoiceQuantity": True,
+                        "sharedBankProfiles": True,
                         "historySuggestions": True,
                         "draftsAndHistory": True,
                         "userAiConfigurable": True,
@@ -292,6 +299,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         path = urlparse(self.path).path
+        if self._profiles_request(path):
+            return
         if self._ai_settings_request(path):
             return
         if not self._records_request(path):
@@ -299,6 +308,33 @@ class Handler(BaseHTTPRequestHandler):
 
     do_PATCH = do_PUT
     do_DELETE = do_PUT
+
+    def _profiles_request(self, path):
+        if path != '/api/filling-profiles' and not path.startswith('/api/filling-profiles/'): return False
+        try:
+            owner=self._owner(); parts=path.strip('/').split('/'); ident=parts[2] if len(parts)==3 else None
+            if len(parts)>3: raise filling_profiles.ProfileError('接口不存在',404)
+            if self.command=='GET' and not ident:
+                side=parse_qs(urlparse(self.path).query).get('side',[None])[0]
+                self._json(200,{'ok':True,'items':filling_profiles.listing(owner,side)})
+            elif self.command in ('POST','PATCH','DELETE'):
+                length=int(self.headers.get('Content-Length') or 0)
+                if not 0<length<=32768: raise filling_profiles.ProfileError('档案请求为空或过大')
+                body=json.loads(self.rfile.read(length))
+                if not isinstance(body,dict): raise filling_profiles.ProfileError('无效档案')
+                if self.command=='DELETE' and ident:
+                    filling_profiles.remove(owner,ident,body.get('revision'));self._json(200,{'ok':True})
+                elif (self.command=='POST' and not ident) or (self.command=='PATCH' and ident):
+                    session=auth.get_session(auth.cookie_from_headers(self.headers)) or {}
+                    name=(session.get('user') or {}).get('name') or '飞书用户'
+                    self._json(200,{'ok':True,'profile':filling_profiles.save(owner,name,body,ident)})
+                else: raise filling_profiles.ProfileError('此操作不受支持',405)
+            else: raise filling_profiles.ProfileError('此操作不受支持',405)
+        except auth.FeishuAPIError as e: self._json(e.http_status if e.http_status in (401,403) else 502,{'ok':False,'error':str(e)})
+        except filling_profiles.ProfileError as e: self._json(e.status,{'ok':False,'error':str(e)})
+        except (ValueError,TypeError,AttributeError): self._json(422,{'ok':False,'error':'档案格式无效'})
+        except Exception: self._json(503,{'ok':False,'error':'档案暂不可用，请重试；当前填写仍保留'})
+        return True
 
     def _ai_settings_request(self, path):
         if path not in ("/api/ai-settings", "/api/ai-settings/test"):
@@ -408,6 +444,8 @@ class Handler(BaseHTTPRequestHandler):
         if "fallback" in qs and qs["fallback"] and qs["fallback"][0] == "mock":
             pass
 
+        if self._profiles_request(path):
+            return
         if self._ai_settings_request(path):
             return
         if self._records_request(path):
@@ -478,22 +516,28 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         ctype = self.headers.get("Content-Type") or ""
 
+        draft_id=invoice_id=None
         try:
             if "multipart/form-data" in ctype.lower():
                 parts = parse_multipart(body, ctype)
+                ctx={p["name"]:p["data"].decode("utf-8") for p in parts if p.get("name") in ("draftId","invoiceId")}
+                draft_id,invoice_id=ctx.get("draftId"),ctx.get("invoiceId")
                 part = extract_file_part(parts)
                 filename = part.get("filename") or "upload"
                 mime = guess_mime(filename, part.get("content_type"))
                 data = part["data"]
             elif ctype.lower().startswith("application/json"):
                 meta = json.loads(body.decode("utf-8"))
+                draft_id,invoice_id=meta.get("draftId"),meta.get("invoiceId")
                 if path=="/api/parse-invoice" and meta.get("attachment"):
                     original, data = expense_data.resolve_file(owner,meta['attachment'])
                     filename, mime = original['name'], original['mime']
                     try:
-                        out=dict(parse_uploaded_invoice(data,filename,mime,owner=owner))
+                        out=invoice_registry.parse_once(owner,meta["attachment"],parse_uploaded_invoice,draft_id,invoice_id)
                         out.update(ok=True,attachment=expense_data.public_file(original))
                         self._json(200,out)
+                    except invoice_registry.DuplicateError as e:
+                        self._json(409,{"ok":False,"duplicate":True,"error":str(e)})
                     except Exception as e:
                         self._json(502,{"ok":False,"error":str(e),"attachment":expense_data.public_file(original)})
                     return
@@ -524,7 +568,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
+            invoice_registry.reserve_upload(owner,data,mime,draft_id,invoice_id)
             attachment = expense_data.save_file(owner, data, filename, mime)
+        except invoice_registry.DuplicateError as e:
+            self._json(409,{"ok":False,"duplicate":True,"error":str(e)});return
         except (ValueError, OSError) as e:
             self._json(422, {"ok":False,"error":str(e)})
             return
@@ -532,7 +579,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok":True,"attachment":attachment})
             return
         try:
-            out = parse_uploaded_invoice(data, filename, mime, owner=owner)
+            out = invoice_registry.parse_once(owner,attachment,parse_uploaded_invoice,draft_id,invoice_id)
+        except invoice_registry.DuplicateError as e:
+            self._json(409,{"ok":False,"duplicate":True,"error":str(e)});return
         except Exception as e:
             self._json(
                 502,

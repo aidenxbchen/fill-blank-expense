@@ -67,6 +67,23 @@ def database():
           );
           CREATE INDEX IF NOT EXISTS submission_list ON submission_history(owner,submitted_at DESC);
           CREATE INDEX IF NOT EXISTS fill_lookup ON fill_observations(owner,field,updated_at);
+          CREATE TABLE IF NOT EXISTS invoice_reads (
+            sha256 TEXT PRIMARY KEY, status TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '',
+            updated_at INTEGER NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS invoice_uses (
+            invoice_key TEXT PRIMARY KEY, owner TEXT NOT NULL, draft_id TEXT NOT NULL,
+            invoice_id TEXT NOT NULL, phase TEXT NOT NULL, project TEXT NOT NULL DEFAULT '',
+            amount TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS invoice_use_draft ON invoice_uses(owner,draft_id);
+          CREATE TABLE IF NOT EXISTS invoice_registry_meta (id INTEGER PRIMARY KEY);
+          CREATE TABLE IF NOT EXISTS filling_profiles (
+            id TEXT PRIMARY KEY, kind TEXT NOT NULL, side TEXT NOT NULL, title TEXT NOT NULL,
+            fields_json TEXT NOT NULL, creator TEXT NOT NULL, creator_name TEXT NOT NULL,
+            revision INTEGER NOT NULL, active INTEGER NOT NULL, created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
           CREATE TABLE IF NOT EXISTS ai_settings (
             owner TEXT PRIMARY KEY, base_url TEXT NOT NULL, api_key_enc TEXT NOT NULL,
             text_model TEXT NOT NULL, vision_model TEXT NOT NULL DEFAULT '',
