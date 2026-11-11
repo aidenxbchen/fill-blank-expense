@@ -5,7 +5,7 @@
   <meta name="description" content="报了呗，ANEVER 员工的采购工作台：上传发票原件、核对识别汇总、补齐项目信息并发起飞书采购申请。" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261111jev2" />
+  <link rel="stylesheet" href="./styles.css?v=20261111budget1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -23,8 +23,8 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <picture>
-            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261111jev2" />
-            <img src="./assets/logo-zbs.png?v=20261111jev2" alt="" width="44" height="44" />
+            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261111budget1" />
+            <img src="./assets/logo-zbs.png?v=20261111budget1" alt="" width="44" height="44" />
           </picture>
         </div>
         <div class="brand-text">
@@ -112,8 +112,10 @@
             <div class="panel-head-row">
               <h2>选择关联项目</h2>
               <span class="pill" id="budget-count-pill">0</span>
+              <button type="button" class="btn btn-ghost btn-sm budget-refresh" id="btn-refresh-budgets" aria-controls="budget-grid" aria-label="刷新可用预算">刷新预算</button>
             </div>
             <p class="section-hint" id="budget-picker-hint">用飞书登录后，点选你已通过的立项 / 变更，问答会自动带上项目。</p>
+            <p class="budget-refresh-status" id="budget-refresh-status" role="status" aria-live="polite" aria-atomic="true"></p>
             <div class="budget-grid" id="budget-grid"></div>
           </div>
         </section>
@@ -354,9 +356,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261111jev2"></script>
-  <script src="./ocr-bridge.js?v=20261111jev2"></script>
-  <script src="./policy.js?v=20261111jev2"></script>
-  <script src="./app.js?v=20261111jev2"></script>
+  <script src="./ui.js?v=20261111budget1"></script>
+  <script src="./ocr-bridge.js?v=20261111budget1"></script>
+  <script src="./policy.js?v=20261111budget1"></script>
+  <script src="./app.js?v=20261111budget1"></script>
 </body>
 </html>

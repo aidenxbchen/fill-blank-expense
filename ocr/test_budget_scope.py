@@ -289,7 +289,8 @@ class BudgetListCacheParallelTest(unittest.TestCase):
         self.assertEqual(second[0]["instanceId"], first[0]["instanceId"])
         self.assertEqual(fetch_mock.call_count, calls_after_first)
         self.assertEqual(query_mock.call_count, len(BUDGET_DEFINITIONS))
-        self.assertGreaterEqual(BUDGET_CACHE_TTL_SEC, 30)
+        self.assertGreater(BUDGET_CACHE_TTL_SEC, 0)
+        self.assertLessEqual(BUDGET_CACHE_TTL_SEC, 5)
 
     @mock.patch("feishu_oauth.fetch_instance")
     @mock.patch("feishu_oauth.query_approved_instances")
@@ -308,6 +309,37 @@ class BudgetListCacheParallelTest(unittest.TestCase):
         again, _ = list_approved_budgets(self.USER)
         self.assertEqual(len(again), 1)
         self.assertGreater(fetch_mock.call_count, before)
+
+    @mock.patch("feishu_oauth.fetch_instance")
+    @mock.patch("feishu_oauth.query_approved_instances")
+    @mock.patch("feishu_oauth.get_tenant_access_token", return_value="tok")
+    def test_refresh_bypasses_warm_cache_and_finds_new_approval(self, _token, query_mock, fetch_mock):
+        query_mock.side_effect = self._query_side_effect
+        fetch_mock.side_effect = self._fetch_side_effect
+        first, _ = list_approved_budgets(self.USER)
+        self.assertEqual(len(first), 1)
+        def query(token, code):
+            rows = self._query_side_effect(token, code)
+            return rows + ([{'instance':{'code':'newly_approved','status':'APPROVED'}}] if code==BUDGET_DEFINITIONS[0]['approval_code'] else [])
+        query_mock.side_effect = query
+        fetch_mock.side_effect = lambda token, code: dict(self.DETAIL_OK) if code=='newly_approved' else self._fetch_side_effect(token,code)
+        self.assertEqual(len(list_approved_budgets(self.USER)[0]), 1, 'normal request still hits warm cache')
+        updated, warning = list_approved_budgets(self.USER, refresh=True)
+        self.assertEqual(warning, '')
+        self.assertEqual({b['instanceId'] for b in updated}, {'inst_in_scope','newly_approved'})
+        self.assertEqual(len(list_approved_budgets(self.USER)[0]), 2, 'refresh replaces cache')
+        self.assertNotIn(TRAVEL_DEFINITION['approval_code'], {c.args[1] for c in query_mock.call_args_list})
+        self.assertEqual(list_approved_budgets({'open_id':'ou_outsider'},refresh=True)[0], [])
+
+    @mock.patch("feishu_oauth.fetch_instance")
+    @mock.patch("feishu_oauth.query_approved_instances")
+    @mock.patch("feishu_oauth.get_tenant_access_token", return_value="tok")
+    def test_refresh_removes_cancelled_instance_despite_stale_query(self, _token, query_mock, fetch_mock):
+        query_mock.side_effect = self._query_side_effect
+        fetch_mock.side_effect = self._fetch_side_effect
+        self.assertEqual(len(list_approved_budgets(self.USER)[0]), 1)
+        fetch_mock.side_effect = lambda token, code: dict(self.DETAIL_OK, status='CANCELED') if code=='inst_in_scope' else self._fetch_side_effect(token,code)
+        self.assertEqual(list_approved_budgets(self.USER, refresh=True)[0], [])
 
 
 

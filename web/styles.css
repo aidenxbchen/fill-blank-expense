@@ -8,8 +8,8 @@
 /* Hallmark · dismissed 29 · glass is confined to the single workspace header and its menu/overlays as requested; the content panels have no backdrop blur */
 /* Hallmark · waive 39b · app scope and standard 40px buttons · the existing dropzone and rich budget rows are whole-card file/project targets, not tall toolbar buttons */
 /* Hallmark · finish-review: recapture, screenshots unavailable; source-only modal paragraph gap fixed; no visual ship verdict */
-@import url("./tokens.css?v=20261111jev2");
-@import url("./base.css?v=20261111jev2");
+@import url("./tokens.css?v=20261111budget1");
+@import url("./base.css?v=20261111budget1");
 
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -487,6 +487,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   box-shadow: var(--specular);
 }
 .budget-picker { padding:var(--space-lg); }
+.budget-refresh { margin-left:auto; flex-shrink:0; }
+.budget-refresh-status { color:var(--muted); font-size:var(--text-xs); min-height:1.5em; margin:0 0 var(--space-xs); }
+.budget-refresh-status:empty { display:none; }
 .budget-grid {
   display: grid;
   gap:var(--space-xs);

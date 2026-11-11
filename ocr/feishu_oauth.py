@@ -90,7 +90,7 @@ MISSING_SCOPE_WARNING = (
     "并创建版本发布后再试。当前无法列出预算。"
 )
 
-BUDGET_CACHE_TTL_SEC = 90
+BUDGET_CACHE_TTL_SEC = 5
 _BUDGET_FETCH_WORKERS = 8
 _budget_cache_lock = threading.Lock()
 # open_id-key -> (expires_at_epoch, budgets_list, warning)
@@ -1036,7 +1036,7 @@ def _friendly_item(inst: dict[str, Any], detail: dict[str, Any] | None) -> dict[
     }
 
 
-def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, Any]], str]:
+def list_approved_budgets(user: dict[str, Any] | None, *, refresh: bool = False) -> tuple[list[dict[str, Any]], str]:
     """Return approved 立项/变更 budgets in the logged-in user's scope.
 
     Uses tenant_access_token + instances/query. Never falls back to the
@@ -1048,7 +1048,7 @@ def list_approved_budgets(user: dict[str, Any] | None) -> tuple[list[dict[str, A
         return [], "无法识别登录用户的飞书身份，请重新用飞书登录"
     cache_key = _budget_cache_key(user)
     now = time.time()
-    if cache_key:
+    if cache_key and not refresh:
         with _budget_cache_lock:
             hit = _budget_cache.get(cache_key)
             if hit and hit[0] > now:
@@ -1318,7 +1318,8 @@ def handle_budgets(handler: Any) -> None:
         return
     user = sess.get("user") if isinstance(sess.get("user"), dict) else {}
     try:
-        budgets, warning = list_approved_budgets(user)
+        refresh = urllib.parse.parse_qs(urllib.parse.urlsplit(handler.path).query).get('refresh') == ['1']
+        budgets, warning = list_approved_budgets(user, refresh=refresh)
     except FeishuAPIError as e:
         handler._json(
             200,

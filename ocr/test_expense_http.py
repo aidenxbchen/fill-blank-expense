@@ -54,6 +54,18 @@ class ExpenseHTTPTests(unittest.TestCase):
             self.assertEqual(self.upload()[0],401)
             self.assertEqual(self.request('/api/fill-suggestions',b'{"claim":{}}','application/json')[0],401)
 
+    def test_budget_refresh_query_is_authenticated_and_bypasses_cache(self):
+        with patch.object(server.auth, 'list_approved_budgets', return_value=([],'')) as listing:
+            self.assertEqual(self.request('/api/budgets?refresh=1')[0],200)
+            listing.assert_called_once_with(self.session['user'],refresh=True)
+            listing.reset_mock()
+            self.assertEqual(self.request('/api/budgets')[0],200)
+            listing.assert_called_once_with(self.session['user'],refresh=False)
+            listing.reset_mock()
+            with patch.object(server.auth,'get_session',return_value=None):
+                self.assertEqual(self.request('/api/budgets?refresh=1')[0],401)
+            listing.assert_not_called()
+
     def test_original_upload_works_without_ocr(self):
         with patch.object(server,'parse_uploaded_invoice') as ocr:
             status,body,headers=self.upload()

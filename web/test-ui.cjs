@@ -19,6 +19,7 @@ function fixture(sourceRoot = path.join(__dirname, '..')) {
   const bootstrap = function(schema) {
     const demo=window.__demo={calls:[],failSave:false,failSubmit:true,failAI:false,holdOCR:false,aiConfigured:false};
     const budget={instanceId:'demo-budget',project:'公共办公',title:'公共办公预算（示例）',kind:'init',subjects:[{name:'办公用品'}],totalAmount:20000};
+    demo.budgets=[budget];demo.failBudgets=false;demo.holdBudgets=false;
     const invoices=[{id:'example-a',fileName:'示例发票 A.pdf',status:'ok',amount:128,merchant:'示例商户 A',date:'2026-11-09',invoiceNo:'EXAMPLE0001',category:'purchase',attachment:{fileId:'example-original-a'},source:'fixture'},
       {id:'example-b',fileName:'示例发票 B.png',status:'ok',amount:46,merchant:'示例商户 B',date:'2026-11-08',invoiceNo:'EXAMPLE0002',category:'transit',attachment:{fileId:'example-original-b'},source:'fixture',needsReview:true}];
     const state={stage:'upload',draftId:'draft-example',invoices,answers:{costCenter:'公共办公',purchaseMethod:'个人垫付',purpose:'采购办公用品',selectedBudget:budget},selectedBudgetId:budget.instanceId,chat:[],draft:null,parseErrors:[]};
@@ -29,11 +30,15 @@ function fixture(sourceRoot = path.join(__dirname, '..')) {
     window.fetch=async (url,options={})=>{
       const route=new URL(url,'https://fixture.invalid').pathname, method=options.method||'GET';
       let body={};try {body=JSON.parse(options.body||'{}');} catch (_) {}
-      demo.calls.push({route,method});
+      demo.calls.push({route,method,query:new URL(url,'https://fixture.invalid').search});
       let data={ok:true},status=200;
       if(route==='/api/purchase-schema') data=schema;
       else if(route==='/api/auth/me') data={loggedIn:true,user:{openId:'demo-owner',name:'体验账号'}};
-      else if(route==='/api/budgets') data={ok:true,budgets:[budget]};
+      else if(route==='/api/budgets') {
+        if(demo.holdBudgets)await new Promise(r=>{demo.releaseBudgets=r;});
+        if(demo.failBudgets){status=503;data={ok:false,error:'合成示例：预算暂不可用，请重试'};}
+        else data={ok:true,budgets:demo.budgets};
+      }
       else if(route==='/api/health') data={ok:true};
       else if(route==='/api/drafts' || route==='/api/history') data={ok:true,items:[],nextOffset:null};
       else if(route.startsWith('/api/drafts/')) {

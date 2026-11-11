@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261111jev2";
+  const ASSET_V = "20261111budget1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -24,6 +24,10 @@
   let approvedBudgets = [];
   let budgetWarning = "";
   let budgetsLoading = false;
+  const BUDGET_REFRESH_INTERVAL_MS = 25000;
+  const BUDGET_FOCUS_DEBOUNCE_MS = 3000;
+  let budgetRequest = null, budgetDataOwner = null, budgetAuthExpiredOwner = null;
+  let budgetLastAttempt = 0, budgetRefreshBound = false, budgetRefreshMessage = "";
   let aiSetupOwner = null, aiSetupConfigured = null, aiSetupEpoch = 0;
 
   const SHEET_KIND_META = {
@@ -1700,6 +1704,14 @@
     const grid = document.getElementById("budget-grid");
     const hint = document.getElementById("budget-picker-hint");
     const pill = document.getElementById("budget-count-pill");
+    const refresh = document.getElementById("btn-refresh-budgets");
+    const status = document.getElementById("budget-refresh-status");
+    if (refresh) {
+      refresh.disabled = budgetsLoading;
+      refresh.textContent = budgetsLoading ? "刷新中…" : "刷新预算";
+      refresh.setAttribute("aria-busy", String(budgetsLoading));
+    }
+    if (status) status.textContent = authUser ? (budgetsLoading ? "正在刷新预算…" : budgetRefreshMessage) : "";
     if (!box || !grid) return;
     box.hidden = false;
     if (!authUser) {
@@ -1707,6 +1719,12 @@
       if (pill) pill.textContent = "0";
       if (hint) hint.textContent = "用飞书登录后，这里会列出你已通过的立项 / 变更预算，点选即可带进问答。";
       grid.innerHTML = `<a class="btn btn-primary" href="${esc(loginHref())}">用飞书登录</a>`;
+      return;
+    }
+    if (budgetAuthExpiredOwner === ownerId()) {
+      if (pill) pill.textContent = "0";
+      if (hint) hint.textContent = "飞书登录已过期或账号已变更，请重新登录后刷新预算。";
+      grid.innerHTML = `<a class="btn btn-primary" href="${esc(loginHref())}">重新用飞书登录</a>`;
       return;
     }
     if (budgetsLoading && !approvedBudgets.length && !budgetWarning) {
@@ -1718,16 +1736,18 @@
     if (pill) pill.textContent = String(approvedBudgets.length);
     if (budgetWarning) {
       if (hint) hint.textContent = budgetWarning;
-      grid.innerHTML = `<p class="budget-empty">${esc(budgetWarning)}</p>`;
-      return;
+      if (!approvedBudgets.length) {
+        grid.innerHTML = `<p class="budget-empty">${esc(budgetWarning)}</p>`;
+        return;
+      }
     }
     if (!approvedBudgets.length) {
       if (hint) hint.textContent = "没有可用的已通过预算；除预付款项外，须先在飞书完成预算审批。";
       grid.innerHTML = `<p class="budget-empty">暂无已通过的立项 / 变更预算。<span class="empty-next">去飞书完成预算审批后，点刷新或重新登录即可出现在这里。</span></p>`;
       return;
     }
-    if (hint) hint.textContent = "点选一条已通过的预算，问答会自动带上项目，不必再手填。";
-    grid.innerHTML = approvedBudgets
+    if (hint && !budgetWarning) hint.textContent = "点选一条已通过的预算，问答会自动带上项目，不必再手填。";
+    const html = approvedBudgets
       .map((b) => {
         const selected = session.selectedBudgetId === b.instanceId;
         const amt = b.totalAmount != null ? formatMoney(b.totalAmount) : "";
@@ -1744,6 +1764,17 @@
       </button>`;
       })
       .join("");
+    // Unchanged polls must not replace focused buttons or reset the card's scroll.
+    if (grid.innerHTML !== html) {
+      const scroll = grid.scrollTop;
+      const focused = document.activeElement && document.activeElement.getAttribute('data-budget-id');
+      grid.innerHTML = html;
+      grid.scrollTop = scroll;
+      if (focused) {
+        const button = [...grid.querySelectorAll('[data-budget-id]')].find(b=>b.dataset.budgetId===focused);
+        if(button)button.focus({preventScroll:true});
+      }
+    }
   }
 
   function renderAuth() {
@@ -2066,35 +2097,78 @@
     }
   }
 
-  async function loadBudgets() {
+  function resetBudgets() {
+    if(budgetRequest)budgetRequest.controller.abort();
+    budgetRequest=null;budgetDataOwner=null;budgetAuthExpiredOwner=null;
+    budgetLastAttempt=0;budgetRefreshMessage="";budgetsLoading=false;budgetWarning="";
+    approvedBudgets=[];window.__approvedBudgets=[];
+  }
+
+  function loadBudgets({manual=false}={}) {
     if (!authUser) {
-      budgetsLoading = false;
-      budgetWarning = "";
-      approvedBudgets = [];
-      window.__approvedBudgets = [];
+      resetBudgets();
       renderBudgets();
-      return;
+      return Promise.resolve();
     }
+    const owner=ownerId();
+    if(budgetRequest && budgetRequest.owner===owner)return budgetRequest.promise;
+    if(budgetAuthExpiredOwner===owner && !manual)return Promise.resolve();
+    if(budgetDataOwner!==owner)resetBudgets();
+    budgetDataOwner=owner;
+    const request={owner,controller:new AbortController(),promise:null};
+    budgetRequest=request;
+    const current=()=>budgetRequest===request && owner===ownerId();
+    budgetLastAttempt=Date.now();
     budgetsLoading = true;
     budgetWarning = "";
     renderBudgets();
-    try {
-      const res = await fetch(apiBase() + "/api/budgets", {
+    request.promise=(async()=>{try {
+      const res = await fetch(apiBase() + "/api/budgets?refresh=1", {
         credentials: "include",
         cache: "no-store",
+        signal:AbortSignal.any([request.controller.signal,AbortSignal.timeout(20000)]),
       });
       const data = await res.json();
-      budgetWarning = (data && (data.error || data.warning)) || "";
-      approvedBudgets = data && Array.isArray(data.budgets) ? data.budgets : [];
+      if(!current())return;
+      if(res.status===401 || data.loggedIn===false || (data.user && data.user.openId && data.user.openId!==owner)) {
+        budgetAuthExpiredOwner=owner;
+        approvedBudgets=[];window.__approvedBudgets=[];
+        budgetRefreshMessage="登录已过期，请重新登录";
+        return;
+      }
+      if(!res.ok || !data.ok || !Array.isArray(data.budgets))
+        throw new Error(data.error || data.warning || "预算读取失败，请检查网络并点刷新预算重试");
+      budgetAuthExpiredOwner=null;
+      budgetRefreshMessage="预算已更新";
+      approvedBudgets = data.budgets;
       window.__approvedBudgets = approvedBudgets;
     } catch (e) {
-      budgetWarning = "预算读取失败，请检查网络并刷新重试";
-      approvedBudgets = [];
-      window.__approvedBudgets = [];
+      if(!current())return;
+      budgetWarning = e.message || "预算读取失败，请检查网络并刷新重试";
+      budgetRefreshMessage=approvedBudgets.length ? "刷新失败，保留上次列表；请点刷新预算重试" : "刷新失败，请点刷新预算重试";
     } finally {
-      budgetsLoading = false;
-      renderBudgets();
-    }
+      if(current()) {budgetRequest=null;budgetsLoading=false;renderBudgets();}
+    }})();
+    return request.promise;
+  }
+
+  function refreshVisibleBudgets() {
+    if(document.visibilityState==='hidden' || !authUser || budgetAuthExpiredOwner===ownerId())return;
+    if(Date.now()-budgetLastAttempt<BUDGET_FOCUS_DEBOUNCE_MS)return;
+    return loadBudgets();
+  }
+
+  function bindBudgetFreshness() {
+    if(budgetRefreshBound)return;
+    budgetRefreshBound=true;
+    document.getElementById('btn-refresh-budgets').addEventListener('click',()=>{
+      if(!authUser){showToast('请先用飞书登录，再刷新预算');return;}
+      loadBudgets({manual:true});
+    });
+    document.addEventListener('visibilitychange',refreshVisibleBudgets);
+    window.addEventListener('focus',refreshVisibleBudgets);
+    window.addEventListener('pageshow',refreshVisibleBudgets);
+    setInterval(refreshVisibleBudgets,BUDGET_REFRESH_INTERVAL_MS);
   }
 
   async function refreshAuth() {
@@ -2112,6 +2186,7 @@
     }
     renderAuth();
     if (authUser) {
+      budgetAuthExpiredOwner=null;
       aiSetupOwner=ownerId();aiSetupConfigured=null;aiSetupEpoch++;
       checkAiSetup(true);
       // Do not block login toast / page paint on slow budget listing.
@@ -2119,10 +2194,7 @@
     } else {
       aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;
       document.getElementById("ai-first-use-modal").hidden=true;
-      budgetsLoading = false;
-      budgetWarning = "";
-      approvedBudgets = [];
-      window.__approvedBudgets = [];
+      resetBudgets();
       renderBudgets();
     }
   }
@@ -2142,6 +2214,7 @@
     const aiModal = document.getElementById("ai-settings-modal");
     if (aiModal) aiModal.hidden = true;
     authUser = null;
+    resetBudgets();
     bankProfiles=[];bankProfilesOwner=null;document.getElementById('bank-profiles-modal').hidden=true;
     aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;
     document.getElementById("ai-first-use-modal").hidden=true;
@@ -2181,6 +2254,7 @@
   async function init() {
     window.ExpenseUI.bindDialogs(document);
     bind();
+    bindBudgetFreshness();
     consumeAuthQuery();
     try {
       const res = await fetch(apiBase() + "/api/purchase-schema", {cache:"no-store"});
