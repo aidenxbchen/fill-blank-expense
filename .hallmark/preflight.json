@@ -1,0 +1,19 @@
+{
+  "scanned": "2026-11-11",
+  "findings": {
+    "fonts": "web/styles.css:36 PingFang SC/Hiragino/Microsoft YaHei",
+    "palette": "web/styles.css:2 existing brand/cool blues; blessing warm/cool pale surfaces",
+    "motion": "CSS state transitions, no external library",
+    "framework": "static HTML/CSS/JS + Python server on5173",
+    "baseline": "09554c4;122 Python and6 frontend groups pass"
+  },
+  "preserve": [
+    "all business wiring and IDs",
+    "three equal cards in landscape; stack portrait",
+    "original brand assets and card palette"
+  ],
+  "introduce": [
+    "Hallmark brand/app tokens",
+    "restraint; one chrome material; state controls"
+  ]
+}

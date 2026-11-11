@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261110qty1";
+  const ASSET_V = "20261111hallmark1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"

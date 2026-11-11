@@ -2,9 +2,10 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
+  <meta name="description" content="报了呗，ANEVER 员工的采购工作台：上传发票原件、核对识别汇总、补齐项目信息并发起飞书采购申请。" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261110qty1" />
+  <link rel="stylesheet" href="./styles.css?v=20261111hallmark1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -22,8 +23,8 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <picture>
-            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261110qty1" />
-            <img src="./assets/logo-zbs.png?v=20261110qty1" alt="" width="44" height="44" />
+            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261111hallmark1" />
+            <img src="./assets/logo-zbs.png?v=20261111hallmark1" alt="" width="44" height="44" />
           </picture>
         </div>
         <div class="brand-text">
@@ -39,7 +40,7 @@
       <div class="header-actions">
         <button type="button" class="btn btn-secondary btn-new" id="btn-reset">新建报销</button>
         <button type="button" class="btn btn-ghost" id="btn-records">我的报销</button>
-        <button type="button" class="btn btn-ghost" id="btn-ai-settings">AI 设置</button>
+        <button type="button" class="btn btn-ghost" id="btn-ai-settings"><abbr title="人工智能">AI</abbr> 设置</button>
         <details class="workspace-menu">
           <summary class="btn btn-ghost">更多 <span aria-hidden="true">⌄</span></summary>
           <div class="workspace-menu-items">
@@ -96,13 +97,13 @@
           </div>
           <div class="blessing-constellation" aria-hidden="true"></div>
           <div class="triad-card-body">
-            <p class="blessing-kicker">今日小诗 · tap to shuffle</p>
             <p class="blessing-zh" id="blessing-zh">流星发生时</p>
             <p class="blessing-en" id="blessing-en">When meteors write across the sky</p>
             <p class="blessing-note" id="blessing-note">愿这一单也顺利如愿</p>
           </div>
           <div class="triad-card-foot">
-            <button type="button" class="blessing-shuffle" id="btn-blessing-shuffle" aria-label="换一句祝福">换一句 ✦</button>
+            <p class="blessing-caption">今日小诗</p>
+            <button type="button" class="blessing-shuffle" id="btn-blessing-shuffle" aria-label="换一句祝福">换一句</button>
           </div>
         </aside>
 
@@ -172,10 +173,10 @@
             <span class="pill" id="invoice-count-pill">0</span>
           </div>
           <ul class="sidebar-inv-list" id="sidebar-invoices"></ul>
-          <button type="button" class="btn btn-ghost btn-sm btn-block" id="btn-back-upload">← 返回添加发票</button>
+          <button type="button" class="btn btn-ghost btn-sm btn-block" id="btn-back-upload">返回添加发票</button>
         </aside>
         <div class="chat-panel panel">
-          <div class="chat-progress" id="chat-progress" role="status">还差 — 个问题</div>
+          <div class="chat-progress" id="chat-progress" role="status">正在准备问题</div>
           <div class="chat-log" id="chat-log" aria-live="polite"></div>
           <div class="chat-composer" id="chat-composer">
             <div class="chip-row" id="chip-row"></div>
@@ -198,7 +199,7 @@
           <p class="section-hint" id="draft-summary-line">根据发票与问答生成，可直接改表格。</p>
         </div>
         <div class="draft-head-actions">
-          <button type="button" class="btn btn-ghost" id="btn-back-interview">← 继续问答</button>
+          <button type="button" class="btn btn-ghost" id="btn-back-interview">继续问答</button>
           <button type="button" class="btn btn-secondary" id="btn-regen-draft">按当前答案重生成</button>
         </div>
       </div>
@@ -217,7 +218,7 @@
         <p class="section-hint">以当前飞书登录用户发起采购申请。请核对项目、明细和关联预算，创建成功后可直接打开飞书审批。</p>
         <div class="submit-preview" id="submit-preview"></div>
         <div class="submit-actions">
-          <button type="button" class="btn btn-ghost" id="btn-back-draft">← 返回草稿</button>
+          <button type="button" class="btn btn-ghost" id="btn-back-draft">返回草稿</button>
           <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit">发起飞书采购申请</button>
         </div>
       </div>
@@ -279,19 +280,19 @@
 
   <div class="modal-backdrop" id="ai-first-use-modal" hidden role="dialog" aria-modal="true" aria-labelledby="ai-first-use-title" aria-describedby="ai-first-use-copy">
     <div class="modal">
-      <div class="modal-header"><h3 id="ai-first-use-title">首次使用，请填写自己的 AI API</h3></div>
+      <div class="modal-header"><h3 id="ai-first-use-title">首次使用，请填写自己的 <abbr title="人工智能">AI</abbr> <abbr title="接口">API</abbr></h3></div>
       <div class="modal-body" id="ai-first-use-copy">
-        <p>欢迎使用报了呗。请先为当前飞书账号配置自己的 AI API，推荐使用 Deepseek。</p>
+        <p>欢迎使用报了呗。请先为当前飞书账号配置自己的 <abbr title="人工智能">AI</abbr> <abbr title="接口">API</abbr>，推荐使用 Deepseek。</p>
         <div class="ai-recommend">
           <strong>Deepseek 推荐设置</strong>
           <p>接口地址：<code>https://api.deepseek.com/v1</code><br />文本模型：<code>deepseek-chat</code></p>
         </div>
-        <p>密钥按飞书账号分别保存，绝不会使用其他人的 API Key。</p>
-        <p class="section-hint">图片仍可使用本机 OCR；没有配置时，字段校对也会尝试本机模型。填写自己的 API 可获得更好的字段校对效果。</p>
+        <p>密钥按飞书账号分别保存，绝不会使用其他人的 <abbr title="接口">API</abbr> Key。</p>
+        <p class="section-hint">图片仍可使用本机 <abbr title="文字识别">OCR</abbr>；没有配置时，字段校对也会尝试本机模型。填写自己的 <abbr title="接口">API</abbr> 可获得更好的字段校对效果。</p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-ghost" id="btn-ai-remind-later">稍后填写</button>
-        <button type="button" class="btn btn-primary" id="btn-ai-remind-configure">填写我的 AI API</button>
+        <button type="button" class="btn btn-primary" id="btn-ai-remind-configure">填写我的 <abbr title="人工智能">AI</abbr> <abbr title="接口">API</abbr></button>
       </div>
     </div>
   </div>
@@ -299,29 +300,29 @@
   <div class="modal-backdrop" id="ai-settings-modal" hidden role="dialog" aria-modal="true" aria-labelledby="ai-settings-title">
     <div class="modal ai-settings-modal">
       <div class="modal-header">
-        <h3 id="ai-settings-title">AI 设置</h3>
+        <h3 id="ai-settings-title"><abbr title="人工智能">AI</abbr> 设置</h3>
         <button type="button" class="btn btn-ghost btn-sm" id="btn-close-ai-settings">关闭</button>
       </div>
       <div class="modal-body">
         <div class="ai-recommend">
           <strong>推荐使用 Deepseek</strong>
-          <p>默认接口 <code>https://api.deepseek.com/v1</code>（请带上 <code>/v1</code>），文本模型 <code>deepseek-chat</code>。请到 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">Deepseek 开放平台</a> 申请 API Key，填入下方即可。</p>
-          <p class="section-hint">图片文字识别默认仍用本机 OCR；字段校对 / 文本 AI 用你配置的接口（推荐 Deepseek）。问答目前仍是规则题，以后若接入大模型也会走这里。</p>
+          <p>默认接口 <code>https://api.deepseek.com/v1</code>（请带上 <code>/v1</code>），文本模型 <code>deepseek-chat</code>。请到 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">Deepseek 开放平台</a> 申请 <abbr title="接口">API</abbr> Key，填入下方即可。</p>
+          <p class="section-hint">图片文字识别默认仍用本机 <abbr title="文字识别">OCR</abbr>；字段校对 / 文本 <abbr title="人工智能">AI</abbr> 用你配置的接口（推荐 Deepseek）。问答目前仍是规则题，以后若接入大模型也会走这里。</p>
         </div>
         <form id="ai-settings-form" class="ai-settings-form" autocomplete="off">
-          <label>API Base URL
+          <label><abbr title="接口">API</abbr> Base URL
             <input id="ai-base-url" type="url" placeholder="https://api.deepseek.com/v1" spellcheck="false" />
           </label>
-          <label>API Key
+          <label><abbr title="接口">API</abbr> Key
             <input id="ai-api-key" type="password" placeholder="在 Deepseek 开放平台申请后粘贴" autocomplete="new-password" spellcheck="false" />
             <small id="ai-key-hint">密钥只保存在服务器，保存后页面只显示掩码，不会再次给出原文。</small>
           </label>
           <label>文本 / 校对模型
             <input id="ai-text-model" type="text" placeholder="deepseek-chat" spellcheck="false" />
           </label>
-          <label>视觉 / OCR 模型（可选）
+          <label>视觉 / <abbr title="文字识别">OCR</abbr> 模型（可选）
             <input id="ai-vision-model" type="text" placeholder="留空则继续使用本机 OCR" spellcheck="false" />
-            <small>当前图片识别仍走本机 OCR，此栏仅预留，不会把发票图发到你的云端接口。</small>
+            <small>当前图片识别仍走本机 <abbr title="文字识别">OCR</abbr>，此栏仅预留，不会把发票图发到你的云端接口。</small>
           </label>
         </form>
         <div id="ai-settings-message" role="status"></div>
@@ -336,9 +337,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261110qty1"></script>
-  <script src="./ocr-bridge.js?v=20261110qty1"></script>
-  <script src="./policy.js?v=20261110qty1"></script>
-  <script src="./app.js?v=20261110qty1"></script>
+  <script src="./ui.js?v=20261111hallmark1"></script>
+  <script src="./ocr-bridge.js?v=20261111hallmark1"></script>
+  <script src="./policy.js?v=20261111hallmark1"></script>
+  <script src="./app.js?v=20261111hallmark1"></script>
 </body>
 </html>

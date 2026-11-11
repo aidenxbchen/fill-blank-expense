@@ -1,0 +1,14 @@
+  FAIL 15 web/styles.css:858 .dropzone transitions box-shadow while :focus-visible sets it (… | fix: Rings appear instantly: transition the hover property only, or draw the ring with a property that is not transitioned
+  FAIL 19 web/index.html:178 dash "—" in copy | fix: A comma, a colon, a full stop or parentheses; never a dash
+  FAIL 34 web/styles.css:1 no overflow-x: clip on html and body | fix: overflow-x: clip on both html and body
+  FAIL 48 x108 web/styles.css:70 colour literal rgba(255, 255, 255, 0.88) outside tokens (backgr…; web/styles.css:110 colour literal rgba(168, 204, 255, 0.48) outside tokens (backgr… | fix: Lift the value into the token block
+  FAIL 67 x3 web/index.html:290 "图片仍可使用本机 OCR；没有配置时，字段校对也会尝试本机模型…" typed in capitals at 13px (<…; web/index.html:294 "填写我的 AI API" typed in capitals at 12px (<button class="btn btn… | fix: Sentence case in the body face; capitals survive only as a wordmark or as the display voice
+  REFLEX 2b web/styles.css:303 gradient text on .blessing-zh | fix: Solid ink; weight or a display face. Guard: a single-hue ramp from two tokens with 40 and 41 passing
+  REFLEX 24b x56 web/styles.css:72 padding: 10px 12px (off the 4px scale) on input, select, textar…; web/styles.css:152 margin: 18px (off the 4px scale) on .ambient-frame | fix: Use the 4px spacing scale
+  WARN 3 web/styles.css:688 3 equal icon-tile columns on .upload-triad | fix: Vary column widths or drop the icon tiles
+  WARN 29 x6 web/styles.css:410 glass panel: backdrop-filter blur over a translucent white on .…; web/styles.css:497 glass panel: backdrop-filter blur over a translucent white on .… | fix: Solid or grained surface; elevation by lightness
+  WARN F3 web/styles.css:65 no text-wrap: balance on any display head (7 head rule(s), e.g.… | fix: Add text-wrap: balance to h1/h2-level heads
+  WARN F23 web/index.html:1 the document lacks a meta description | fix: Name the language, title the page in its own words, and describe it in one sentence for link previews
+  WARN F24 web/styles.css:224 a hairline border under a wide soft shadow on .blessing-card | fix: Commit to one: a defined edge, or elevation by shadow
+sloplint: 114 FAIL, 57 REFLEX, 10 WARN across 2 file(s), grouped by gate; every line is in .hallmark/before.txt.
+before: recorded 4 links, 4 fields, 0 handlers, 0 test hooks, 102 script hooks in .hallmark/before.json; --kept checks a redesign against it

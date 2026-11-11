@@ -1,0 +1,24 @@
+{
+  "project": "https://github.com/Nutlope/hallmark",
+  "revision": "7e213cb6feb4ef82733bd66a0600b2e54ca0994c",
+  "mode": "audit -> redesign restyle --scope app",
+  "install": "No global skill/dependency install; reviewed official scripts in private scratch",
+  "hashes": {
+    "README.md": "d21933f906e8b9a2db0d32982b1523a679a89e97dc77a635e124c9a98ac3d8c5",
+    "skills/hallmark/SKILL.md": "25a1ff92d925b2389e8409f42fb8ad7e033fceca8b5d1f07ed4ca4c28da53dc3",
+    "skills/hallmark/references/review-finish.md": "9d00de59e71ee2516212140b0512d6d2e90a120d4a328eeba9cb12396ff38d64",
+    "skills/hallmark/references/redesign.md": "cd3fc1dd10af22bb0374b41340fbab8f2b3be997ea5b63716da3d44ba0bb0552",
+    "skills/hallmark/references/patterns.md": "bb15954cb04083c9a3b796dda5df5c33c9c05dddf2341d7befe2571e715f613b",
+    "skills/hallmark/references/craft.md": "1b7b40f81f0fe1c04dce133696182ca1229d16162f8f3203603f24a0f585c41c",
+    "skills/hallmark/references/interaction-and-states.md": "08e232008734fce86b1ec6085db72342e90d2f855351eb84f20ea3799fe0808a",
+    "skills/hallmark/references/gates.md": "63ad234a1acab5e081dfe8ecf2331518a43cbf42760dc5c6ababfb24d7b3e50c",
+    "skills/hallmark/references/flow.md": "d24fa0bbfd8ea6f8add579029598e09815a697fc99a4abdb8c17f67155e368e5",
+    "skills/hallmark/references/brand-truth.md": "01c17c45d3b213f80ef28c93548d1b99aa2afad75ed8b236811ba56169c3f068",
+    "skills/hallmark/references/layout.md": "fa904b5b46f19ca08ee325c99deb1cf30c67acb00106e7b74945c30e428c7eab",
+    "skills/hallmark/references/genres/modern-minimal.md": "5f84b3c056be101707c6f2d7ac929e879f5ab7b009ac8426156c11054193cd9b",
+    "skills/hallmark/scripts/sloplint.mjs": "23fb94903ae0e3b709019380443163bdc50390a246911e3423b83695e4bc8037",
+    "skills/hallmark/scripts/sloplint-render.mjs": "228f14808cbf872ab6dcc5f4f9e8d58a5a9060028f1530bec80e24dbd12737f3",
+    "skills/hallmark/scripts/capture.mjs": "0364ca6591a722d14b935f201956c300d688b8f9f73879b00df92242dc26610b",
+    "skills/hallmark/scripts/theme.mjs": "7c5cd6ea080e47b663967f2cce5c806e38acbc33eb77b6dce7585a9f2ea1a1a6"
+  }
+}

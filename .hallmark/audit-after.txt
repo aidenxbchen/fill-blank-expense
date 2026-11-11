@@ -1,0 +1,7 @@
+web/styles.css
+  DISMISSED 3 :393 3 equal icon-tile columns on .upload-triad
+  DISMISSED 29 :204 glass panel: backdrop-filter blur over a translucent white on .header-inner
+  DISMISSED 29 :309 glass panel: backdrop-filter blur over a translucent white on .workspace-menu-items
+sloplint: 0 FAIL, 0 WARN, 3 DISMISSED across 2 file(s) and 1 URL(s).
+render tier not run: no puppeteer-core found locally, globally or via HALLMARK_PUPPETEER
+kept: links 4/4, fields 4/4, script hooks 102/102; before 114 FAIL, 57 REFLEX, now 0 FAIL, 0 REFLEX

@@ -1,0 +1,284 @@
+{
+  "method": "official DOM checks unchanged in selected Browser iframe; not Puppeteer renderCheck; no screenshots",
+  "quality": [
+    {
+      "evidence": "control height outside 32 to 52px: div.dropzone 320px",
+      "fix": "Marketing controls stand 44 to 52px; app UI 32 to 40px with a 44px hit target",
+      "gate": "39b",
+      "grade": "REFLEX"
+    }
+  ],
+  "route": "http://127.0.0.1:5173/",
+  "rows": [
+    {
+      "findings": [],
+      "headerHeight": 182.234375,
+      "height": 800,
+      "pageWidth": 320,
+      "rects": [
+        {
+          "h": 207.6875,
+          "id": "blessing-card",
+          "w": 288,
+          "x": 16,
+          "y": 381.3828125
+        },
+        {
+          "h": 254.109375,
+          "id": "budget-picker",
+          "w": 288,
+          "x": 16,
+          "y": 605.0703125
+        },
+        {
+          "h": 201.7890625,
+          "id": "dropzone",
+          "w": 288,
+          "x": 16,
+          "y": 875.1796875
+        }
+      ],
+      "width": 320
+    },
+    {
+      "findings": [],
+      "headerHeight": 182.234375,
+      "height": 812,
+      "pageWidth": 375,
+      "rects": [
+        {
+          "h": 207.6875,
+          "id": "blessing-card",
+          "w": 343,
+          "x": 16,
+          "y": 357.5859375
+        },
+        {
+          "h": 254.109375,
+          "id": "budget-picker",
+          "w": 343,
+          "x": 16,
+          "y": 581.2734375
+        },
+        {
+          "h": 181.9921875,
+          "id": "dropzone",
+          "w": 343,
+          "x": 16,
+          "y": 851.3828125
+        }
+      ],
+      "width": 375
+    },
+    {
+      "findings": [],
+      "headerHeight": 161.9375,
+      "height": 844,
+      "pageWidth": 390,
+      "rects": [
+        {
+          "h": 207.6875,
+          "id": "blessing-card",
+          "w": 358,
+          "x": 16,
+          "y": 337.2890625
+        },
+        {
+          "h": 254.109375,
+          "id": "budget-picker",
+          "w": 358,
+          "x": 16,
+          "y": 560.9765625
+        },
+        {
+          "h": 181.9921875,
+          "id": "dropzone",
+          "w": 358,
+          "x": 16,
+          "y": 831.0859375
+        }
+      ],
+      "width": 390
+    },
+    {
+      "findings": [],
+      "headerHeight": 161.9375,
+      "height": 896,
+      "pageWidth": 414,
+      "rects": [
+        {
+          "h": 207.6875,
+          "id": "blessing-card",
+          "w": 382,
+          "x": 16,
+          "y": 337.2890625
+        },
+        {
+          "h": 254.109375,
+          "id": "budget-picker",
+          "w": 382,
+          "x": 16,
+          "y": 560.9765625
+        },
+        {
+          "h": 181.9921875,
+          "id": "dropzone",
+          "w": 382,
+          "x": 16,
+          "y": 831.0859375
+        }
+      ],
+      "width": 414
+    },
+    {
+      "findings": [],
+      "headerHeight": 141.03125,
+      "height": 1024,
+      "pageWidth": 768,
+      "rects": [
+        {
+          "h": 221.90625,
+          "id": "blessing-card",
+          "w": 704,
+          "x": 32,
+          "y": 301.984375
+        },
+        {
+          "h": 247.015625,
+          "id": "budget-picker",
+          "w": 704,
+          "x": 32,
+          "y": 543.890625
+        },
+        {
+          "h": 320,
+          "id": "dropzone",
+          "w": 704,
+          "x": 32,
+          "y": 810.90625
+        }
+      ],
+      "width": 768
+    },
+    {
+      "findings": [],
+      "headerHeight": 119.3359375,
+      "height": 800,
+      "pageWidth": 1024,
+      "rects": [
+        {
+          "h": 320,
+          "id": "blessing-card",
+          "w": 306.6640625,
+          "x": 32,
+          "y": 280.2890625
+        },
+        {
+          "h": 320,
+          "id": "budget-picker",
+          "w": 306.6640625,
+          "x": 358.6640625,
+          "y": 280.2890625
+        },
+        {
+          "h": 320,
+          "id": "dropzone",
+          "w": 306.6640625,
+          "x": 685.328125,
+          "y": 280.2890625
+        }
+      ],
+      "width": 1024
+    },
+    {
+      "findings": [],
+      "headerHeight": 119.3359375,
+      "height": 800,
+      "pageWidth": 1280,
+      "rects": [
+        {
+          "h": 320,
+          "id": "blessing-card",
+          "w": 378.6640625,
+          "x": 52,
+          "y": 280.2890625
+        },
+        {
+          "h": 320,
+          "id": "budget-picker",
+          "w": 378.6640625,
+          "x": 450.6640625,
+          "y": 280.2890625
+        },
+        {
+          "h": 320,
+          "id": "dropzone",
+          "w": 378.6640625,
+          "x": 849.328125,
+          "y": 280.2890625
+        }
+      ],
+      "width": 1280
+    },
+    {
+      "findings": [],
+      "headerHeight": 119.3359375,
+      "height": 900,
+      "pageWidth": 1440,
+      "rects": [
+        {
+          "h": 320,
+          "id": "blessing-card",
+          "w": 378.6640625,
+          "x": 132,
+          "y": 280.2890625
+        },
+        {
+          "h": 320,
+          "id": "budget-picker",
+          "w": 378.6640625,
+          "x": 530.6640625,
+          "y": 280.2890625
+        },
+        {
+          "h": 320,
+          "id": "dropzone",
+          "w": 378.6640625,
+          "x": 929.328125,
+          "y": 280.2890625
+        }
+      ],
+      "width": 1440
+    },
+    {
+      "findings": [],
+      "headerHeight": 119.3359375,
+      "height": 1080,
+      "pageWidth": 1920,
+      "rects": [
+        {
+          "h": 320,
+          "id": "blessing-card",
+          "w": 378.6640625,
+          "x": 372,
+          "y": 280.2890625
+        },
+        {
+          "h": 320,
+          "id": "budget-picker",
+          "w": 378.6640625,
+          "x": 770.6640625,
+          "y": 280.2890625
+        },
+        {
+          "h": 320,
+          "id": "dropzone",
+          "w": 378.6640625,
+          "x": 1169.328125,
+          "y": 280.2890625
+        }
+      ],
+      "width": 1920
+    }
+  ]
+}

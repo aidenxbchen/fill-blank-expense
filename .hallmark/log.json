@@ -1,0 +1,22 @@
+[
+ {
+  "mode": "redesign",
+  "depth": "restyle",
+  "scope": "app",
+  "theme": "brand",
+  "genre": "modern-minimal",
+  "prompt": "Employee invoice procurement workspace; keep existing three-card layout, Chinese brand and original palette",
+  "waived": [
+   "39b"
+  ],
+  "signature": "editable invoice ledger and supplied photo",
+  "verification": {
+   "static": "0 FAIL /0 REFLEX /0 WARN;3 dismissed",
+   "kept": "4/4 links;4/4 fields;102/102 script hooks",
+   "render": "not run: no puppeteer; selected Browser used for DOM checks",
+   "screenshots": "two timeouts; none saved",
+   "finishReview": "recapture; source-only paragraph finding fixed"
+  },
+  "date": "2026-11-11"
+ }
+]
