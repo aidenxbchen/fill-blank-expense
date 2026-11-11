@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261111hallmark1";
+  const ASSET_V = "20261111jev1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -926,6 +926,7 @@
   }
 
   function renderInterview() {
+    if(choiceRequestKey!==JSON.stringify(choiceContext()))window.__choiceSuggestions=null;
     const side = document.getElementById("sidebar-invoices");
     const pill = document.getElementById("invoice-count-pill");
     const log = document.getElementById("chat-log");
@@ -995,10 +996,14 @@
     document.getElementById("btn-send-answer").disabled = false;
     if (skipBtn) skipBtn.hidden = !!q.required;
 
-    chipRow.innerHTML = (q.chips || [])
-      .map((c) => `<button type="button" class="chip${q.recommended && q.recommended.value === c ? " is-recommended" : ""}" data-chip="${esc(c)}" aria-pressed="false">${esc(c)}${q.recommended && q.recommended.value === c ? '<small>历史常用</small>' : ""}</button>`)
-      .join("");
+    renderQuestionChips(q);
     session._currentQuestion = q;
+  }
+
+  function renderQuestionChips(q) {
+    document.getElementById('chip-row').innerHTML = (q.chips || [])
+      .map((c) => `<button type="button" class="chip${q.recommended && q.recommended.value === c ? " is-recommended" : ""}" data-chip="${esc(c)}" aria-pressed="false">${esc(c)}${q.recommended && q.recommended.value === c ? `<small>${esc(q.recommended.source ? q.recommended.source + ' 建议' : '历史常用')}</small>` : ""}</button>`)
+      .join("");
   }
 
   function ensureCurrentQuestionAsked() {
@@ -1023,19 +1028,69 @@
 
   function fillingClaim() {
     return {costCenter:session.answers.costCenter || "", purchaseMethod:session.answers.purchaseMethod || "",
-      answers:{...session.answers}, invoices:okInvoices().map(({id,amount,merchant,category})=>({id,amount,merchant,category}))};
+      answers:{...session.answers}, invoices:okInvoices().map(({id,amount,merchant,category,items,quantity,unit})=>({id,amount,merchant,category,items,quantity,unit}))};
+  }
+
+  let choiceRequestKey = "";
+  let choiceRequestEpoch = 0;
+  const choiceCache = new Map();
+  function choiceContext() {
+    const claim=fillingClaim();
+    // Closed answers don't invalidate a decision; edits to its invoice facts do.
+    claim.answers={purchaseMethod:claim.purchaseMethod,costCenter:claim.costCenter,purpose:session.answers.purpose || ""};
+    return {owner:ownerId(),draft:session.draftId,claim};
+  }
+  async function refreshChoiceSuggestions(force=false) {
+    if (!authUser || !okInvoices().length) return;
+    const context=choiceContext(), key=JSON.stringify(context);
+    if (key===choiceRequestKey && !force) return;
+    choiceRequestKey=key;
+    const epoch=++choiceRequestEpoch;
+    const cached=choiceCache.get(key);
+    if(cached && Date.now()-cached.at<600000) {window.__choiceSuggestions=cached.suggestions;return;}
+    window.__choiceSuggestions=null;
+    try {
+      const response=await fetch(apiBase()+"/api/choice-suggestions",{
+        method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({claim:context.claim}),signal:AbortSignal.timeout(60000)
+      });
+      const result=await response.json();
+      // Never apply an earlier invoice revision, draft or another login's result.
+      if (epoch!==choiceRequestEpoch || key!==choiceRequestKey || key!==JSON.stringify(choiceContext())) return;
+      if (!response.ok || !result.ok) throw new Error("建议暂不可用");
+      if(choiceCache.size>=100)choiceCache.clear();
+      if(!result.suggestions.notices || !result.suggestions.notices.length)
+        choiceCache.set(key,{at:Date.now(),suggestions:result.suggestions});
+      window.__choiceSuggestions=result.suggestions;
+      if(session.stage==="interview") {
+        // Refresh only suggestions; preserve composer text, chat scroll and keyboard focus.
+        const q=window.ExpensePolicy.nextQuestion(okInvoices(),session.answers);
+        if(!answering && q && session._currentQuestion && q.id===session._currentQuestion.id &&
+            !(document.activeElement && document.activeElement.matches('[data-chip]'))) {
+          renderQuestionChips(q);session._currentQuestion=q;
+        }
+        if(result.suggestions.notices && result.suggestions.notices.length) showToast(result.suggestions.notices.join('；'),8000);
+      }
+    } catch (_) {
+      if(epoch===choiceRequestEpoch && key===choiceRequestKey && key===JSON.stringify(choiceContext()) && session.stage==="interview")
+        showToast("选项建议暂不可用，可继续手动选择；重新进入问答可重试",6500);
+      if(epoch===choiceRequestEpoch && key===choiceRequestKey)choiceRequestKey="";
+    }
   }
 
   async function refreshFillSuggestions(record) {
     if (!authUser || !okInvoices().length) return;
+    const owner=ownerId(), draft=session.draftId;
     try {
       const response = await fetch(apiBase() + (record ? "/api/fill-history" : "/api/fill-suggestions"), {
         method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
         body:JSON.stringify({draftId:session.draftId,claim:fillingClaim()}), signal:AbortSignal.timeout(4000)
       });
       const result = await response.json();
-      window.__fillSuggestions = response.ok && result.ok ? result.suggestions : null;
-    } catch (_) { window.__fillSuggestions = null; }
+      if(owner===ownerId() && draft===session.draftId) window.__fillSuggestions = response.ok && result.ok ? result.suggestions : null;
+    } catch (_) { if(owner===ownerId() && draft===session.draftId) window.__fillSuggestions = null; }
+    // Don't make a remote model call on every autosave. It runs alongside interview preparation.
+    if(session.stage==="interview" || !record) refreshChoiceSuggestions(!record);
   }
 
   let fillingTimer;
@@ -1591,6 +1646,10 @@
     document.getElementById("btn-ai-remind-later").addEventListener("click",()=>{document.getElementById("ai-first-use-modal").hidden=true;});
     document.getElementById("btn-ai-settings").addEventListener("click",openAiSettings);
     document.getElementById("btn-close-ai-settings").addEventListener("click",closeAiSettings);
+    const jevControls=["btn-save-jev","btn-test-jev","btn-clear-jev"].map(id=>document.getElementById(id));
+    [["btn-save-jev","PUT",false],["btn-test-jev","POST",false],["btn-clear-jev","PUT",true]].forEach(([id,method,clear])=>{
+      document.getElementById(id).addEventListener("click",event=>window.ExpenseUI.run(event.currentTarget,()=>updateJevSettings(method,clear),"正在处理…",jevControls));
+    });
     const aiControls=["btn-save-ai","btn-test-ai","btn-clear-ai"].map(id=>document.getElementById(id));
     [["btn-save-ai",saveAiSettings,"正在保存…"],["btn-test-ai",testAiSettings,"正在测试…"],["btn-clear-ai",clearAiSettings,"正在清除…"]].forEach(([id,action,label])=>{
       document.getElementById(id).addEventListener("click",event=>window.ExpenseUI.run(event.currentTarget,action,label,aiControls));
@@ -1788,6 +1847,50 @@
     document.getElementById("ai-first-use-modal").hidden = true;
     document.getElementById("ai-settings-modal").hidden = false;
     loadAiSettings();
+    loadJevSettings();
+  }
+
+  let jevSettingsEpoch=0;
+  function setJevMessage(text, ok=true) {
+    const el=document.getElementById("jev-settings-message");
+    el.textContent=text;el.classList.toggle("is-err",!ok);
+  }
+  async function loadJevSettings() {
+    const owner=ownerId(), epoch=jevSettingsEpoch;
+    setJevMessage("正在读取 Jev 设置…");
+    try {
+      const res=await fetch(apiBase()+"/api/jev-settings",{credentials:"include",cache:"no-store",signal:AbortSignal.timeout(10000)});
+      const data=await res.json();
+      if(owner!==ownerId() || epoch!==jevSettingsEpoch)return;
+      if(!res.ok || !data.ok)throw new Error(data.error || "Jev 设置读取失败");
+      const s=data.settings || {};
+      document.getElementById("jev-base-url").value=s.baseUrl || "https://api.typesafe.ai";
+      document.getElementById("jev-model").value=s.model || "jev-latest";
+      const key=document.getElementById("jev-api-key");key.value="";
+      key.placeholder=s.hasApiKey ? "已保存 "+s.apiKeyMasked+"（留空保留）" : "填写自己的 TypeSafe API Key";
+      setJevMessage(data.configured ? "Jev 已配置，用于封闭选项建议；请点选确认。" : "Jev 未配置，封闭选项继续使用你的文本模型或本机 Ollama。");
+    } catch(e) {if(owner===ownerId() && epoch===jevSettingsEpoch)setJevMessage(e.message || "读取失败，请重开设置重试",false);}
+  }
+  async function updateJevSettings(method, clear) {
+    if(clear && !confirm("只清除本账号的 Jev 设置？DeepSeek 设置会保留。"))return;
+    const owner=ownerId(), epoch=++jevSettingsEpoch;
+    setJevMessage(method==="POST" ? "正在测试 Jev 连接…" : "正在保存…");
+    try {
+      const res=await fetch(apiBase()+"/api/jev-settings"+(method==="POST" ? "/test" : ""),{
+        method,credentials:"include",headers:{"Content-Type":"application/json"},signal:AbortSignal.timeout(20000),
+        body:JSON.stringify(clear ? {clear:true} : {baseUrl:document.getElementById("jev-base-url").value,
+          apiKey:document.getElementById("jev-api-key").value.trim(),model:document.getElementById("jev-model").value})
+      });
+      const data=await res.json();
+      if(owner!==ownerId() || epoch!==jevSettingsEpoch)return;
+      if(!res.ok || !data.ok)throw new Error(data.error || "Jev 操作失败，请重试");
+      if(method!=="POST") {
+        choiceCache.clear();choiceRequestKey="";window.__choiceSuggestions=null;
+        await loadJevSettings();
+        if(session.stage==="interview")refreshChoiceSuggestions();
+      }
+      setJevMessage(method==="POST" ? "Jev 连接成功" : clear ? "Jev 设置已清除，继续使用文本模型 / 本机回退。" : "Jev 已保存，仅当前飞书账号可使用。");
+    } catch(e) {if(owner===ownerId() && epoch===jevSettingsEpoch)setJevMessage(e.message || "操作失败，请重试",false);}
   }
 
   function closeAiSettings() {
@@ -1863,10 +1966,12 @@
       if (owner !== ownerId()) return;
       if (!res.ok || !data.ok) throw new Error((data && data.error) || "保存失败");
       setAiSetupStatus(data, owner, true);
+      choiceCache.clear();choiceRequestKey="";window.__choiceSuggestions=null;
       const key = document.getElementById("ai-api-key");
       if (key) key.value = "";
       await loadAiSettings();
       setAiMessage("已保存。字段校对 / 文本 AI 将使用该接口。", true);
+      if(session.stage==="interview")refreshChoiceSuggestions();
       showToast("AI 设置已保存");
     } catch (e) {
       setAiMessage((e && e.message) || "保存失败", false);
@@ -1905,6 +2010,7 @@
       if (owner !== ownerId()) return;
       if (!res.ok || !data.ok) throw new Error((data && data.error) || "清除失败");
       setAiSetupStatus(data, owner, true);
+      choiceCache.clear();choiceRequestKey="";window.__choiceSuggestions=null;
       ["ai-base-url", "ai-api-key", "ai-text-model", "ai-vision-model"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.value = "";
@@ -1997,6 +2103,7 @@
     aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;
     document.getElementById("ai-first-use-modal").hidden=true;
     window.__fillSuggestions=null;
+    window.__choiceSuggestions=null;choiceCache.clear();choiceRequestKey="";jevSettingsEpoch++;
     setStage("upload");
     setSaveStatus("已退出，登录后可在我的报销继续草稿");
     budgetsLoading = false;

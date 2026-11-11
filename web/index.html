@@ -5,7 +5,7 @@
   <meta name="description" content="报了呗，ANEVER 员工的采购工作台：上传发票原件、核对识别汇总、补齐项目信息并发起飞书采购申请。" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261111hallmark1" />
+  <link rel="stylesheet" href="./styles.css?v=20261111jev1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -23,8 +23,8 @@
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">
           <picture>
-            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261111hallmark1" />
-            <img src="./assets/logo-zbs.png?v=20261111hallmark1" alt="" width="44" height="44" />
+            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261111jev1" />
+            <img src="./assets/logo-zbs.png?v=20261111jev1" alt="" width="44" height="44" />
           </picture>
         </div>
         <div class="brand-text">
@@ -283,6 +283,7 @@
       <div class="modal-header"><h3 id="ai-first-use-title">首次使用，请填写自己的 <abbr title="人工智能">AI</abbr> <abbr title="接口">API</abbr></h3></div>
       <div class="modal-body" id="ai-first-use-copy">
         <p>欢迎使用报了呗。请先为当前飞书账号配置自己的 <abbr title="人工智能">AI</abbr> <abbr title="接口">API</abbr>，推荐使用 Deepseek。</p>
+        <p>也建议填写自己的 Jev：封闭选项由 Jev 提建议，生成 / 校对由 DeepSeek 负责。Jev 可选，未填写仍可继续使用。</p>
         <div class="ai-recommend">
           <strong>Deepseek 推荐设置</strong>
           <p>接口地址：<code>https://api.deepseek.com/v1</code><br />文本模型：<code>deepseek-chat</code></p>
@@ -307,8 +308,9 @@
         <div class="ai-recommend">
           <strong>推荐使用 Deepseek</strong>
           <p>默认接口 <code>https://api.deepseek.com/v1</code>（请带上 <code>/v1</code>），文本模型 <code>deepseek-chat</code>。请到 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">Deepseek 开放平台</a> 申请 <abbr title="接口">API</abbr> Key，填入下方即可。</p>
-          <p class="section-hint">图片文字识别默认仍用本机 <abbr title="文字识别">OCR</abbr>；字段校对 / 文本 <abbr title="人工智能">AI</abbr> 用你配置的接口（推荐 Deepseek）。问答目前仍是规则题，以后若接入大模型也会走这里。</p>
+          <p class="section-hint">生成 / 字段校对使用你的 DeepSeek 或 OpenAI 兼容接口；封闭选项优先由 Jev 提建议。不确定或不可用时回退到你的文本接口，未配置文本接口则使用本机 Ollama。图片识别始终使用本机 <abbr title="文字识别">OCR</abbr>。</p>
         </div>
+        <h4>DeepSeek / 文本与校对</h4>
         <form id="ai-settings-form" class="ai-settings-form" autocomplete="off">
           <label><abbr title="接口">API</abbr> Base URL
             <input id="ai-base-url" type="url" placeholder="https://api.deepseek.com/v1" spellcheck="false" />
@@ -326,20 +328,35 @@
           </label>
         </form>
         <div id="ai-settings-message" role="status"></div>
+        <section class="jev-settings" aria-labelledby="jev-settings-title">
+          <h4 id="jev-settings-title">Jev / 封闭选项（可选）</h4>
+          <p class="section-hint">用于支出性质、费用类别等现有选项的建议，不会替你确认答案。仅发送票面文字字段，不发送发票原图。两家的密钥均按飞书账号独立加密保存。</p>
+          <form id="jev-settings-form" class="ai-settings-form" autocomplete="off">
+            <label>Jev Base URL<input id="jev-base-url" type="url" placeholder="https://api.typesafe.ai" spellcheck="false" /></label>
+            <label>Jev API Key<input id="jev-api-key" type="password" autocomplete="new-password" placeholder="填写自己的 TypeSafe API Key" spellcheck="false" /><small>留空保留本账号已保存的密钥。可到 <a href="https://console.typesafe.ai/" target="_blank" rel="noopener">TypeSafe 控制台</a>申请。</small></label>
+            <label>Jev 模型<input id="jev-model" type="text" placeholder="jev-latest" spellcheck="false" /></label>
+          </form>
+          <div id="jev-settings-message" role="status" aria-live="polite"></div>
+          <div class="jev-actions">
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-clear-jev">清除 Jev</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-test-jev">测试 Jev</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btn-save-jev">保存 Jev</button>
+          </div>
+        </section>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-ghost" id="btn-clear-ai">清除设置</button>
-        <button type="button" class="btn btn-secondary" id="btn-test-ai">测试连接</button>
-        <button type="button" class="btn btn-primary" id="btn-save-ai">保存</button>
+        <button type="button" class="btn btn-ghost" id="btn-clear-ai">清除文本接口</button>
+        <button type="button" class="btn btn-secondary" id="btn-test-ai">测试文本接口</button>
+        <button type="button" class="btn btn-primary" id="btn-save-ai">保存文本接口</button>
       </div>
     </div>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261111hallmark1"></script>
-  <script src="./ocr-bridge.js?v=20261111hallmark1"></script>
-  <script src="./policy.js?v=20261111hallmark1"></script>
-  <script src="./app.js?v=20261111hallmark1"></script>
+  <script src="./ui.js?v=20261111jev1"></script>
+  <script src="./ocr-bridge.js?v=20261111jev1"></script>
+  <script src="./policy.js?v=20261111jev1"></script>
+  <script src="./app.js?v=20261111jev1"></script>
 </body>
 </html>

@@ -70,6 +70,7 @@
     if (!schema) return [{id:"schemaUnavailable", text:"采购表单暂未加载，请返回首页重试。", required:true}];
     const q = [];
     const learned = global.__fillSuggestions || {global:{},rows:{}};
+    const choices = global.__choiceSuggestions || {global:{},rows:{}};
     function ordered(chips, history, strict) {
       history = (history || []).filter(h=>!strict || chips.includes(h.value));
       const values = [...history.map(h=>h.value), ...chips];
@@ -78,7 +79,7 @@
     function ask(id, text, chips, hint) {
       const v = answers[id];
       if (present(v) && (!chips || !chips.length || chips.includes(v))) return;
-      const rank = ordered(chips || [], (learned.global || {})[id], Boolean(chips && chips.length));
+      const rank = ordered(chips || [], [...((choices.global || {})[id] || []), ...((learned.global || {})[id] || [])], Boolean(chips && chips.length));
       q.push({id, text, ...rank, hint:hint || "", required:true, input:rank.chips.length ? "chips+text":"text", options:chips || []});
     }
     ask("purchaseMethod", "这次用哪种采购方式？", schema.methods.map(m=>m.name));
@@ -120,7 +121,7 @@
         const v = answers[id];
         if (present(v) && (!w.options.length || w.options.includes(v)) && (w.type !== "number" || Number.isFinite(Number(v)) && Number(v)>0)) continue;
         const field = w.name.includes("科目") ? "科目" : w.name;
-        const rank = ordered(chips, (((learned.rows || {})[inv.id] || {})[field]), Boolean(w.options.length));
+        const rank = ordered(chips, [...((((choices.rows || {})[inv.id] || {})[field]) || []), ...((((learned.rows || {})[inv.id] || {})[field]) || [])], Boolean(w.options.length));
         const text = field === "科目"
           ? `${referent} 在【${project}】里属于哪个科目？`
           : `${referent} 在【${project}】里的${w.name}是？`;

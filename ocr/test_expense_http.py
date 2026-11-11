@@ -103,5 +103,20 @@ class ExpenseHTTPTests(unittest.TestCase):
         self.assertEqual(again['settings']['apiKeyMasked'],'sk-***ey99')
         self.assertNotIn('sk-http-secret-key99', json.dumps(again))
 
+    def test_jev_http_owner_auth_no_global_fallback(self):
+        with patch.object(server.auth,'get_session',return_value=None):
+            self.assertEqual(self.request('/api/jev-settings')[0],401)
+            self.assertEqual(self.request('/api/choice-suggestions',b'{"claim":{}}')[0],401)
+        status,body,_=self.request('/api/jev-settings',b'{"apiKey":"synthetic-jev-secret"}',method='PUT')
+        self.assertEqual(status,200);self.assertTrue(body['configured'])
+        self.assertNotIn('synthetic-jev-secret',json.dumps(body))
+        self.assertFalse(self.request('/api/ai-settings')[1]['configured'])
+        other={'access_token':'synthetic','user':{'openId':'bob'}}
+        with patch.object(server.auth,'get_session',return_value=other), patch.object(server.auth,'ensure_fresh_session',return_value=other):
+            self.assertFalse(self.request('/api/jev-settings')[1]['configured'])
+        with patch.object(server.choice_suggestions,'suggest',return_value={'rows':{},'global':{}}) as suggest:
+            status,body,_=self.request('/api/choice-suggestions',b'{"owner":"bob","claim":{"answers":{},"invoices":[]}}')
+            self.assertEqual(status,200);self.assertEqual(suggest.call_args.args[0],'alice')
+
 
 if __name__=='__main__':unittest.main()

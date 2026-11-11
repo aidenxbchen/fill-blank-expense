@@ -57,6 +57,12 @@ function fixture(sourceRoot = path.join(__dirname, '..')) {
         data={ok:true,configured:demo.aiConfigured,settings:{hasApiKey:demo.aiConfigured,apiKeyMasked:'example-masked'},defaults:{baseUrl:'https://api.deepseek.com/v1',textModel:'deepseek-chat'}};
       }
       else if(route==='/api/ai-settings/test') {await new Promise(r=>setTimeout(r,120));status=503;data={ok:false,error:'示例：连接超时，请检查接口地址后重试'};}
+      else if(route==='/api/jev-settings') {
+        if(method==='PUT') demo.jevConfigured=!body.clear;
+        data={ok:true,configured:!!demo.jevConfigured,settings:{baseUrl:'https://api.typesafe.ai',model:'jev-latest',hasApiKey:!!demo.jevConfigured,apiKeyMasked:'***demo'}};
+      }
+      else if(route==='/api/jev-settings/test')data={ok:true,message:'Jev 连接成功'};
+      else if(route==='/api/choice-suggestions')data={ok:true,suggestions:{global:{},rows:{'example-a':{'科目':[{value:'办公用品',confidence:.8,source:'Jev'}]}},notices:[]}};
       else if(route==='/api/invoice-files') {await new Promise(r=>setTimeout(r,150));if(demo.duplicateUpload){status=409;data={ok:false,duplicate:true,error:'这张发票已在【公共办公】 ¥128.00的报销中使用（进行中）'};}else data={ok:true,attachment:{fileId:'example-new-original'}};}
       else if(route==='/api/parse-invoice') {
         await new Promise(r=>{demo.resolveOCR=r;if(!demo.holdOCR)setTimeout(r,150);});

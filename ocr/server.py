@@ -38,6 +38,9 @@ import expense_records as records
 from feishu_purchase import handle_create, handle_schema, definition, public_schema
 import ai_client
 import ai_settings
+import jev_settings
+import jev_client
+import choice_suggestions
 from invoice_extract import (
     ollama_base,
     ollama_model,
@@ -337,7 +340,7 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _ai_settings_request(self, path):
-        if path not in ("/api/ai-settings", "/api/ai-settings/test"):
+        if path not in ("/api/ai-settings", "/api/ai-settings/test", "/api/jev-settings", "/api/jev-settings/test"):
             return False
         try:
             owner = self._owner()
@@ -351,7 +354,23 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(raw.decode("utf-8") or "{}")
                 if not isinstance(body, dict):
                     raise ai_settings.SettingsError("无效的设置内容")
-            if path == "/api/ai-settings" and method == "GET":
+            if path == "/api/jev-settings" and method == "GET":
+                self._json(200, jev_settings.public_view(owner))
+            elif path == "/api/jev-settings" and method == "PUT":
+                self._json(200, jev_settings.save(owner, body))
+            elif path == "/api/jev-settings/test" and method == "POST":
+                creds = jev_settings.load_credentials(owner) or {}
+                key = body.get('apiKey') or ''
+                if not ai_client.looks_masked(key): creds['api_key'] = key.strip()
+                creds['base_url'] = jev_settings.validate_base(body.get('baseUrl') or creds.get('base_url'))
+                creds['model'] = ai_settings._validate_model(body.get('model') or creds.get('model') or jev_settings.DEFAULT_MODEL, required=True)
+                if not creds.get('api_key'): raise ai_settings.SettingsError('请先填写自己的 Jev API Key')
+                result = jev_client.system_one(**creds, state='连接测试', questions={
+                    'connection': {'type':'choice','instructions':'请选择连接成功', 'criteria':{'连接成功':'连接测试请求成功'}}})
+                if (result.get('answers', {}).get('connection') or {}).get('choice') != '连接成功':
+                    raise ai_settings.SettingsError('Jev 未返回有效的连接测试答案', 502)
+                self._json(200, {'ok':True, 'message':'Jev 连接成功', 'model':result.get('model')})
+            elif path == "/api/ai-settings" and method == "GET":
                 self._json(200, ai_settings.public_view(owner))
             elif path == "/api/ai-settings" and method == "PUT":
                 self._json(200, ai_settings.save(owner, body))
@@ -363,6 +382,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(e.http_status if e.http_status in (401, 403) else 502, {"ok": False, "error": str(e)})
         except ai_settings.SettingsError as e:
             self._json(e.status, {"ok": False, "error": str(e)})
+        except jev_client.JevError as e:
+            self._json(502, {"ok": False, "error": str(e)})
         except json.JSONDecodeError:
             self._json(422, {"ok": False, "error": "设置数据格式不正确"})
         except Exception:
@@ -454,7 +475,7 @@ class Handler(BaseHTTPRequestHandler):
             handle_logout(self)
             return
 
-        if path in ("/api/fill-history", "/api/fill-suggestions"):
+        if path in ("/api/fill-history", "/api/fill-suggestions", "/api/choice-suggestions"):
             try:
                 owner = self._owner()
                 length = int(self.headers.get("Content-Length") or 0)
@@ -465,7 +486,9 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("无效填写数据")
                 if path == "/api/fill-history":
                     expense_data.record_fills(owner, body.get("draftId"), claim, public_schema(definition()))
-                self._json(200, {"ok":True, "suggestions":expense_data.suggestions(owner, claim)})
+                suggestions = (choice_suggestions.suggest(owner, claim, public_schema(definition()))
+                               if path == '/api/choice-suggestions' else expense_data.suggestions(owner, claim))
+                self._json(200, {"ok":True, "suggestions":suggestions})
             except auth.FeishuAPIError as e:
                 self._json(e.http_status if e.http_status in (401,403) else 502, {"ok":False,"error":str(e)})
             except (ValueError, TypeError, KeyError, AttributeError) as e:
