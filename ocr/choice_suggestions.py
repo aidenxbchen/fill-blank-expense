@@ -59,7 +59,7 @@ def invoice_state(claim, inv):
 
 
 def _decide(owner, state, fields):
-    jev = jev_settings.load_credentials(owner)
+    jev = jev_settings.resolve_credentials(owner)
     endpoint, source = resolve_review_endpoint(owner)
     # Hash credentials into the owner-scoped key; never retain plaintext in cache.
     digest = hashlib.sha256(json.dumps([owner, state, fields, jev, endpoint], sort_keys=True,

@@ -45,5 +45,31 @@ function harness(){
   answers[queue[0].id]='办公费';assert.equal(p.ExpensePolicy.buildQuestionQueue([{id:'i',amount:128}],answers).length,0,'manual answer wins');
   const html=fs.readFileSync(require.resolve('./index.html'),'utf8');
   for(const id of ['jev-base-url','jev-api-key','jev-model','btn-save-jev','btn-test-jev','btn-clear-jev'])assert.ok(html.includes(`id="${id}"`));
-  console.log('Jev UI: per-fact reuse, changed facts, owner/revision guards, manual edits, real options and settings hooks passed');
+  const e=harness();
+  e.context.fetch=async(url)=>{
+    if(url.endsWith('/api/jev-settings')){
+      return {ok:true,json:async()=>({ok:true,configured:true,isOrgOwner:false,orgShared:true,settings:{baseUrl:'https://api.typesafe.ai',model:'jev-latest',hasApiKey:false,apiKeyMasked:''}})};
+    }
+    return {ok:true,json:async()=>({})};
+  };
+  await e.h.loadJevSettings();
+  assert.ok(e.el('jev-settings-message').textContent.includes('团队已共用 Jev'));
+  assert.equal(e.el('jev-settings-form').hidden,true);
+  assert.equal(e.el('btn-save-jev').hidden,true);
+  assert.equal(e.el('jev-api-key').disabled,true);
+
+  const f=harness();
+  f.context.fetch=async(url)=>{
+    if(url.endsWith('/api/jev-settings')){
+      return {ok:true,json:async()=>({ok:true,configured:true,isOrgOwner:true,orgShared:false,settings:{baseUrl:'https://api.typesafe.ai',model:'jev-latest',hasApiKey:true,apiKeyMasked:'sk-***ey'}})};
+    }
+    return {ok:true,json:async()=>({})};
+  };
+  await f.h.loadJevSettings();
+  assert.equal(f.el('jev-settings-form').hidden,false);
+  assert.equal(f.el('btn-save-jev').hidden,false);
+  assert.equal(f.el('jev-api-key').disabled,false);
+  assert.ok(f.el('jev-api-key').placeholder.includes('已保存'));
+
+  console.log('Jev UI: per-fact reuse, changed facts, owner/revision guards, manual edits, real options, org-sharing hooks passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

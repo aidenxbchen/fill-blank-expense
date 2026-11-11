@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261111jev1";
+  const ASSET_V = "20261111jev2";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -1853,7 +1853,7 @@
   let jevSettingsEpoch=0;
   function setJevMessage(text, ok=true) {
     const el=document.getElementById("jev-settings-message");
-    el.textContent=text;el.classList.toggle("is-err",!ok);
+    if(el){el.textContent=text;el.classList.toggle("is-err",!ok);}
   }
   async function loadJevSettings() {
     const owner=ownerId(), epoch=jevSettingsEpoch;
@@ -1864,22 +1864,65 @@
       if(owner!==ownerId() || epoch!==jevSettingsEpoch)return;
       if(!res.ok || !data.ok)throw new Error(data.error || "Jev 设置读取失败");
       const s=data.settings || {};
-      document.getElementById("jev-base-url").value=s.baseUrl || "https://api.typesafe.ai";
-      document.getElementById("jev-model").value=s.model || "jev-latest";
-      const key=document.getElementById("jev-api-key");key.value="";
-      key.placeholder=s.hasApiKey ? "已保存 "+s.apiKeyMasked+"（留空保留）" : "填写自己的 TypeSafe API Key";
-      setJevMessage(data.configured ? "Jev 已配置，用于封闭选项建议；请点选确认。" : "Jev 未配置，封闭选项继续使用你的文本模型或本机 Ollama。");
+      const isOwner = !!data.isOrgOwner;
+      const orgShared = !!data.orgShared;
+      const formEl = document.getElementById("jev-settings-form");
+      const actionsEl = document.getElementById("jev-actions");
+      const keyEl = document.getElementById("jev-api-key");
+      const baseUrlEl = document.getElementById("jev-base-url");
+      const modelEl = document.getElementById("jev-model");
+      const btnSave = document.getElementById("btn-save-jev");
+      const btnTest = document.getElementById("btn-test-jev");
+      const btnClear = document.getElementById("btn-clear-jev");
+
+      if (!isOwner) {
+        if (formEl) formEl.hidden = true;
+        if (actionsEl) actionsEl.hidden = true;
+        if (keyEl) { keyEl.disabled = true; keyEl.value = ""; }
+        if (baseUrlEl) baseUrlEl.disabled = true;
+        if (modelEl) modelEl.disabled = true;
+        if (btnSave) btnSave.hidden = true;
+        if (btnTest) btnTest.hidden = true;
+        if (btnClear) btnClear.hidden = true;
+        if (orgShared) {
+          setJevMessage("团队已共用 Jev，封闭选项将自动优化，无需填写密钥。");
+        } else {
+          setJevMessage("团队暂未配置 Jev，封闭选项继续使用你的文本模型或本机 Ollama。");
+        }
+      } else {
+        if (formEl) formEl.hidden = false;
+        if (actionsEl) actionsEl.hidden = false;
+        if (keyEl) keyEl.disabled = false;
+        if (baseUrlEl) baseUrlEl.disabled = false;
+        if (modelEl) modelEl.disabled = false;
+        if (btnSave) btnSave.hidden = false;
+        if (btnTest) btnTest.hidden = false;
+        if (btnClear) btnClear.hidden = false;
+        if (baseUrlEl) baseUrlEl.value = s.baseUrl || "https://api.typesafe.ai";
+        if (modelEl) modelEl.value = s.model || "jev-latest";
+        if (keyEl) {
+          keyEl.value = "";
+          keyEl.placeholder = s.hasApiKey ? ("已保存 " + s.apiKeyMasked + "（留空保留）") : "填写团队管理员的 TypeSafe API Key";
+        }
+        setJevMessage(data.configured ? "Jev 已配置，团队成员将共用此服务提建议。" : "Jev 未配置，封闭选项继续使用文本模型或本机 Ollama。");
+      }
     } catch(e) {if(owner===ownerId() && epoch===jevSettingsEpoch)setJevMessage(e.message || "读取失败，请重开设置重试",false);}
   }
   async function updateJevSettings(method, clear) {
-    if(clear && !confirm("只清除本账号的 Jev 设置？DeepSeek 设置会保留。"))return;
+    if(clear && !confirm("只清除本团队的 Jev 设置？DeepSeek 设置会保留。"))return;
     const owner=ownerId(), epoch=++jevSettingsEpoch;
     setJevMessage(method==="POST" ? "正在测试 Jev 连接…" : "正在保存…");
     try {
+      const baseUrlEl = document.getElementById("jev-base-url");
+      const keyEl = document.getElementById("jev-api-key");
+      const modelEl = document.getElementById("jev-model");
       const res=await fetch(apiBase()+"/api/jev-settings"+(method==="POST" ? "/test" : ""),{
         method,credentials:"include",headers:{"Content-Type":"application/json"},signal:AbortSignal.timeout(20000),
-        body:JSON.stringify(clear ? {clear:true} : {baseUrl:document.getElementById("jev-base-url").value,
-          apiKey:document.getElementById("jev-api-key").value.trim(),model:document.getElementById("jev-model").value})
+        body:JSON.stringify(clear ? {clear:true} : {
+          baseUrl: baseUrlEl ? baseUrlEl.value : "",
+          apiKey: keyEl ? keyEl.value.trim() : "",
+          model: modelEl ? modelEl.value : ""
+        })
       });
       const data=await res.json();
       if(owner!==ownerId() || epoch!==jevSettingsEpoch)return;
@@ -1889,7 +1932,7 @@
         await loadJevSettings();
         if(session.stage==="interview")refreshChoiceSuggestions();
       }
-      setJevMessage(method==="POST" ? "Jev 连接成功" : clear ? "Jev 设置已清除，继续使用文本模型 / 本机回退。" : "Jev 已保存，仅当前飞书账号可使用。");
+      setJevMessage(method==="POST" ? "Jev 连接成功" : clear ? "Jev 设置已清除，继续使用文本模型 / 本机回退。" : "Jev 已保存，团队全员已共用 Jev。");
     } catch(e) {if(owner===ownerId() && epoch===jevSettingsEpoch)setJevMessage(e.message || "操作失败，请重试",false);}
   }
 

@@ -28,7 +28,7 @@ class ExpenseHTTPTests(unittest.TestCase):
         self.addCleanup(self.close_server)
         self.base='http://127.0.0.1:'+str(self.http.server_port)
         self.session={'access_token':'private-not-printed','user':{'openId':'alice'}}
-        env=patch.dict('os.environ',{'BAOXIAO_SECRETS_KEY':'http-test-secret'},clear=False)
+        env=patch.dict('os.environ',{'BAOXIAO_SECRETS_KEY':'http-test-secret','ORG_JEV_OWNER_OPEN_ID':'alice'},clear=False)
         env.start();self.addCleanup(env.stop)
         for obj,key,val in [(server.auth,'get_session',self.session),(server.auth,'ensure_fresh_session',self.session),(server,'definition',SCHEMA)]:
             patcher=patch.object(obj,key,return_value=val);patcher.start();self.addCleanup(patcher.stop)
@@ -108,12 +108,22 @@ class ExpenseHTTPTests(unittest.TestCase):
             self.assertEqual(self.request('/api/jev-settings')[0],401)
             self.assertEqual(self.request('/api/choice-suggestions',b'{"claim":{}}')[0],401)
         status,body,_=self.request('/api/jev-settings',b'{"apiKey":"synthetic-jev-secret"}',method='PUT')
-        self.assertEqual(status,200);self.assertTrue(body['configured'])
+        self.assertEqual(status,200);self.assertTrue(body['configured']);self.assertTrue(body['isOrgOwner'])
         self.assertNotIn('synthetic-jev-secret',json.dumps(body))
         self.assertFalse(self.request('/api/ai-settings')[1]['configured'])
         other={'access_token':'synthetic','user':{'openId':'bob'}}
         with patch.object(server.auth,'get_session',return_value=other), patch.object(server.auth,'ensure_fresh_session',return_value=other):
-            self.assertFalse(self.request('/api/jev-settings')[1]['configured'])
+            status_bob,body_bob,_=self.request('/api/jev-settings')
+            self.assertEqual(status_bob,200)
+            self.assertTrue(body_bob['configured'])
+            self.assertTrue(body_bob['orgShared'])
+            self.assertFalse(body_bob['isOrgOwner'])
+            self.assertFalse(body_bob['settings']['hasApiKey'])
+            self.assertEqual(body_bob['settings']['apiKeyMasked'],'')
+            self.assertNotIn('synthetic-jev-secret',json.dumps(body_bob))
+            self.assertEqual(self.request('/api/jev-settings',b'{"apiKey":"bob-key"}',method='PUT')[0],403)
+            self.assertEqual(self.request('/api/jev-settings/test',b'{}',method='POST')[0],403)
+            self.assertFalse(self.request('/api/ai-settings')[1]['configured'])
         with patch.object(server.choice_suggestions,'suggest',return_value={'rows':{},'global':{}}) as suggest:
             status,body,_=self.request('/api/choice-suggestions',b'{"owner":"bob","claim":{"answers":{},"invoices":[]}}')
             self.assertEqual(status,200);self.assertEqual(suggest.call_args.args[0],'alice')

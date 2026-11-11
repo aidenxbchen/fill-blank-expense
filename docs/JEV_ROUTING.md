@@ -2,7 +2,7 @@
 
 ## 文件级实现
 
-- `ocr/jev_settings.py`：独立 Jev 配置，复用既有认证加密；`jev_settings(owner PRIMARY KEY, base_url, api_key_enc, model, updated_at)`。不读共享环境里的 TypeSafe Key。现有 DeepSeek 的 `ai_settings` 不变。
+- `ocr/jev_settings.py`：团队统一共享 Jev 配置（以管理员 open_id `ou_ec0bada34f29c4020d794b917b4e7fbb` 为准），复用既有认证加密；`jev_settings(owner PRIMARY KEY, base_url, api_key_enc, model, updated_at)`。全员封闭选项共享管理员配置的 Jev；DeepSeek 等文本模型接口严格保持用户级隔离，绝不回退至他人密钥。
 - `ocr/jev_client.py`：原生 HTTPS `POST /v1/systemone`，不走 chat/completions，不发送 Images / Long Context 头，不跟随携带密钥的重定向，不展示上游响应正文。
 - `ocr/choice_suggestions.py`：从服务端现行采购 definition 的真实选项组装问题；每张票一次请求并行所有封闭问题 + companion Noul。餐饮多数为招待费仅是说明，禁止硬编码或新增选项。
 - `ocr/server.py`：登录与同源保护下的 `/api/jev-settings` GET/PUT、`/api/jev-settings/test` POST、`/api/choice-suggestions` POST。owner 始终来自当前会话。
@@ -19,7 +19,7 @@
 
 ## UI 与边界
 
-- DeepSeek 与 Jev 分别保存/测试/清除，故只填 Jev 也能保存；未填 Jev 不拦上传。首次提醒仍仅一轮，推荐自己的 DeepSeek 与可选 Jev。
+- 管理员可在「AI 设置」中配置、测试和清除团队 Jev；普通同事访问时直接展示「团队已共用 Jev」，隐藏/禁用密钥输入与测试按钮，无需也无法输入 Jev 密钥，且后端绝不向同事回传管理员密钥（包含掩码）。DeepSeek 与其他文本接口继续由个人按需填写。
 - 开放问题继续由用户填写；现有文本校对/生成使用原有文本接口，本次不增加开放字段自动填入。
 - OAuth、采购映射/提交、附件、数量、去重、银行档案、草稿/历史和用户密钥隔离均保留。无生产审批/真实消息测试。
 - 测试使用临时 SQLite、合成发票和模拟 HTTP；不读取任何真实密钥或真实票面作测试。真实 Jev 付费调用留给用户在 AI 设置点击测试。

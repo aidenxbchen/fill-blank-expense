@@ -21,7 +21,7 @@ class JevTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
         for key, value in [('DB_PATH', Path(tmp.name)/'data.db'), ('FILE_ROOT', Path(tmp.name)/'files')]:
             p = patch.object(data, key, value); p.start(); self.addCleanup(p.stop)
-        p = patch.dict('os.environ', {'BAOXIAO_SECRETS_KEY':'synthetic-test-encryption'}); p.start(); self.addCleanup(p.stop)
+        p = patch.dict('os.environ', {'BAOXIAO_SECRETS_KEY':'synthetic-test-encryption', 'ORG_JEV_OWNER_OPEN_ID':'alice'}); p.start(); self.addCleanup(p.stop)
         choices._cache.clear()
         self.schema = public_schema(SCHEMA)
         self.claim = {'costCenter':'公共办公','purchaseMethod':'差旅费',
@@ -48,17 +48,25 @@ class JevTests(unittest.TestCase):
 
     def test_encrypted_owner_isolation_blank_key_preserve_clear(self):
         view=self.save_jev()
-        self.assertTrue(view['configured']); self.assertNotIn('synthetic-private-key',json.dumps(view))
+        self.assertTrue(view['configured']); self.assertTrue(view['isOrgOwner']); self.assertNotIn('synthetic-private-key',json.dumps(view))
         with data.database() as con:
             cipher=con.execute('SELECT api_key_enc FROM jev_settings WHERE owner=?',('alice',)).fetchone()[0]
         self.assertNotIn('synthetic-private-key',cipher)
         self.assertIsNone(jev_settings.load_credentials('bob'))
-        with self.assertRaises(ai_settings.SettingsError): jev_settings.save('bob',{'apiKey':''})
+        with self.assertRaises(ai_settings.SettingsError): jev_settings.save('bob',{'apiKey':'key'})
+        bob_view = jev_settings.public_view('bob')
+        self.assertTrue(bob_view['configured'])
+        self.assertTrue(bob_view['orgShared'])
+        self.assertFalse(bob_view['isOrgOwner'])
+        self.assertFalse(bob_view['settings']['hasApiKey'])
+        self.assertEqual(bob_view['settings']['apiKeyMasked'], '')
+        self.assertNotIn('synthetic-private-key', json.dumps(bob_view))
         jev_settings.save('alice',{'apiKey':'','baseUrl':'https://api.typesafe.ai/v1','model':'jev-1.14.0'})
         self.assertEqual(jev_settings.load_credentials('alice')['model'],'jev-1.14.0')
         self.assertEqual(jev_settings.load_credentials('alice')['api_key'],'synthetic-private-key')
         jev_settings.save('alice',{'clear':True})
         self.assertFalse(jev_settings.public_view('alice')['configured'])
+        self.assertFalse(jev_settings.public_view('bob')['configured'])
 
     def test_damaged_key_and_global_key_never_fallback(self):
         self.save_jev()
@@ -147,13 +155,13 @@ class JevTests(unittest.TestCase):
                 self.assertEqual(text.call_args.kwargs['api_key'],'alice-only')
                 self.assertTrue(result['rows']['synthetic']);self.assertNotIn('secret-must-not-leak',str(result))
         choices._cache.clear()
-        with patch.object(jev_client,'system_one') as jev, patch.object(choices,'resolve_review_endpoint',return_value=({'base_url':'http://127.0.0.1:11434/v1','api_key':'','model':'local'},'ollama')), patch.object(choices.ai_client,'chat_completions',return_value=json.dumps({field['name']:'invented option'})) as text:
+        with patch.object(jev_settings,'resolve_credentials',return_value=None), patch.object(jev_client,'system_one') as jev, patch.object(choices,'resolve_review_endpoint',return_value=({'base_url':'http://127.0.0.1:11434/v1','api_key':'','model':'local'},'ollama')), patch.object(choices.ai_client,'chat_completions',return_value=json.dumps({field['name']:'invented option'})) as text:
             result=choices.suggest('bob',self.claim,self.schema)
             jev.assert_not_called();self.assertEqual(text.call_args.kwargs['base_url'],'http://127.0.0.1:11434/v1')
             self.assertFalse(result['rows']['synthetic'])
 
     def test_cache_owner_and_fact_revision_isolation(self):
-        self.save_jev();self.save_jev('bob')
+        self.save_jev()
         with patch.object(jev_client,'system_one',side_effect=self.answer) as remote, patch.object(choices.ai_client,'chat_completions'):
             choices.suggest('alice',self.claim,self.schema)
             choices.suggest('bob',self.claim,self.schema)
@@ -161,5 +169,12 @@ class JevTests(unittest.TestCase):
             choices.suggest('alice',self.claim,self.schema)
             self.assertEqual(remote.call_count,3)
 
+
+
+    def test_default_org_owner_id_and_sharing(self):
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(jev_settings.org_owner_id(), 'ou_ec0bada34f29c4020d794b917b4e7fbb')
+            self.assertTrue(jev_settings.is_org_owner('ou_ec0bada34f29c4020d794b917b4e7fbb'))
+            self.assertFalse(jev_settings.is_org_owner('colleague_open_id'))
 
 if __name__=='__main__': unittest.main()

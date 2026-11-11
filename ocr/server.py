@@ -359,6 +359,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/jev-settings" and method == "PUT":
                 self._json(200, jev_settings.save(owner, body))
             elif path == "/api/jev-settings/test" and method == "POST":
+                if not jev_settings.is_org_owner(owner):
+                    raise ai_settings.SettingsError('团队已共用 Jev，仅管理员可测试连接', 403)
                 creds = jev_settings.load_credentials(owner) or {}
                 key = body.get('apiKey') or ''
                 if not ai_client.looks_masked(key): creds['api_key'] = key.strip()
