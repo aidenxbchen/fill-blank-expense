@@ -45,9 +45,14 @@
     let code = [];
     let para = [];
 
+    // Keep native selection paint on inline text, not the full-width block boxes.
+    function textSpan(text) {
+      return '<span class="handbook-text">' + inline(text) + "</span>";
+    }
+
     function closePara() {
       if (!para.length) return;
-      html.push("<p>" + inline(para.join("\n")) + "</p>");
+      html.push("<p>" + textSpan(para.join("\n")) + "</p>");
       para = [];
     }
 
@@ -83,7 +88,7 @@
         closePara();
         closeList();
         const level = heading[1].length;
-        html.push("<h" + level + ">" + inline(heading[2]) + "</h" + level + ">");
+        html.push("<h" + level + ">" + textSpan(heading[2]) + "</h" + level + ">");
         continue;
       }
       if (/^---+\s*$/.test(line)) {
@@ -100,7 +105,7 @@
           html.push("<ul>");
           inList = "ul";
         }
-        html.push("<li>" + inline(ul[1]) + "</li>");
+        html.push("<li>" + textSpan(ul[1]) + "</li>");
         continue;
       }
       const ol = /^\s*(\d+)\.\s+(.+)$/.exec(line);
@@ -111,7 +116,7 @@
           html.push("<ol>");
           inList = "ol";
         }
-        html.push("<li>" + inline(ol[2]) + "</li>");
+        html.push("<li>" + textSpan(ol[2]) + "</li>");
         continue;
       }
       if (!line.trim()) {
