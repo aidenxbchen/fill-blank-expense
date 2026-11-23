@@ -41,6 +41,7 @@ import ai_settings
 import jev_settings
 import jev_client
 import choice_suggestions
+import handbook
 from invoice_extract import (
     ollama_base,
     ollama_model,
@@ -235,6 +236,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, {"ok": True, "attachment": attachment})
             return
+        if path == "/api/handbook":
+            try:
+                self._owner()
+            except auth.FeishuAPIError as e:
+                self._json(e.http_status if e.http_status in (401, 403) else 502, {"ok": False, "error": str(e)})
+                return
+            try:
+                markdown = handbook.read_handbook()
+            except FileNotFoundError as e:
+                self._json(404, {"ok": False, "error": str(e)})
+                return
+            except Exception:
+                self._json(500, {"ok": False, "error": "手册读取失败"})
+                return
+            self._json(200, {"ok": True, "filename": handbook.HANDBOOK_NAME, "markdown": markdown})
+            return
         if path == "/api/health":
             reachable = probe_ollama()
             self._json(
@@ -275,6 +292,7 @@ class Handler(BaseHTTPRequestHandler):
                         "GET /api/auth/feishu/login",
                         "GET /api/auth/feishu/callback",
                         "GET /api/auth/me",
+                        "GET /api/handbook",
                         "POST /api/auth/logout",
                         "GET /api/budgets",
                         "POST /api/parse-invoice",
@@ -635,7 +653,7 @@ def main() -> None:
         f"  review={review_model()}\n"
         f"  ollama={ollama_base()}\n"
         f"  GET  /api/health\n"
-        f"  GET  /api/auth/feishu/login | /api/auth/me | /api/budgets\n"
+        f"  GET  /api/auth/feishu/login | /api/auth/me | /api/budgets | /api/handbook\n"
         f"  GET/PUT /api/ai-settings  POST /api/ai-settings/test\n"
         f"  POST /api/parse-invoice (multipart file=...)\n"
         f"  POST /api/feishu-expense (native purchase approval)\n"

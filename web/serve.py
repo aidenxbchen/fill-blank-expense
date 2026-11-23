@@ -9,6 +9,13 @@ from pathlib import Path
 
 
 class NoCacheHandler(SimpleHTTPRequestHandler):
+    def do_GET(self) -> None:
+        path = (self.path or "").split("?", 1)[0]
+        if path in ("/handbook", "/handbook/"):
+            query = self.path.split("?", 1)[1] if "?" in (self.path or "") else ""
+            self.path = "/handbook.html" + (("?" + query) if query else "")
+        return super().do_GET()
+
     def end_headers(self) -> None:
         path = (self.path or "").split("?", 1)[0].lower()
         if path.endswith(".html") or path == "/" or path.endswith("/"):

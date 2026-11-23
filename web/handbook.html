@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="description" content="报了呗工作手册：只读沉淀操作原则与方法。" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>工作手册 | 报了呗</title>
+  <link rel="stylesheet" href="./styles.css?v=20261123handbook1" />
+</head>
+<body class="delight-body handbook-body">
+  <a class="skip-link" href="#handbook-main">跳到手册正文</a>
+  <div class="ambient" aria-hidden="true">
+    <div class="ambient-mesh"></div>
+    <div class="ambient-grid"></div>
+    <div class="ambient-rings"></div>
+    <div class="ambient-frame"></div>
+    <div class="ambient-mark">报了呗</div>
+    <div class="ambient-grain"></div>
+    <div class="ambient-vignette"></div>
+  </div>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <a class="brand-home" href="./index.html" aria-label="返回报了呗工作台">
+          <div class="brand-mark" aria-hidden="true">
+            <picture>
+              <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261123handbook1" />
+              <img src="./assets/logo-zbs.png?v=20261123handbook1" alt="" width="44" height="44" />
+            </picture>
+          </div>
+          <div class="brand-text">
+            <h1>报了呗</h1>
+            <p>工作手册，只读。做对一次就够了。</p>
+          </div>
+        </a>
+      </div>
+      <div class="header-actions handbook-header-actions">
+        <a class="btn btn-secondary" href="./index.html">返回工作台</a>
+      </div>
+      <div class="auth-box" id="auth-box">
+        <a class="btn btn-primary" id="btn-feishu-login" href="/api/auth/feishu/login">用飞书登录</a>
+        <div class="auth-user" id="auth-user" hidden>
+          <img class="auth-avatar" id="auth-avatar" alt="" width="28" height="28" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" hidden />
+          <span id="auth-name"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-logout">退出</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="page delight-page handbook-page" id="handbook-main" tabindex="-1">
+    <div class="handbook-card panel" id="handbook-card">
+      <p class="handbook-status" id="handbook-status" role="status">正在核对登录状态…</p>
+      <article class="handbook-article" id="handbook-article" hidden></article>
+    </div>
+  </main>
+
+  <script src="./handbook.js?v=20261123handbook1"></script>
+</body>
+</html>
