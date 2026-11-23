@@ -20,8 +20,9 @@ class QuietHandler(server.Handler):
 class HandbookTests(unittest.TestCase):
     def test_source_file_is_readable_and_secret_free(self):
         text = handbook.read_handbook()
-        self.assertIn('这份手册是什么', text)
-        self.assertIn('差旅采购审批重提检查清单', text)
+        self.assertIn('这份准则是什么', text)
+        self.assertIn('提交前检查清单', text)
+        self.assertIn('案例是证据，不是模板', text)
         lowered = text.lower()
         for needle in ('baoxiao_secrets_key', 'begin rsa private key', 'sk-'):
             self.assertNotIn(needle, lowered)
@@ -50,7 +51,7 @@ class HandbookTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertTrue(body['ok'])
             self.assertEqual(body['filename'], '报了呗.md')
-            self.assertIn('这份手册是什么', body['markdown'])
+            self.assertIn('这份准则是什么', body['markdown'])
 
             with patch.object(server.auth, 'get_session', return_value=None):
                 status, body = request()

@@ -31,17 +31,20 @@ assert.ok(!css.includes('blessing-eye') && !handbookPage.includes('ornament'));
 const forbidden = [/sk-[a-zA-Z0-9]{10,}/, /api[_-]?key\s*=/i, /BAOXIAO_SECRETS_KEY/, /BEGIN (RSA |OPENSSH )?PRIVATE KEY/];
 for (const re of forbidden) assert.ok(!re.test(md), 'handbook must not contain secrets: ' + re);
 
-assert.ok(md.includes('这份手册是什么'));
+assert.ok(md.includes('这份准则是什么'));
+assert.ok(md.includes('执行准则') && md.includes('案例是证据，不是模板'));
+assert.ok(md.includes('表单强制') && md.includes('产品 / 流程强制'));
+
 assert.ok(md.includes('~/Code/fill-blank-expense'));
 assert.ok(md.includes('restart-local.sh'));
 assert.ok(md.includes('不要 git push') || md.includes('不要 `git push`'));
 assert.ok(md.includes('cli_aaa28a16ca785cba'));
 assert.ok(md.includes('ou_320bc2979ab87189e5e649aa6ea60ad3'));
 assert.ok(md.includes('ou_ec0bada34f29c4020d794b917b4e7fbb'));
-assert.ok(md.includes('差旅采购审批重提检查清单'));
+assert.ok(md.includes('提交前检查清单'));
 assert.ok(md.includes('代订附加'));
 assert.ok(md.includes('但是你没加附件，这是不对的'));
-assert.ok(!/\d{8,}/.test(md.replace(/cli_aaa28a16ca785cba/g, '').replace(/ou_[a-f0-9]+/g, '')), 'avoid personal invoice-like long numbers');
+assert.ok(!/\d{8,}/.test(md.replace(/cli_aaa28a16ca785cba/g, '').replace(/ou_[a-f0-9]+/g, '').replace(/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/g, '')), 'avoid personal invoice-like long numbers');
 
 const context = { window: {}, document: { getElementById: () => ({ addEventListener() {}, hidden: true }) }, location: { hostname: 'baoxiao.xbchen.top' } };
 context.window.__handbookTestHooks = {};
