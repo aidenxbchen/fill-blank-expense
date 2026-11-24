@@ -43,6 +43,7 @@ import jev_client
 import choice_suggestions
 import handbook
 import filling_workflow
+import recurring_internet
 from invoice_extract import (
     ollama_base,
     ollama_model,
@@ -199,6 +200,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+        if self._internet_task_request(path):
+            return
         if self._profiles_request(path):
             return
         if self._ai_settings_request(path):
@@ -479,10 +482,51 @@ class Handler(BaseHTTPRequestHandler):
             self._json(503, {"ok":False,"error":"记录暂时不可用，当前内容仍保留在本机，请稍后重试"})
         return True
 
+    def _internet_task_request(self, path):
+        if not path.startswith('/api/automatic-tasks'):
+            return False
+        try:
+            owner = self._owner()
+            if path == '/api/automatic-tasks/internet' and self.command == 'GET':
+                self._json(200, recurring_internet.status(owner))
+                return True
+            length = int(self.headers.get('Content-Length') or 0)
+            if not 0 < length <= 16384:
+                raise recurring_internet.TaskError('任务请求为空或超过 16KB')
+            body = json.loads(self.rfile.read(length))
+            if not isinstance(body, dict):
+                raise recurring_internet.TaskError('无效任务请求')
+            if path == '/api/automatic-tasks/internet' and self.command == 'POST':
+                result = recurring_internet.update(owner, body)
+            elif path == '/api/automatic-tasks/internet/preview' and self.command == 'POST':
+                if body != {'dryRun': True}:
+                    raise recurring_internet.TaskError('仅支持强制 dry-run 预演，不能传入发票或提交指令',403)
+                sid = auth.cookie_from_headers(self.headers)
+                sess = auth.ensure_fresh_session(sid, auth.get_session(sid) or {})
+                result = recurring_internet.run(sess)
+            elif path == '/api/automatic-tasks/internet/recover' and self.command == 'POST':
+                if set(body) != {'revision'} or type(body['revision']) is not int:
+                    raise recurring_internet.TaskError('清理中断运行需要当前版本号')
+                result = recurring_internet.recover_interrupted(owner,body['revision'])
+            else:
+                raise recurring_internet.TaskError('任务接口不存在或方法不支持',404)
+            self._json(200,result)
+        except auth.FeishuAPIError as exc:
+            self._json(exc.http_status if exc.http_status in (401,403) else 502,{'ok':False,'error':'请先登录飞书并确认读取权限'})
+        except (recurring_internet.TaskError, records.RecordError) as exc:
+            self._json(exc.status,{'ok':False,'error':str(exc)})
+        except (ValueError,TypeError,KeyError):
+            self._json(422,{'ok':False,'error':'任务数据格式不正确'})
+        except Exception:
+            self._json(503,{'ok':False,'error':'任务服务暂不可用；未发起审批'})
+        return True
+
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+        if self._internet_task_request(path):
+            return
         if "fallback" in qs and qs["fallback"] and qs["fallback"][0] == "mock":
             pass
 
@@ -662,6 +706,7 @@ def main() -> None:
     addr = (HOST, PORT)
     httpd = ThreadingHTTPServer(addr, Handler)
     filling_workflow.start_worker()
+    recurring_internet.start_worker()  # default off; this worker can only preview
     print(
         f"fill-blank-expense OCR bridge on http://{HOST}:{PORT}\n"
         f"  model={ollama_model()}\n"
