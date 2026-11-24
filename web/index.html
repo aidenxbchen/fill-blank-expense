@@ -5,7 +5,7 @@
   <meta name="description" content="报了呗，ANEVER 员工的采购工作台：上传发票原件、核对识别汇总、补齐项目信息并发起飞书采购申请。" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261124tasks2" />
+  <link rel="stylesheet" href="./styles.css?v=20261124t108ulist1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -75,7 +75,7 @@
       <div class="hero">
         <h2 class="hero-title">准备这次采购的发票</h2>
         <p class="hero-sub">选好项目，上传原件。识别后直接核对表格，再补齐采购信息。</p>
-        <a class="btn btn-secondary" id="btn-periodic-tasks" href="./automatic-tasks.html?v=20261124tasks2">周期性任务 · 网费预演</a>
+        <a class="btn btn-secondary" id="btn-periodic-tasks" href="./automatic-tasks.html?v=20261124t108ulist1">周期性任务 · 网费预演</a>
         <p class="section-hint">查看任务状态、周期和最近结果；真实审批始终关闭。</p>
       </div>
 
@@ -112,11 +112,9 @@
         </aside>
         <section class="routine-task-card panel" aria-labelledby="routine-task-title">
           <h2 id="routine-task-title">常规任务</h2>
-          <p class="section-hint">网费周期预演 · 真实审批关闭</p>
-          <section id="routine-task-summary" role="status" aria-live="polite" aria-atomic="true">
-            <p>正在读取任务状态…</p>
-          </section>
-          <a class="btn btn-secondary" href="./automatic-tasks.html?v=20261124tasks2">管理常规任务</a>
+          <ol id="routine-task-summary" aria-label="月度业务规则">
+            <li><p>1. 网络服务费</p><p>月度</p></li>
+          </ol>
         </section>
         </section>
 
@@ -371,15 +369,14 @@
 
   <footer class="site-footer">
     <a href="./handbook.html">工作手册</a>
-    <a href="./automatic-tasks.html?v=20261124tasks2">周期性任务 · 网费预演</a>
+    <a href="./automatic-tasks.html?v=20261124t108ulist1">周期性任务 · 网费预演</a>
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261124tasks2"></script>
-  <script src="./ocr-bridge.js?v=20261124tasks2"></script>
-  <script src="./policy.js?v=20261124tasks2"></script>
-  <script src="./app.js?v=20261124tasks2"></script>
-  <script src="./routine-task-card.js?v=20261124tasks2"></script>
+  <script src="./ui.js?v=20261124t108ulist1"></script>
+  <script src="./ocr-bridge.js?v=20261124t108ulist1"></script>
+  <script src="./policy.js?v=20261124t108ulist1"></script>
+  <script src="./app.js?v=20261124t108ulist1"></script>
 </body>
 </html>
