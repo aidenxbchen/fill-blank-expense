@@ -5,7 +5,7 @@
   <meta name="description" content="报了呗，ANEVER 员工的采购工作台：上传发票原件、核对识别汇总、补齐项目信息并发起飞书采购申请。" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261124periodic1" />
+  <link rel="stylesheet" href="./styles.css?v=20261124tasks2" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -75,11 +75,12 @@
       <div class="hero">
         <h2 class="hero-title">准备这次采购的发票</h2>
         <p class="hero-sub">选好项目，上传原件。识别后直接核对表格，再补齐采购信息。</p>
-        <a class="btn btn-secondary" id="btn-periodic-tasks" href="./automatic-tasks.html?v=20261124periodic1">周期性任务 · 网费预演</a>
+        <a class="btn btn-secondary" id="btn-periodic-tasks" href="./automatic-tasks.html?v=20261124tasks2">周期性任务 · 网费预演</a>
         <p class="section-hint">查看任务状态、周期和最近结果；真实审批始终关闭。</p>
       </div>
 
       <div class="upload-triad" id="upload-triad">
+        <section class="workspace-side" aria-label="介绍与常规任务">
         <aside class="blessing-card triad-card" id="blessing-card" aria-label="今日祝福" data-index="0">
           <div class="blessing-ornament blessing-ornament-tl" aria-hidden="true">
             <svg viewBox="0 0 64 64" fill="none">
@@ -109,6 +110,15 @@
             <button type="button" class="blessing-shuffle" id="btn-blessing-shuffle" aria-label="换一句祝福">换一句</button>
           </div>
         </aside>
+        <section class="routine-task-card panel" aria-labelledby="routine-task-title">
+          <h2 id="routine-task-title">常规任务</h2>
+          <p class="section-hint">网费周期预演 · 真实审批关闭</p>
+          <section id="routine-task-summary" role="status" aria-live="polite" aria-atomic="true">
+            <p>正在读取任务状态…</p>
+          </section>
+          <a class="btn btn-secondary" href="./automatic-tasks.html?v=20261124tasks2">管理常规任务</a>
+        </section>
+        </section>
 
         <section class="budget-picker panel triad-card" id="budget-picker">
           <div class="triad-card-body">
@@ -119,7 +129,8 @@
             </div>
             <p class="section-hint" id="budget-picker-hint">用飞书登录后，点选你已通过的立项 / 变更，问答会自动带上项目。</p>
             <p class="budget-refresh-status" id="budget-refresh-status" role="status" aria-live="polite" aria-atomic="true"></p>
-            <div class="budget-grid" id="budget-grid"></div>
+            <section class="budget-grid" id="budget-grid" tabindex="0" role="region" aria-label="可用预算列表" aria-describedby="budget-scroll-hint"></section>
+            <p class="budget-scroll-hint" id="budget-scroll-hint">显示约 3 条预算；更多可滚动，聚焦列表后用方向键或 Page Down 浏览。</p>
           </div>
         </section>
 
@@ -360,14 +371,15 @@
 
   <footer class="site-footer">
     <a href="./handbook.html">工作手册</a>
-    <a href="./automatic-tasks.html?v=20261124periodic1">周期性任务 · 网费预演</a>
+    <a href="./automatic-tasks.html?v=20261124tasks2">周期性任务 · 网费预演</a>
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261124periodic1"></script>
-  <script src="./ocr-bridge.js?v=20261124periodic1"></script>
-  <script src="./policy.js?v=20261124periodic1"></script>
-  <script src="./app.js?v=20261124periodic1"></script>
+  <script src="./ui.js?v=20261124tasks2"></script>
+  <script src="./ocr-bridge.js?v=20261124tasks2"></script>
+  <script src="./policy.js?v=20261124tasks2"></script>
+  <script src="./app.js?v=20261124tasks2"></script>
+  <script src="./routine-task-card.js?v=20261124tasks2"></script>
 </body>
 </html>

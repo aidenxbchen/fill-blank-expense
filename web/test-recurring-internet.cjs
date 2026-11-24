@@ -4,7 +4,9 @@ const {chromium}=require('playwright');
 async function run(browser,width){
   const context=await browser.newContext({viewport:{width,height:1000},reducedMotion:'reduce'});
   const page=await context.newPage(),errors=[],requests=[];
-  let holdPreview=false,releasePreview=null,loadStatus=200;
+  let holdPreview=false,releasePreview=null,loadStatus=200,draftWrites=0,budgetAvailable=true;
+  const budget={instanceId:'FB727F0B-C731-492C-9BDD-8D1D7F4DF620',project:'公共办公',title:'立项预算申请 · 公共办公',status:'APPROVED'};
+  const record={id:'template',revision:3,state:{draftId:'template',stage:'draft',answers:{purchaseMethod:'个人垫付','purchase:个人垫付:invoice:个人垫付科目':'人工已选科目'},chat:[],invoices:[{id:'invoice',merchant:'票面商户',amount:380,invoiceNo:'fixture-only'}],draft:{purchaseMethod:'个人垫付'}}};
   let task={ok:true,enabled:false,dryRun:true,liveSubmissionEnabled:false,revision:0,running:null,nextRun:null,
     schedulerRegistered:false,expectedBuyer:'澜理商贸（珠海）有限公司',missingConfig:[],
     config:{intervalSeconds:86400,scanSince:1795449600,templateDraftId:'template',emptyTaxIdAllowed:null,expectedTaxId:'',internetAccount:''},runs:[]};
@@ -18,6 +20,12 @@ async function run(browser,width){
     if(p.startsWith('/api/')){
       requests.push(p);
       assert(!p.includes('feishu-expense'),'real approval endpoint forbidden');
+      if(p==='/api/budgets')return json({ok:true,budgets:budgetAvailable?[budget]:[]});
+      if(p==='/api/purchase-schema')return json({ok:true,projects:['公共办公'],methods:[]});
+      if(p==='/api/drafts/template'){
+        if(req.method()==='PUT'){const body=req.postDataJSON();assert.equal(body.revision,record.revision);record.state=body.state;record.revision++;draftWrites++;}
+        return json({ok:true,record});
+      }
       if(p==='/api/drafts')return json({ok:true,items:[{id:'template',title:'常规网费配置草稿'}]});
       if(p==='/api/automatic-tasks/internet'){
         if(loadStatus!==200)return json({ok:false,error:loadStatus===401?'请先登录飞书并确认读取权限':'夹具读取失败'},loadStatus);
@@ -53,7 +61,16 @@ async function run(browser,width){
   await page.getByRole('heading',{name:'周期性任务列表',exact:true}).waitFor();
   await page.getByText('周期：每 86400 秒',{exact:true}).waitFor();
   await page.getByText('最近结果：尚未运行',{exact:true}).waitFor();
-  await page.getByLabel('已确认的网费账户',{exact:true}).fill('confirmed-internet-account');
+  await page.getByText('预算科目待确认：',{exact:false}).waitFor();
+  const apply=page.getByRole('button',{name:'预填公共办公关联到所选草稿',exact:true});
+  budgetAvailable=false;await apply.click();await page.getByText('当前账号的可用预算与项目列表未能核对公共办公审批，请刷新预算或检查权限；未写入草稿。',{exact:true}).waitFor();
+  assert.equal(draftWrites,0);
+  budgetAvailable=true;await apply.click();await page.getByText('已将公共办公项目与关联审批预填到所选草稿。科目仍需核对；任务未启用。请在工作台检查草稿后再保存预演配置。',{exact:true}).waitFor();
+  assert.equal(draftWrites,1);assert.equal(task.enabled,false);assert.equal(task.runs.length,0);
+  assert.equal(record.state.answers.costCenter,'公共办公');assert.equal(record.state.answers.selectedBudget.instanceId,budget.instanceId);
+  assert.equal(record.state.answers['purchase:个人垫付:invoice:个人垫付科目'],'人工已选科目');
+  assert.equal(record.state.invoices[0].amount,380);assert.equal(record.state.invoices[0].merchant,'票面商户');
+  await page.getByLabel('已确认的网费账户' ,{exact:true}).fill('confirmed-internet-account');
   await page.getByLabel('扫描起始时间',{exact:true}).fill('2026-11-20T00:00:00+08:00');
   await page.getByRole('button',{name:'保存预演配置',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('button[aria-busy="true"]'));
@@ -82,7 +99,7 @@ async function run(browser,width){
   assert.equal(await page.getByRole('button',{name:'扫描邮箱并预演一次',exact:true}).isDisabled(),true);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'no horizontal overflow');
   assert.deepEqual(errors,[]);
-  await page.screenshot({path:`/tmp/baoxiao-t104-task-configured-${width}.png`,fullPage:true});
+  await page.screenshot({path:`/tmp/baoxiao-t105-task-configured-${width}.png`,fullPage:true});
   // Empty/config/login/error states are all isolated fixtures, never production rows.
   task={...task,config:{},runs:[],missingConfig:['扫描周期','已核对的报销配置草稿','扫描起始时间（避免历史票）']};
   await page.reload();await page.waitForLoadState('networkidle');
@@ -93,7 +110,7 @@ async function run(browser,width){
   await configLink.click();assert.equal(new URL(page.url()).hash,'#task-config');
   assert.equal(await page.getByLabel('扫描周期（秒）',{exact:true}).inputValue(),'');
   await page.goto('http://fixture.invalid/automatic-tasks.html');await page.waitForLoadState('networkidle');
-  await page.screenshot({path:`/tmp/baoxiao-t104-task-empty-${width}.png`,fullPage:true});
+  await page.screenshot({path:`/tmp/baoxiao-t105-task-empty-${width}.png`,fullPage:true});
   for(const status of [401,403,503]){
     loadStatus=status;await page.reload();await page.waitForLoadState('networkidle');
     await page.getByText(status===401?'请先登录飞书查看周期性任务':status===403?'暂时无权读取周期性任务':'任务列表暂时无法加载',{exact:true}).waitFor();
@@ -102,7 +119,7 @@ async function run(browser,width){
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
     if(status===401){
       assert.equal(await page.getByRole('link',{name:'用飞书登录',exact:true}).getAttribute('href'),'/api/auth/feishu/login');
-      await page.screenshot({path:`/tmp/baoxiao-t104-task-login-${width}.png`,fullPage:true});
+      await page.screenshot({path:`/tmp/baoxiao-t105-task-login-${width}.png`,fullPage:true});
     }
   }
   loadStatus=200;await page.getByRole('button',{name:'重新加载任务',exact:true}).click();

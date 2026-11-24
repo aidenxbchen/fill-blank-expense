@@ -22,6 +22,7 @@ async function run(browser,width){
       if(p==='/api/ai-settings')return json({ok:true,configured:true,settings:{hasApiKey:true,baseUrl:'https://fixture.invalid/v1',textModel:'fixture'}});
       if(p==='/api/jev-settings')return json({ok:true,configured:false,settings:{}});
       if(p==='/api/budgets')return json({ok:true,budgets:[{instanceId:'11111111-1111-4111-8111-111111111111',title:'合成研发预算',project:'公共办公',subjects:[]}]});
+      if(p==='/api/automatic-tasks/internet')return json({ok:true,enabled:false,config:{},runs:[]});
       if(p==='/api/drafts')return json({ok:true,items:[]});
       if(p.startsWith('/api/drafts/'))return json({ok:true,record:{id:p.split('/').pop(),revision:++revision,title:'合成批量采购'}});
       if(['/api/fill-history','/api/fill-suggestions','/api/choice-suggestions'].includes(p))return json({ok:true,suggestions:{global:{},rows:{}}});
@@ -52,7 +53,7 @@ async function run(browser,width){
     const ext=path.extname(file),types={'.html':'text/html','.js':'application/javascript','.css':'text/css','.webp':'image/webp'};
     return route.fulfill({contentType:types[ext]||'application/octet-stream',body:fs.readFileSync(file)});
   });
-  await page.goto('http://fixture.invalid/?v=20261124periodic1');
+  await page.goto('http://fixture.invalid/?v=20261124tasks2');
   await page.waitForLoadState('networkidle');
   assert.equal(await page.locator('main, [role=main]').count(),1,'one main landmark');
   assert.equal(await page.locator('#astryx-root').count(),0,'historical blue workspace is active');
@@ -60,7 +61,7 @@ async function run(browser,width){
   assert.equal(await page.locator('header').count(),1,'single top bar');
   assert.equal(await page.locator('#btn-reset').isVisible(),true,'independent new-expense entry');
   const periodic=page.getByRole('link',{name:'周期性任务 · 网费预演',exact:true}).first();
-  assert.equal(await periodic.getAttribute('href'),'./automatic-tasks.html?v=20261124periodic1');
+  assert.equal(await periodic.getAttribute('href'),'./automatic-tasks.html?v=20261124tasks2');
   const entry=await periodic.boundingBox();
   assert(entry&&entry.x>=0&&entry.y>=0&&entry.y+entry.height<=1000,'periodic entry visible on first screen');
   assert.equal(await page.locator('.hero #btn-periodic-tasks').count(),1,'entry above three cards');
@@ -83,8 +84,10 @@ async function run(browser,width){
   assert.equal(appearance.ornamentsHidden,true,'no eye or leaf decoration');
   assert.equal(appearance.overflow,false,'home fits viewport');
   if(width>=980) {
-    assert.ok(appearance.cards.every(c=>c.y===appearance.cards[0].y),'desktop cards share a row');
-    assert.ok(appearance.cards.every(c=>c.height===appearance.cards[0].height),'desktop cards have equal height');
+    assert.ok(appearance.cards[1].y===appearance.cards[0].y&&appearance.cards[2].y===appearance.cards[0].y,'desktop work areas share a row');
+    assert.ok(appearance.cards[0].height<appearance.cards[1].height,'introduction is shorter');
+    assert.ok(appearance.cards[1].height===appearance.cards[2].height,'budget and upload have bounded heights');
+    assert.equal(await page.locator('#routine-task-summary').textContent().then(t=>t.includes('尚未配置常规任务')),true);
   } else assert.ok(appearance.cards[1].y>appearance.cards[0].y&&appearance.cards[2].y>appearance.cards[1].y,'mobile cards stack');
   await page.screenshot({path:`/tmp/baoxiao-blue-${width}-home.png`,fullPage:true});
   await page.locator('#btn-periodic-tasks').waitFor({state:'visible'});

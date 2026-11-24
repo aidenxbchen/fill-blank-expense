@@ -1600,3 +1600,37 @@ abbr[title] { text-decoration:none; cursor:inherit; }
   .handbook-body .handbook-header-actions { grid-column: 1; grid-row: 2; display: flex; }
   .handbook-body .auth-box { grid-column: 2; grid-row: 2; }
 }
+
+
+/* t105u: bounded budget window and a shorter introduction above real task status.
+   Structural heights keep the existing blue frame and spacing tokens. */
+.upload-triad { align-items:start; }
+.workspace-side { display:flex; flex-direction:column; gap:var(--space-control); min-width:0; min-height:32rem; }
+.workspace-side .blessing-card.triad-card { height:auto; min-height:11rem; padding:var(--space-control); }
+.workspace-side .blessing-zh { font-size:var(--text-xl); }
+.workspace-side .blessing-en { font-size:var(--text-xs); }
+.routine-task-card { display:flex; flex-direction:column; gap:var(--space-sm); padding:var(--space-lg); flex:1; min-width:0; }
+.routine-task-card h2 { font-size:var(--text-lg); margin:0; }
+.routine-task-card p { margin:0; }
+.routine-task-card > .btn { margin-top:auto; align-self:start; }
+#routine-task-summary { overflow-wrap:anywhere; font-size:var(--text-sm); }
+#routine-task-summary dl { margin:0; display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--space-xs); }
+#routine-task-summary dt { color:var(--muted); }
+#routine-task-summary dd { margin:0; }
+.upload-triad > .budget-picker.triad-card,.upload-triad > .dropzone.triad-card { height:32rem; min-height:0; }
+.budget-picker.triad-card .budget-grid {
+  display:grid; grid-auto-rows:5.5rem; gap:var(--space-xs); flex:0 0 auto;
+  height:calc(16.5rem + 2 * var(--space-xs) + 2 * var(--space-3xs));
+  min-height:0; max-height:none; overflow-y:auto; overflow-x:hidden;
+  scrollbar-gutter:stable; overscroll-behavior-y:contain;
+}
+.budget-grid .budget-card { min-width:0; height:100%; overflow:hidden; justify-content:center; }
+.budget-card-title,.budget-card-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.budget-grid:focus-visible { outline:var(--space-3xs) solid var(--accent); outline-offset:var(--space-3xs); }
+.budget-scroll-hint { margin:var(--space-sm) 0 0; color:var(--muted); font-size:var(--text-xs); }
+@media(orientation:portrait), (max-width:980px) {
+  .workspace-side { min-height:0; }
+  .workspace-side .blessing-card.triad-card { min-height:0; }
+  .upload-triad > .budget-picker.triad-card { height:auto; min-height:32rem; }
+  .upload-triad > .dropzone.triad-card { height:18rem; }
+}

@@ -4,7 +4,7 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {createHash}=require('node:crypto');
 const {chromium}=require('playwright');
-const version='20261124periodic1',sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+const version='20261124tasks2',sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const bases=['http://127.0.0.1:5173','https://baoxiao.xbchen.top'];
 async function run(browser,base,width){
   const name=base.startsWith('https:')?'public':'local';
@@ -40,14 +40,15 @@ async function run(browser,base,width){
   assert.equal(await page.locator('.triad-card').count(),3);
   assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()),'#1f56c9');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  await page.screenshot({path:`/tmp/baoxiao-t104-${name}-home-${width}.png`});
+  await page.getByText('请先登录飞书，查看任务状态、周期和最近结果。',{exact:true}).waitFor();
+  await page.screenshot({path:`/tmp/baoxiao-t105-${name}-home-${width}.png`,fullPage:true});
   await entry.click();await page.waitForLoadState('networkidle');
   await page.getByText('请先登录飞书查看周期性任务',{exact:true}).waitFor();
   assert.equal(new URL(page.url()).pathname,'/automatic-tasks.html');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  await page.screenshot({path:`/tmp/baoxiao-t104-${name}-login-${width}.png`,fullPage:true});
+  await page.screenshot({path:`/tmp/baoxiao-t105-${name}-login-${width}.png`,fullPage:true});
   assert.deepEqual(errors,[]);
-  for(const p of ['/internet-task/task.js','/internet-task/task.css','/styles.css','/app.js','/ui.js'])assert(assets.some(a=>a.path===p),'loaded '+p);
+  for(const p of ['/internet-task/task.js','/internet-task/task.css','/styles.css','/app.js','/ui.js','/routine-task-card.js'])assert(assets.some(a=>a.path===p),'loaded '+p);
   await context.close();
   return {name,width,entry:rect,errors,assets};
 }
@@ -68,6 +69,6 @@ async function run(browser,base,width){
         console.log(`${base} ${width}px: first-screen entry, click to login state, matching static resources, no writes passed`);
       }
     }
-    fs.writeFileSync('/tmp/baoxiao-t104-live-verification.json',JSON.stringify(result,null,2));
+    fs.writeFileSync('/tmp/baoxiao-t105-live-verification.json',JSON.stringify(result,null,2));
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

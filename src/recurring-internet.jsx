@@ -2,6 +2,7 @@
 // Adapted from Astryx 0.7.17 settings template. Keep its Layout header,
 // content padding=4, VStack gap=4, section Grid gap=10 and form gap=4.
 import {useEffect,useState} from 'react';
+import {internetReference as reference,prefillInternetReference} from './internet-reference.mjs';
 import {createRoot} from 'react-dom/client';
 import {Layout,LayoutContent,LayoutHeader} from '@astryxdesign/core/Layout';
 import {HStack,VStack,StackItem} from '@astryxdesign/core/Stack';
@@ -23,8 +24,8 @@ import '@astryxdesign/theme-neutral/fonts.css';
 
 const BASE=['127.0.0.1','localhost'].includes(location.hostname)?'http://127.0.0.1:18790':'';
 const ENDPOINT='/api/automatic-tasks/internet';
-async function api(path,body){
-  const res=await fetch(BASE+path,{method:body?'POST':'GET',credentials:'include',cache:'no-store',
+async function api(path,body,method){
+  const res=await fetch(BASE+path,{method:method||(body?'POST':'GET'),credentials:'include',cache:'no-store',
     headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
   const value=await res.json();
   if(!res.ok||!value.ok){const error=new Error(value.error||'任务请求失败');error.status=res.status;throw error;}
@@ -41,8 +42,18 @@ function App(){
   const load=async()=>{setLoading(true);setLoadError(null);try{const t=await api(ENDPOINT);setTask(t);setConfig(t.config);setScanSinceText(t.config.scanSince?new Date(t.config.scanSince*1000).toISOString():'');return t;}catch(e){setTask(null);setLoadError(e);throw e;}finally{setLoading(false);}};
   useEffect(()=>{load().catch(e=>setMessage(e.message));api('/api/drafts').then(r=>setDrafts(r.items||r.records||[])).catch(()=>{});},[]);
   const change=(key,value)=>setConfig(c=>({...c,[key]:value}));
-  const action=async(fn)=>{setBusy(true);setMessage('');try{await fn();await load();}catch(e){setMessage(e.message);}finally{setBusy(false);}};
+  const action=async(fn,refresh=true)=>{setBusy(true);setMessage('');try{await fn();if(refresh)await load();}catch(e){setMessage(e.message);}finally{setBusy(false);}};
   const save=()=>action(()=>api(ENDPOINT,{revision:task.revision,config:{...config,scanSince:Number.isFinite(Date.parse(scanSinceText))?Math.floor(Date.parse(scanSinceText)/1000):null},dryRun:true}));
+  const applyReference=()=>action(async()=>{
+    if(!config.templateDraftId)throw Error('请先选择配置来源草稿。');
+    const [source,budgetList,schema]=await Promise.all([
+      api('/api/drafts/'+encodeURIComponent(config.templateDraftId)),api('/api/budgets?refresh=1'),api('/api/purchase-schema')
+    ]);
+    if(budgetList.warning||budgetList.loggedIn===false)throw Error('可用预算读取尚有警告，请在工作台刷新并核对后重试；未写入草稿。');
+    const state=prefillInternetReference(source.record,budgetList.budgets||[],schema.projects||[]);
+    await api('/api/drafts/'+encodeURIComponent(config.templateDraftId),{revision:source.record.revision,state},'PUT');
+    setMessage('已将公共办公项目与关联审批预填到所选草稿。科目仍需核对；任务未启用。请在工作台检查草稿后再保存预演配置。');
+  },false);
   const toggle=()=>action(()=>api(ENDPOINT,{revision:task.revision,enabled:!task.enabled,dryRun:true}));
   const run=()=>action(async()=>{const r=await api(ENDPOINT+'/preview',{dryRun:true});setSelected(r);setMessage('预演结束，创建真实审批 0 条。');});
   const latest=selected||task?.runs?.[0]?.result;
@@ -98,6 +109,17 @@ function App(){
       <Divider />
       <Section id="task-config" title="沿用报销配置" description="只读取当前账号选定草稿的整单字段与一个模板行。不会提交草稿里的票，也不会猜测审批人、部门或预算。">
         <Selector label="配置来源草稿" value={config.templateDraftId||''} onChange={v=>change('templateDraftId',v)} options={drafts.map(d=>({value:d.id,label:d.title}))} />
+        <VStack gap={2}>
+          <Heading level={3}>网费预填参考</Heading>
+          <Text>已核实项目：{reference.project} · 立项预算申请 {reference.budgetSerial} · 2026-10-01 至 2026-12-31。</Text>
+          <Text>关联审批：{reference.budgetInstance}</Text>
+          <Text>历史网费使用「采购、预付申请」：采购类别={reference.historicalCategory}，名称={reference.historicalName}，数量={reference.historicalQuantity}，附件 1 份。金额约 379 元仅供参考；本次金额、月份、数量和原件仍以新发票核对结果为准。</Text>
+          <Text>预算科目待确认：服务费有 40000 与 25000 两行，另有快递通讯费 5000。历史采购类别不能唯一决定本次预算科目，暂不自动选择或覆盖。</Text>
+          <Text>参考短链尚未解析到唯一单据；以上依据另行核实的历史实例 {reference.sourceInstance}，不能视为该短链对应单据。</Text>
+          <Text>以下操作只补齐所选草稿的公共办公项目、关联审批和空白采购事由；先核对当前账号可用预算，不覆盖不同项目或关联审批。采购方式、科目、原发票与税号保持人工核对。</Text>
+          {task.enabled&&<Text>请先暂停预演任务，再预填配置草稿。</Text>}
+          <HStack><Button label="预填公共办公关联到所选草稿" onClick={applyReference} isDisabled={busy||task.enabled||!!task.running||!config.templateDraftId} /></HStack>
+        </VStack>
         <TextInput label="扫描周期（秒）" inputMode="numeric" value={String(config.intervalSeconds||'')} onChange={v=>change('intervalSeconds',v?Number(v):null)} description="60 秒至 31 天；没有既有周期时须明确填写。" />
         <TextInput label="扫描起始时间" value={scanSinceText} onChange={setScanSinceText} description="ISO 时间，含时区，例如 2026-11-24T00:00:00+08:00；只扫描此时间后的收件箱 PDF 附件。" />
         <Text>预期购方：澜理商贸（珠海）有限公司</Text>
