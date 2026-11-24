@@ -10,7 +10,7 @@ const schema={ok:true,projects:form.find(w=>w.name==='项目').option.map(o=>o.t
 async function run(browser,width){
   const context=await browser.newContext({viewport:{width,height:1000},reducedMotion:'reduce'});
   const page=await context.newPage(),errors=[],requests=[];let revision=0,parsed=0,stored=0,submitted;
-  page.on('pageerror',e=>errors.push(e.message));
+  page.on('pageerror',e=>{errors.push(e.message);console.error('Browser error:',e.message);});
   await context.route('**/*',async route=>{
     const req=route.request(),url=new URL(req.url()),p=url.pathname;
     if(url.hostname!=='fixture.invalid')throw Error('Unexpected network: '+url.hostname);
@@ -20,6 +20,7 @@ async function run(browser,width){
       if(p==='/api/purchase-schema')return json(schema);
       if(p==='/api/auth/me')return json({loggedIn:true,user:{openId:'fixture-alice',name:'本地夹具'}});
       if(p==='/api/ai-settings')return json({ok:true,configured:true,settings:{hasApiKey:true,baseUrl:'https://fixture.invalid/v1',textModel:'fixture'}});
+      if(p==='/api/jev-settings')return json({ok:true,configured:false,settings:{}});
       if(p==='/api/budgets')return json({ok:true,budgets:[{instanceId:'11111111-1111-4111-8111-111111111111',title:'合成研发预算',project:'公共办公',subjects:[]}]});
       if(p==='/api/drafts')return json({ok:true,items:[]});
       if(p.startsWith('/api/drafts/'))return json({ok:true,record:{id:p.split('/').pop(),revision:++revision,title:'合成批量采购'}});
@@ -51,8 +52,54 @@ async function run(browser,width){
     const ext=path.extname(file),types={'.html':'text/html','.js':'application/javascript','.css':'text/css','.webp':'image/webp'};
     return route.fulfill({contentType:types[ext]||'application/octet-stream',body:fs.readFileSync(file)});
   });
-  await page.goto('http://fixture.invalid/?v=20261124batch1');
+  await page.goto('http://fixture.invalid/?v=20261124blue1');
   await page.waitForLoadState('networkidle');
+  assert.equal(await page.locator('main, [role=main]').count(),1,'one main landmark');
+  assert.equal(await page.locator('#astryx-root').count(),0,'historical blue workspace is active');
+  assert.equal(await page.locator('script[src*="astryx/workspace"]').count(),0,'neutral shell must not replace the blue workspace');
+  assert.equal(await page.locator('header').count(),1,'single top bar');
+  assert.equal(await page.locator('#btn-reset').isVisible(),true,'independent new-expense entry');
+  assert.equal(await page.locator('.brand-mark img').getAttribute('src'),'./assets/logo-zbs.png?v=20261123handbook1');
+  assert.equal(await page.locator('.triad-card').count(),3,'preserve three work areas');
+  const appearance=await page.evaluate(()=>{
+    const style=el=>getComputedStyle(el);
+    const cards=[...document.querySelectorAll('.triad-card')].map(el=>el.getBoundingClientRect().toJSON());
+    return {accent:style(document.documentElement).getPropertyValue('--accent').trim(),
+      primary:style(document.querySelector('#btn-feishu-login')).backgroundColor,
+      blessing:style(document.querySelector('#blessing-card')).backgroundImage,
+      cards,overflow:document.documentElement.scrollWidth>innerWidth,
+      bareChrome:['.save-strip','.stage-rail'].every(sel=>{const s=style(document.querySelector(sel));return s.backgroundColor==='rgba(0, 0, 0, 0)'&&s.boxShadow==='none'&&s.backdropFilter==='none';}),
+      ornamentsHidden:['.ambient','.blessing-ornament','.blessing-constellation'].every(sel=>[...document.querySelectorAll(sel)].every(el=>style(el).display==='none'))};
+  });
+  assert.equal(appearance.accent,'#1f56c9','reuse committed historical blue token');
+  assert.equal(appearance.primary,'rgb(31, 86, 201)','primary action uses historical blue');
+  assert.ok(appearance.blessing.includes('gradient'),'retain original warm/cool blessing surface');
+  assert.equal(appearance.bareChrome,true,'no second glass bar');
+  assert.equal(appearance.ornamentsHidden,true,'no eye or leaf decoration');
+  assert.equal(appearance.overflow,false,'home fits viewport');
+  if(width>=980) {
+    assert.ok(appearance.cards.every(c=>c.y===appearance.cards[0].y),'desktop cards share a row');
+    assert.ok(appearance.cards.every(c=>c.height===appearance.cards[0].height),'desktop cards have equal height');
+  } else assert.ok(appearance.cards[1].y>appearance.cards[0].y&&appearance.cards[2].y>appearance.cards[1].y,'mobile cards stack');
+  await page.screenshot({path:`/tmp/baoxiao-blue-${width}-home.png`,fullPage:true});
+  await page.locator('a[href="./automatic-tasks.html"]').waitFor({state:'visible'});
+  assert.equal(await page.locator('#btn-start-interview').isDisabled(),true,'cannot proceed before upload');
+  const ids=await page.locator('[id]').evaluateAll(nodes=>nodes.map(n=>n.id));
+  assert.equal(new Set(ids).size,ids.length,'desktop and mobile shell must not duplicate command IDs');
+  await page.getByRole('button',{name:'我的报销',exact:true}).last().click();
+  await page.locator('#records-modal').waitFor({state:'visible'});
+  assert.equal(await page.locator('#main-content').evaluate(el=>el.inert),true,'dialog makes the workspace inert');
+  assert.equal(await page.locator('body > header').evaluate(el=>el.inert),true,'dialog makes the top bar inert');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#records-modal').isHidden(),true);
+  assert.equal(await page.locator('#main-content').evaluate(el=>el.inert),false);
+  if(width<768) {
+    await page.getByRole('button',{name:'AI 设置',exact:true}).click();
+    await page.locator('#ai-settings-modal').waitFor({state:'visible'});
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#ai-settings-modal').isHidden(),true);
+    assert.equal(await page.locator('#main-content').evaluate(el=>el.inert),false);
+  }
   await page.locator('#file-input').setInputFiles(Array.from({length:25},(_,i)=>({name:'fixture-'+i+'.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF offline invoice '+i)})));
   await page.waitForFunction(()=>{const b=document.querySelector('#btn-start-interview');return !b.disabled&&document.querySelectorAll('#invoice-summary-body tr').length===25;});
   assert.equal(stored,25);assert.equal(parsed,25);
@@ -63,6 +110,7 @@ async function run(browser,width){
   await page.getByRole('button',{name:'公共办公',exact:true}).click();
   await page.locator('#chip-row [data-chip]').first().click();
   await page.locator('#stage-draft').waitFor({state:'visible'});
+  await page.waitForFunction(()=>document.querySelector('.stage-item.is-active')?.textContent.includes('发票清单'));
   assert.equal(await page.locator('#detail-sheets [data-answer]').count(),50);
   assert.equal(await page.locator('#chat-log .chat-user').count(),4,'only four claim-wide answers for 25 invoices');
   assert.equal(await page.locator('#detail-sheets details').count(),0,'selection fields are directly visible');
