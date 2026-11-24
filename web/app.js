@@ -1,12 +1,12 @@
 /**
  * 填空报销 · delight flow
- * dump invoices → parse → one-at-a-time policy interview → editable draft → native Feishu purchase approval
+ * batch upload → claim-wide facts → handbook/history prefill → full preview → native Feishu purchase approval
  */
 (function () {
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261111budget1";
+  const ASSET_V = "20261124batch1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -84,8 +84,8 @@
   function stripPreview({previewUrl,...rest}) { return rest; }
 
   function snapshot() {
-    const {stage,draftId,answers,chat,draft,parseErrors,lastFeishu,selectedBudgetId,composerText} = session;
-    return JSON.parse(JSON.stringify({stage,draftId,answers,chat,draft,parseErrors,lastFeishu,selectedBudgetId,composerText,
+    const {stage,draftId,answers,chat,draft,parseErrors,lastFeishu,selectedBudgetId,composerText,prefillEvidence,prefillContext,prefillWarning} = session;
+    return JSON.parse(JSON.stringify({stage,draftId,answers,chat,draft,parseErrors,lastFeishu,selectedBudgetId,composerText,prefillEvidence,prefillContext,prefillWarning,
       invoices:session.invoices.map(({previewUrl,...rest})=>rest)}));
   }
 
@@ -544,6 +544,7 @@
 
   function setStage(stage) {
     if (session.submitted && stage !== "submit") { showToast("这份采购已提交，可在我的报销查看摘要；继续填新单请点新建报销"); stage="submit"; }
+    if(stage==='upload' && session.stage!=='upload') document.getElementById('invoice-summary-body').replaceChildren();
     session.stage = stage;
     document.querySelectorAll(".stage-item").forEach((el) => {
       const s = el.getAttribute("data-stage");
@@ -581,7 +582,7 @@
     if (countPill) countPill.textContent = String(session.invoices.length);
     if (startBtn) {
       startBtn.disabled = okCount === 0 || busy || okCount !== session.invoices.length;
-      startBtn.textContent = busy ? "识别中…" : okCount !== session.invoices.length ? `还有 ${session.invoices.length-okCount} 张待核对金额` : `确认表格，开始问答（${okCount} 张）`;
+      startBtn.textContent = busy ? "识别中…" : okCount !== session.invoices.length ? `还有 ${session.invoices.length-okCount} 张待核对金额` : `补充整单信息（${okCount} 张）`;
     }
     if (totalEl) {
       const total = session.invoices.reduce(
@@ -944,9 +945,9 @@
       side.innerHTML = invs
         .map(
           (inv) => `<li>
-            <strong>${esc(inv.merchant || inv.fileName)}</strong>
+            <strong>【${esc(session.answers.costCenter || "待选项目")}】${esc(formatMoney(inv.amount))}</strong>
             <span>${esc(formatMoney(inv.amount))} · ${esc(CAT_LABEL[inv.category] || inv.category)}</span>
-            <span class="muted-sm">${esc(inv.date || "无日期")}${inv.invoiceNo ? " · " + esc(inv.invoiceNo) : ""}</span>
+            <span class="muted-sm">${esc(inv.date || "无日期")}</span>
           </li>`
         )
         .join("");
@@ -957,14 +958,14 @@
       ? window.ExpensePolicy.remainingCount(invs, session.answers, policy)
       : 0;
     if (progress) {
-      progress.textContent = remaining > 0 ? `还差 ${remaining} 个问题` : "问题已齐，正在生成草稿…";
+      progress.textContent = remaining > 0 ? `还差 ${remaining} 项整单信息` : "整单信息已齐，正在整理预填清单…";
     }
 
     // Seed opening message once
     if (!session.chat.length) {
       pushChat(
         "assistant",
-        `已识别 ${invs.length} 张发票，合计 ${formatMoney(invs.reduce((s, i) => s + (Number(i.amount) || 0), 0))}。我会按「${(policy && policy.name) || "团队规范"}」一次只问一个问题。`
+        `已识别 ${invs.length} 张发票，合计 ${formatMoney(invs.reduce((s, i) => s + (Number(i.amount) || 0), 0))}。只需补充这次的花销目的和整单信息；各张发票的科目等会直接整理到清单，最后一起检查。`
       );
     }
 
@@ -986,11 +987,9 @@
       document.getElementById("btn-send-answer").disabled = true;
       if (skipBtn) skipBtn.hidden = true;
       // auto advance to draft
-      setTimeout(() => {
+      setTimeout(async () => {
         if (session.stage === "interview") {
-          buildDraft();
-          setStage("draft");
-          showToast("草稿已生成");
+          await prepareDraft();
         }
       }, 450);
       return;
@@ -1032,7 +1031,7 @@
 
   function fillingClaim() {
     return {costCenter:session.answers.costCenter || "", purchaseMethod:session.answers.purchaseMethod || "",
-      answers:{...session.answers}, invoices:okInvoices().map(({id,amount,merchant,category,items,quantity,unit})=>({id,amount,merchant,category,items,quantity,unit}))};
+      purpose:session.answers.purpose || "", answers:{...session.answers}, selectedBudget:session.answers.selectedBudget || null, invoices:okInvoices().map(({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source})=>({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source}))};
   }
 
   let choiceRequestKey = "";
@@ -1094,7 +1093,7 @@
       if(owner===ownerId() && draft===session.draftId) window.__fillSuggestions = response.ok && result.ok ? result.suggestions : null;
     } catch (_) { if(owner===ownerId() && draft===session.draftId) window.__fillSuggestions = null; }
     // Don't make a remote model call on every autosave. It runs alongside interview preparation.
-    if(session.stage==="interview" || !record) refreshChoiceSuggestions(!record);
+    if((session.stage==="interview" || !record) && !session.answers.purchaseMethod) refreshChoiceSuggestions(!record);
   }
 
   let fillingTimer;
@@ -1134,6 +1133,26 @@
   }
 
   /* ---------- draft ---------- */
+
+  let preparingDraft = false;
+  async function prepareDraft() {
+    if(preparingDraft) return;
+    preparingDraft=true;
+    const owner=ownerId(), target=session, context=JSON.stringify(choiceContext()), requested={...session.answers};
+    try {
+      const result=await recordsAPI('/api/prefill','POST',{draftId:session.draftId,claim:fillingClaim()});
+      if(owner!==ownerId() || target!==session || context!==JSON.stringify(choiceContext())) return;
+      window.ExpensePolicy.mergePrefill(session.answers,result,requested);
+      session.prefillEvidence=result.evidence || {};
+      session.prefillContext=context;
+      session.prefillWarning='';
+    } catch(e) {
+      if(owner!==ownerId() || target!==session) return;
+      session.prefillWarning='历史预填暂不可用，清单中的空项请集中补全：'+e.message;
+    } finally { preparingDraft=false; }
+    if(target!==session || owner!==ownerId() || session.stage!=="interview") return;
+    buildDraft();setStage('draft');showToast('发票清单已整理，请集中检查');
+  }
 
   function buildDraft() {
     const invs = okInvoices().map((i) => ({ ...i }));
@@ -1197,25 +1216,25 @@
     const line = document.getElementById("draft-summary-line");
 
     if (line) {
-      line.textContent = `事由：${d.purpose || "（未填）"} · 归属：${d.costCenter || "（未填）"} · ${d.detailSheets.length} 张明细表`;
+      line.textContent = session.prefillWarning || `花销目的：${d.purpose || "（未填）"} · ${okInvoices().length} 张发票 · 科目和费用类型已按手册与合格历史预填，可直接修改。`;
     }
 
     if (meta) {
       const schema = window.__purchaseSchema || {projects:[], methods:[]};
-      const choices = (items, current) => items.map(x=>`<option value="${esc(x)}" ${x===current ? "selected":""}>${esc(x)}</option>`).join("");
+      const choices = (items, current) => `<option value="">请选择</option>${current && !items.includes(current) ? `<option value="${esc(current)}" selected>已失效：${esc(current)}</option>` : ''}` + items.map(x=>`<option value="${esc(x)}" ${x===current ? "selected":""}>${esc(x)}</option>`).join("");
       const method = schema.methods.find(m=>m.name === d.purchaseMethod);
       const sharedFields = method ? method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name)).map(w=>{
         const key = `purchase:${method.name}:shared:${w.name}`;
         return `<div class="field"><label>${esc(w.name)}（所有行共用）</label><input aria-label="${esc(w.name)}" data-answer="${esc(key)}" value="${esc(session.answers[key] || "")}" /></div>`;
       }).join("") : "";
       meta.innerHTML = `<div class="draft-meta-grid">
-        <div class="field"><label>采购事由</label><input aria-label="采购事由" data-meta="purpose" value="${esc(d.purpose)}" /></div>
+        <div class="field"><label>花销目的 / 采购事由（整单）</label><input aria-label="采购事由" data-meta="purpose" value="${esc(d.purpose)}" /></div>
         <div class="field"><label>项目</label><select aria-label="项目" data-meta="costCenter">${choices(schema.projects,d.costCenter)}</select></div>
         <div class="field"><label>采购方式</label><select aria-label="采购方式" data-meta="purchaseMethod">${choices(schema.methods.map(m=>m.name),d.purchaseMethod)}</select></div>
-        <div class="field"><label>关联审批</label><span>${esc((session.answers.selectedBudget || {}).title || "未选择（仅预付款项可不选）")}</span></div>
+        <div class="field"><label>关联审批${d.purchaseMethod==='预付款项' ? '（当前方式隐藏）' : '（整单必填）'}</label>${d.purchaseMethod==='预付款项' ? '<span>无需提交</span>' : `<select aria-label="关联审批" data-meta-budget><option value="">请选择已通过预算</option>${approvedBudgets.map(b=>`<option value="${esc(b.instanceId)}" ${b.instanceId===(session.answers.selectedBudget || {}).instanceId ? 'selected' : ''}>${esc(b.title || b.project)}</option>`).join('')}</select>`}</div>
         ${sharedFields}
         ${method && sharedFields ? [...new Set(method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name)).map(w=>window.ExpensePolicy.bankSide(w.name)))].map(side=>`<button type="button" class="btn btn-secondary" data-open-bank="${side}">点选${side==='ours' ? '我方' : '收款'}银行档案 / 新增</button>`).join('') : ''}
-      </div><p class="section-hint">修改采购方式后，请返回问答补齐对应必填项。金额、日期、商户、票号与识别汇总同步。</p>`;
+      </div><p class="section-hint">整单信息只填一次。修改采购方式后，点「整理当前清单」应用对应规则；已填写内容会保留。提交前集中预览所有必填项与附件。</p>`;
     }
 
     if (sheetsEl) {
@@ -1228,7 +1247,7 @@
                 <td><input aria-label="摘要" data-cell="description" value="${esc(row.description)}" /></td>
                 <td><input aria-label="发票号码" data-cell="invoiceNo" value="${esc(row.invoiceNo || "")}" /></td>
                 <td><input aria-label="金额" data-cell="amount" inputmode="decimal" value="${esc(row.amount)}" /></td>
-                <td class="td-inv">${row.hasInvoice ? "有票" : "无票"}</td>
+                <td class="td-inv">${(session.invoices.find(i=>i.id===row.invoiceRef) || {}).attachment ? "原件已保存" : "缺原件 · 实务必填"}</td>
                 <td><input aria-label="备注" data-cell="note" value="${esc(row.note || "")}" placeholder="备注" />${purchaseRowFields(row.invoiceRef)}</td>
                 <td><button type="button" class="btn btn-ghost btn-sm" data-del-row="${si}:${ri}">删</button></td>
               </tr>`;
@@ -1270,6 +1289,11 @@
 
   function syncDraftFromDom() {
     if (!session.draft) return;
+    const previousMethod=session.answers.purchaseMethod;
+    document.querySelectorAll('[data-invoice-field]').forEach(input=>{
+      const inv=session.invoices.find(i=>i.id===input.dataset.invoice);
+      if(inv) {inv[input.dataset.invoiceField]=input.value;inv._userEdited=true;inv._editedFields={...(inv._editedFields || {}),[input.dataset.invoiceField]:true};}
+    });
     document.querySelectorAll("[data-answer]").forEach(input => { session.answers[input.dataset.answer] = input.value; });
     document.querySelectorAll("#draft-meta [data-meta]").forEach((input) => {
       const key = input.getAttribute("data-meta");
@@ -1296,6 +1320,10 @@
       if (inv) Object.assign(inv, {date:row.date, merchant:row.description, invoiceNo:row.invoiceNo, amount:row.amount, note:row.note});
     }));
     recomputeDraftTotal();
+    if(previousMethod!==session.answers.purchaseMethod) {
+      session.prefillEvidence={};session.prefillContext='';
+      renderDraft();
+    }
   }
 
   /* ---------- real purchase submission ---------- */
@@ -1303,13 +1331,16 @@
   function purchaseRowFields(invoiceId) {
     const method = ((window.__purchaseSchema || {}).methods || []).find(m=>m.name === session.draft.purchaseMethod);
     if (!method) return "";
-    return `<details><summary>采购明细</summary>${method.fields.filter(w=>!["金额","名称","备注","数量","规格","单位"].includes(w.name) && !window.ExpensePolicy.bankRole(w.name)).map(w=>{
+    const inv=session.invoices.find(i=>i.id===invoiceId) || {}, auto=window.ExpensePolicy.quantityUnit(inv);
+    const quantityFields=method.fields.some(w=>w.name==='数量') ? `<label>数量 · 表单必填<input aria-label="数量" data-invoice="${esc(invoiceId)}" data-invoice-field="quantity" value="${esc(auto.quantity)}" ${auto.batch ? 'readonly' : ''} inputmode="decimal" /></label><label>规格 / 单位 · 表单必填<input aria-label="规格 / 单位" data-invoice="${esc(invoiceId)}" data-invoice-field="unit" value="${esc(auto.unit)}" ${auto.batch ? 'readonly' : ''} /></label>` : '';
+    return `<div class="purchase-row-fields">${quantityFields}${method.fields.filter(w=>!["金额","名称","备注","数量","规格","单位"].includes(w.name) && !window.ExpensePolicy.bankRole(w.name)).map(w=>{
       const shared = ["账户名称","银行账户","收款账号","开户支行"].includes(w.name);
       const key = `purchase:${method.name}:${shared ? "shared":invoiceId}:${w.name}`;
       const value = session.answers[key] || "";
-      const control = w.options.length ? `<select data-answer="${esc(key)}"><option value="">请选择</option>${w.options.map(o=>`<option ${o===value ? "selected":""}>${esc(o)}</option>`).join("")}</select>` : `<input data-answer="${esc(key)}" value="${esc(value)}" />`;
-      return `<label>${esc(w.name)}${shared ? "（所有行共用）":""}${control}</label>`;
-    }).join("")}</details>`;
+      const control = w.options.length ? `<select data-answer="${esc(key)}"><option value="">请选择</option>${value && !w.options.includes(value) ? `<option value="${esc(value)}" selected>已失效：${esc(value)}</option>` : ''}${w.options.map(o=>`<option ${o===value ? "selected":""}>${esc(o)}</option>`).join("")}</select>` : `<input data-answer="${esc(key)}" value="${esc(value)}" />`;
+      const evidence=(session.prefillEvidence || {})[key];
+      return `<label>${esc(w.name)}${w.required ? " · 表单必填" : ""}${control}<small>${esc(evidence ? evidence.source : "无同类历史 / 待检查")}</small></label>`;
+    }).join("")}</div>`;
   }
 
   function buildFeishuPayload() {
@@ -1320,18 +1351,51 @@
       selectedBudget:session.answers.selectedBudget || null}};
   }
 
-  function renderSubmit() {
-    const prev = document.getElementById("submit-preview");
-    const submitButton=document.getElementById("btn-feishu-submit");
-    submitButton.textContent=session.submitted ? "查看已提交结果" : "发起飞书采购申请";
-    if (!session.draft) buildDraft();
-    const c = buildFeishuPayload().claim;
-    if (prev) prev.innerHTML = `
-      <div class="submit-stat"><span>采购方式</span><strong>${esc(c.purchaseMethod || "未填")}</strong></div>
-      <div class="submit-stat"><span>项目</span><strong>${esc(c.costCenter || "未填")}</strong></div>
-      <div class="submit-stat"><span>采购事由</span><strong>${esc(c.purpose || "未填")}</strong></div>
-      <div class="submit-stat"><span>合计</span><strong>${esc(formatMoney(c.invoices.reduce((a,i)=>a+Number(i.amount),0)))}</strong></div>
-      <div class="submit-stat"><span>关联审批</span><strong>${esc((c.selectedBudget || {}).title || "未选择")}</strong></div>`;
+  function reviewIssues(c) {
+    const q=window.ExpensePolicy.buildQuestionQueue(c.invoices,c.answers);
+    return [...q.map(x=>x.id==='selectBudget' ? '关联审批未选择（表单强制，预付款项除外）' : x.text),
+      ...window.ExpensePolicy.rowIssues(c.invoices,c.answers,session.prefillEvidence || {})];
+  }
+
+  function previewMarkup(c, issues) {
+    const method=((window.__purchaseSchema || {}).methods || []).find(m=>m.name===c.purchaseMethod);
+    const rows=c.invoices.map(inv=>{
+      const auto=window.ExpensePolicy.quantityUnit(inv);
+      const fields=(method ? method.fields : []).map(w=>{
+        const bank=window.ExpensePolicy.bankRole(w.name);
+        const key=`purchase:${c.purchaseMethod}:${bank ? 'shared' : inv.id}:${w.name}`;
+        const value=w.name==='金额' ? formatMoney(inv.amount) : w.name==='名称' ? inv.merchant || inv.fileName : w.name==='数量' ? auto.quantity : ['规格','单位'].includes(w.name) ? auto.unit : w.name==='备注' ? inv.note || '—' : c.answers[key] || '未填';
+        return `<li><span>${esc(w.name)}${w.required ? ' · 表单必填' : ''}</span><strong>${esc(value)}</strong></li>`;
+      }).join('');
+      return `<article class="preview-invoice"><h4>【${esc(c.costCenter)}】${esc(formatMoney(inv.amount))}</h4><p class="muted-sm">日期：${esc(inv.date || '未识别')} · 商户：${esc(inv.merchant || '未识别')}</p><ul class="preview-field-list">${fields}</ul><p class="attachment-check ${inv.attachment ? '' : 'is-missing'}">原件附件 · 产品 / 流程强制：${inv.attachment ? '已保存，提交时重新上传并核对' : '缺失，请返回上传补传'}</p></article>`;
+    }).join('');
+    return `<div class="submit-stat"><span>采购方式 · 整单必填</span><strong>${esc(c.purchaseMethod || '未填')}</strong></div>
+      <div class="submit-stat"><span>项目 · 整单必填</span><strong>${esc(c.costCenter || '未填')}</strong></div>
+      <div class="submit-stat"><span>花销目的 / 采购事由 · 整单必填</span><strong>${esc(c.purpose || '未填')}</strong></div>
+      <div class="submit-stat"><span>关联审批${c.purchaseMethod==='预付款项' ? ' · 当前方式隐藏' : ' · 表单必填'}</span><strong>${esc(c.purchaseMethod==='预付款项' ? '无需提交' : (c.selectedBudget || {}).title || '未选择')}</strong></div>
+      <div class="submit-stat"><span>发票合计</span><strong>${c.invoices.length} 张 · ${esc(formatMoney(c.invoices.reduce((a,i)=>a+Number(i.amount),0)))}</strong></div>
+      <div class="preview-checks" role="status">${issues.length ? '<strong>请集中处理以下必填项或冲突</strong><ul>'+issues.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>' : '表内必填项已齐，请检查下方完整清单。'}<p id="preview-server-status">正在核验当前表单与原件完整性…</p></div>
+      <h3>发票清单及对应必填项</h3>${rows}<p class="section-hint">发起后保存本次预填与最终修改的差异；整体审批通过并核验实际预算关联后才参与学习。</p>`;
+  }
+
+  async function renderSubmit() {
+    const prev=document.getElementById('submit-preview'), button=document.getElementById('btn-feishu-submit');
+    button.textContent=session.submitted ? '查看已提交结果' : '确认清单，发起飞书采购申请';
+    if(!session.draft) buildDraft();
+    const payload=buildFeishuPayload(), c=payload.claim, issues=reviewIssues(c);
+    if(prev) prev.innerHTML=previewMarkup(c,issues);
+    if(session.submitted) {button.disabled=false;document.getElementById('preview-server-status').textContent='已提交，附件核对结果见提交回执。';return;}
+    button.disabled=true;session.reviewContext='';
+    const owner=ownerId(), target=session, context=JSON.stringify(payload.claim);
+    try {
+      const result=await recordsAPI('/api/review','POST',payload);
+      if(target!==session || owner!==ownerId() || session.stage!=='submit' || context!==JSON.stringify(buildFeishuPayload().claim)) return;
+      session.reviewContext=context;
+      button.disabled=issues.length>0;
+      document.getElementById('preview-server-status').textContent=`已核验当前表单与 ${result.attachmentCount} 份原件；请检查上述信息及下方清单，确认后发起。`;
+    } catch(e) {
+      if(target===session && owner===ownerId() && session.stage==='submit') document.getElementById('preview-server-status').textContent='暂不能提交：'+e.message+'。返回清单修改后重新预览。';
+    }
   }
 
   let submitting = false;
@@ -1341,8 +1405,9 @@
     if (!authUser) { showToast("请先用飞书登录"); return; }
     if (okInvoices().some(i=>!i.attachment)) { showToast("还有发票缺少原件，请在识别汇总补传后再提交"); setStage("upload"); return; }
     const payload = buildFeishuPayload();
-    const pending = window.ExpensePolicy.nextQuestion(payload.claim.invoices, {...session.answers, ...payload.claim});
-    if (pending) { showToast("还缺采购必填项，先补齐这一问"); setStage("interview"); return; }
+    const issues=reviewIssues(payload.claim);
+    if(issues.length) {showToast('还有必填项或规则冲突，请返回清单集中处理',7000);renderSubmit();return;}
+    if(session.reviewContext!==JSON.stringify(payload.claim)) {showToast('请等待预览核验完成');renderSubmit();return;}
     submitting = true;
     document.querySelector("main").inert=true;
     const button = document.getElementById("btn-feishu-submit");
@@ -1528,7 +1593,7 @@
     }
 
     document.getElementById("btn-back-upload").addEventListener("click", () => setStage("upload"));
-    document.getElementById("btn-back-interview").addEventListener("click", () => setStage("interview"));
+    document.getElementById("btn-back-interview").addEventListener("click", () => {document.querySelector('[data-meta="purpose"]').focus();showToast("在这里修改本次花销目的、项目和采购方式；改完可整理当前清单");});
     document.getElementById("btn-back-draft").addEventListener("click", () => setStage("draft"));
 
     document.getElementById("btn-send-answer").addEventListener("click", () => {
@@ -1558,10 +1623,8 @@
       submitAnswer("（跳过）");
     });
 
-    document.getElementById("btn-regen-draft").addEventListener("click", () => {
-      buildDraft();
-      renderDraft();
-      showToast("已按当前答案重生成");
+    document.getElementById("btn-regen-draft").addEventListener("click", async () => {
+      syncDraftFromDom();setStage('interview');
     });
     document.getElementById("btn-goto-submit").addEventListener("click", () => {
       syncDraftFromDom();
@@ -1573,6 +1636,15 @@
       syncDraftFromDom();
     });
     document.getElementById("draft-meta").addEventListener("input", () => syncDraftFromDom());
+    document.getElementById("draft-meta").addEventListener("change", event => {
+      if(event.target.matches('[data-meta-budget]')) {
+        syncDraftFromDom();
+        if(event.target.value) selectBudget(event.target.value);
+        else {session.answers.selectedBudget=null;session.selectedBudgetId=null;}
+        renderDraft();
+      }
+    });
+    document.getElementById("detail-sheets").addEventListener("change", () => syncDraftFromDom());
     document.getElementById("draft-meta").addEventListener("click",event=>{const b=event.target.closest('[data-open-bank]');if(b)openBankProfiles(b.dataset.openBank);});
     document.getElementById('btn-bank-profiles').addEventListener('click',()=>openBankProfiles(bankTargetSide));
     document.getElementById('btn-close-bank-profiles').addEventListener('click',()=>{document.getElementById('bank-profiles-modal').hidden=true;});

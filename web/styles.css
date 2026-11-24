@@ -11,6 +11,21 @@
 @import url("./tokens.css?v=20261111budget1");
 @import url("./base.css?v=20261111budget1");
 
+/* Batch filling uses the existing ledger surfaces and palette. */
+.purchase-row-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; min-width:260px; margin-top:12px; }
+.purchase-row-fields label { display:grid; gap:4px; font-size:var(--text-sm); }
+.purchase-row-fields small { color:var(--muted); font-size:12px; white-space:normal; }
+.preview-invoice { margin-top:18px; padding:18px 0; border-top:1px solid var(--border); }
+.preview-invoice h4 { margin:0 0 6px; }
+.preview-field-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px 24px; padding:0; list-style:none; }
+.preview-field-list li { display:grid; gap:4px; overflow-wrap:anywhere; }
+.preview-field-list span { font-size:var(--text-sm); color:var(--muted); }
+.preview-checks { margin:18px 0; padding:16px; border:1px solid var(--border); border-radius:var(--radius-card); }
+.preview-checks ul { padding-left:20px; }
+.preview-checks p { margin-bottom:0; }
+.attachment-check { font-size:var(--text-sm); }
+.attachment-check.is-missing { font-weight:700; }
+
 
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }

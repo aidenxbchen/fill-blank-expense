@@ -42,6 +42,7 @@ import jev_settings
 import jev_client
 import choice_suggestions
 import handbook
+import filling_workflow
 from invoice_extract import (
     ollama_base,
     ollama_model,
@@ -495,7 +496,7 @@ class Handler(BaseHTTPRequestHandler):
             handle_logout(self)
             return
 
-        if path in ("/api/fill-history", "/api/fill-suggestions", "/api/choice-suggestions"):
+        if path in ("/api/fill-history", "/api/fill-suggestions", "/api/choice-suggestions", "/api/prefill", "/api/review"):
             try:
                 owner = self._owner()
                 length = int(self.headers.get("Content-Length") or 0)
@@ -504,10 +505,18 @@ class Handler(BaseHTTPRequestHandler):
                 claim = body.get("claim")
                 if not isinstance(claim, dict) or not isinstance(claim.get("answers", {}), dict):
                     raise ValueError("无效填写数据")
-                if path == "/api/fill-history":
-                    expense_data.record_fills(owner, body.get("draftId"), claim, public_schema(definition()))
+                if path == '/api/review':
+                    self._json(200, filling_workflow.review(owner, claim, definition()))
+                    return
+                if path == '/api/prefill':
+                    result = filling_workflow.prefill(owner, body.get('draftId'), claim, public_schema(definition()))
+                    session = auth.get_session(auth.cookie_from_headers(self.headers)) or {}
+                    filling_workflow.start_sync(session.get('user') or {})
+                    self._json(200, {'ok': True, **result})
+                    return
+                # Old draft observations are retained for audit, never used as positive samples.
                 suggestions = (choice_suggestions.suggest(owner, claim, public_schema(definition()))
-                               if path == '/api/choice-suggestions' else expense_data.suggestions(owner, claim))
+                               if path == '/api/choice-suggestions' else filling_workflow.suggestions(owner, claim, public_schema(definition())))
                 self._json(200, {"ok":True, "suggestions":suggestions})
             except auth.FeishuAPIError as e:
                 self._json(e.http_status if e.http_status in (401,403) else 502, {"ok":False,"error":str(e)})
@@ -544,6 +553,11 @@ class Handler(BaseHTTPRequestHandler):
         except auth.FeishuAPIError as e:
             self._json(e.http_status if e.http_status in (401,403) else 502, {"ok":False,"error":str(e)})
             return
+
+        if path == '/api/invoice-files':
+            # Warm qualified history while the user uploads/OCRs the batch.
+            session = auth.get_session(auth.cookie_from_headers(self.headers)) or {}
+            filling_workflow.start_sync(session.get('user') or {})
 
         try:
             length = int(self.headers.get("Content-Length") or "0")
@@ -647,6 +661,7 @@ def main() -> None:
     load_feishu_dotenv()
     addr = (HOST, PORT)
     httpd = ThreadingHTTPServer(addr, Handler)
+    filling_workflow.start_worker()
     print(
         f"fill-blank-expense OCR bridge on http://{HOST}:{PORT}\n"
         f"  model={ollama_model()}\n"

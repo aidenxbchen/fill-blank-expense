@@ -5,7 +5,7 @@
   <meta name="description" content="报了呗，ANEVER 员工的采购工作台：上传发票原件、核对识别汇总、补齐项目信息并发起飞书采购申请。" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261123handbook1" />
+  <link rel="stylesheet" href="./styles.css?v=20261124batch1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -66,8 +66,8 @@
       <ol class="stage-list" id="stage-list">
         <li class="stage-item is-active" data-stage="upload"><span class="stage-dot">1</span><span class="stage-name">上传发票</span></li>
         <li class="stage-item" data-stage="interview"><span class="stage-dot">2</span><span class="stage-name">补充信息</span></li>
-        <li class="stage-item" data-stage="draft"><span class="stage-dot">3</span><span class="stage-name">核对草稿</span></li>
-        <li class="stage-item" data-stage="submit"><span class="stage-dot">4</span><span class="stage-name">发起采购</span></li>
+        <li class="stage-item" data-stage="draft"><span class="stage-dot">3</span><span class="stage-name">发票清单</span></li>
+        <li class="stage-item" data-stage="submit"><span class="stage-dot">4</span><span class="stage-name">提交前预览</span></li>
       </ol>
     </nav>
     <!-- STAGE: upload -->
@@ -139,7 +139,7 @@
           <h2>识别汇总</h2>
           <span class="pill" id="summary-count-pill">0</span>
         </div>
-        <p class="section-hint" id="summary-hint">请核对金额、日期、商户和发票号码，直接在表格里改。后续问答和草稿都以这张表为准，而不是原始识别结果。</p>
+        <p class="section-hint" id="summary-hint">请核对金额、日期、商户和发票号码，直接在表格里改。后续预填清单和提交都以这张表为准，而不是原始识别结果。</p>
         <div class="table-wrap">
           <table class="sheet-table summary-table">
             <thead>
@@ -163,7 +163,7 @@
       <div class="parse-status" id="parse-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       <div class="hero-actions" id="upload-actions" hidden>
         <button type="button" class="btn btn-secondary" id="btn-add-more">继续添加</button>
-        <button type="button" class="btn btn-primary" id="btn-start-interview" disabled>确认表格，开始问答</button>
+        <button type="button" class="btn btn-primary" id="btn-start-interview" disabled>补充整单信息</button>
       </div>
     </section>
 
@@ -198,31 +198,31 @@
     <section class="stage-panel" id="stage-draft" data-stage-panel="draft" hidden>
       <div class="draft-head">
         <div>
-          <h2>采购申请草稿</h2>
+          <h2>预填发票清单</h2>
           <p class="section-hint" id="draft-summary-line">根据发票与问答生成，可直接改表格。</p>
         </div>
         <div class="draft-head-actions">
-          <button type="button" class="btn btn-ghost" id="btn-back-interview">继续问答</button>
-          <button type="button" class="btn btn-secondary" id="btn-regen-draft">按当前答案重生成</button>
+          <button type="button" class="btn btn-ghost" id="btn-back-interview">修改整单信息</button>
+          <button type="button" class="btn btn-secondary" id="btn-regen-draft">整理当前清单</button>
         </div>
       </div>
       <div class="draft-meta panel" id="draft-meta"></div>
       <div class="detail-sheets" id="detail-sheets"></div>
       <div class="draft-footer-actions">
         <div class="draft-total" id="draft-total">合计 ¥0.00</div>
-        <button type="button" class="btn btn-primary btn-lg" id="btn-goto-submit">确认，去提交飞书</button>
+        <button type="button" class="btn btn-primary btn-lg" id="btn-goto-submit">检查完整预览</button>
       </div>
     </section>
 
     <!-- STAGE: submit -->
     <section class="stage-panel" id="stage-submit" data-stage-panel="submit" hidden>
       <div class="submit-card panel">
-        <h2>发起飞书采购申请</h2>
-        <p class="section-hint">以当前飞书登录用户发起采购申请。请核对项目、明细和关联预算，创建成功后可直接打开飞书审批。</p>
+        <h2>提交前预览</h2>
+        <p class="section-hint">以当前飞书登录用户发起采购申请。请集中检查花销目的、采购方式、发票清单、必填项和原件附件，确认后再发起。</p>
         <div class="submit-preview" id="submit-preview"></div>
         <div class="submit-actions">
-          <button type="button" class="btn btn-ghost" id="btn-back-draft">返回草稿</button>
-          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit">发起飞书采购申请</button>
+          <button type="button" class="btn btn-ghost" id="btn-back-draft">返回清单修改</button>
+          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit">确认清单，发起飞书采购申请</button>
         </div>
       </div>
     </section>
@@ -362,9 +362,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="./ui.js?v=20261111budget1"></script>
-  <script src="./ocr-bridge.js?v=20261111budget1"></script>
-  <script src="./policy.js?v=20261111budget1"></script>
-  <script src="./app.js?v=20261111budget1"></script>
+  <script src="./ui.js?v=20261124batch1"></script>
+  <script src="./ocr-bridge.js?v=20261124batch1"></script>
+  <script src="./policy.js?v=20261124batch1"></script>
+  <script src="./app.js?v=20261124batch1"></script>
 </body>
 </html>

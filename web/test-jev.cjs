@@ -40,9 +40,11 @@ function harness(){
   vm.runInNewContext(fs.readFileSync(require.resolve('./policy.js'),'utf8'),{window:p});
   const answers={purchaseMethod:'个人垫付',costCenter:'公共办公',purpose:'采购',selectedBudget:{instanceId:'b'}};
   const queue=p.ExpensePolicy.buildQuestionQueue([{id:'i',amount:128}],answers);
-  assert.equal(queue[0].chips[0],'招待费');assert.equal(queue[0].recommended.source,'Jev');
-  assert.ok(!queue[0].chips.includes('已删除选项'));
-  answers[queue[0].id]='办公费';assert.equal(p.ExpensePolicy.buildQuestionQueue([{id:'i',amount:128}],answers).length,0,'manual answer wins');
+  assert.equal(queue.length,0,'model suggestions do not reintroduce per-row questions');
+  const requested={...answers};
+  answers['purchase:个人垫付:i:个人垫付科目']='办公费';
+  p.ExpensePolicy.mergePrefill(answers,{answers:{'purchase:个人垫付:i:个人垫付科目':'招待费'}},requested);
+  assert.equal(answers['purchase:个人垫付:i:个人垫付科目'],'办公费','manual edit wins over late prefill');
   const html=fs.readFileSync(require.resolve('./index.html'),'utf8');
   for(const id of ['jev-base-url','jev-api-key','jev-model','btn-save-jev','btn-test-jev','btn-clear-jev'])assert.ok(html.includes(`id="${id}"`));
   const e=harness();

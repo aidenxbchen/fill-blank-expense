@@ -28,6 +28,7 @@ class ExpenseHTTPTests(unittest.TestCase):
         self.addCleanup(self.close_server)
         self.base='http://127.0.0.1:'+str(self.http.server_port)
         self.session={'access_token':'private-not-printed','user':{'openId':'alice'}}
+        sync=patch.object(server.filling_workflow,'start_sync');sync.start();self.addCleanup(sync.stop)
         env=patch.dict('os.environ',{'BAOXIAO_SECRETS_KEY':'http-test-secret','ORG_JEV_OWNER_OPEN_ID':'alice'},clear=False)
         env.start();self.addCleanup(env.stop)
         for obj,key,val in [(server.auth,'get_session',self.session),(server.auth,'ensure_fresh_session',self.session),(server,'definition',SCHEMA)]:
@@ -83,8 +84,33 @@ class ExpenseHTTPTests(unittest.TestCase):
         from test_feishu_purchase import claim_for
         body={'draftId':'draft1','claim':claim_for()}
         status,result,_=self.request('/api/fill-history',json.dumps(body).encode(),'application/json')
-        self.assertEqual(status,200);self.assertTrue(result['suggestions']['rows']['inv1']['科目'])
+        self.assertEqual(status,200);self.assertEqual(result['suggestions']['rows']['inv1']['科目'], [], 'unapproved draft is never positive evidence')
         self.assertEqual(self.request('/api/fill-suggestions',json.dumps(body).encode(),'application/json')[0],200)
+
+    def test_batch_prefill_and_preview_are_authenticated_and_do_not_create(self):
+        from test_feishu_purchase import claim_for
+        claim=claim_for('差旅费')
+        claim['purpose']='本次出差'
+        claim['answers']={'purchaseMethod':'差旅费','costCenter':claim['costCenter'],'purpose':claim['purpose']}
+        claim['invoices'][0].update(category='meal',merchant='合成餐饮服务')
+        body={'draftId':'batch','claim':claim}
+        with patch.object(server.filling_workflow,'start_sync') as sync, patch.object(server,'handle_create') as create:
+            status,result,_=self.request('/api/prefill',json.dumps(body).encode())
+            self.assertEqual(status,200)
+            self.assertEqual(result['answers']['purchase:差旅费:inv1:费用类型'],'餐费补贴')
+            sync.assert_called_once()
+            claim['answers']=result['answers']
+            ref=data.save_file('alice',b'%PDF offline fixture','fixture.pdf','application/pdf')
+            claim['invoices'][0]['attachment']=ref
+            status,result,_=self.request('/api/review',json.dumps(body).encode())
+            self.assertEqual(status,200)
+            self.assertEqual(result['attachmentCount'],1)
+            claim['answers']['purchase:差旅费:inv1:差旅科目']='业务招待费'
+            self.assertEqual(self.request('/api/review',json.dumps(body).encode())[0],422)
+            create.assert_not_called()
+            with patch.object(server.auth,'get_session',return_value=None):
+                self.assertEqual(self.request('/api/prefill',json.dumps(body).encode())[0],401)
+                self.assertEqual(self.request('/api/review',json.dumps(body).encode())[0],401)
 
     def test_health_exposes_user_ai_flags_without_keys(self):
         status,body,_=self.request('/api/health')

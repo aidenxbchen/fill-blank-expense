@@ -68,31 +68,21 @@
 
 ## 项目问答与本地建议库
 
-逐票问题只用人记得住的「项目名称 + 金额」指代，例如「餐饮 ¥241.00 在【公共办公】里属于哪个科目？」；项目名称优先取文件名品类（如 `餐饮-1103-241.pdf` → 餐饮），否则用类别标签。仅当两张票项目名称与金额都相同时，才附加短日期 `(11-03)` 区分。不再使用发票尾号、第 N 张票或开票方/商户作主语。科目、方式、项目、规格、数量、费用类型只学习用户显式确认的最终值，不学习推荐本身，也不保存银行账号到建议库。
+发票只以「项目名称 + 金额」指代。整单信息一次收集；科目、差旅费用类型等逐票字段直接预填到可编辑清单，不进入问答队列。
 
-SQLite `.expense-data.sqlite3`（Git 忽略，0600）包含：
+`ocr/filling_workflow.py` 读取根目录 `报了呗.md` 的 `baoxiao-prefill-rules` 规则块。先应用差旅硬规则，再按本次用途和票面内容匹配合格历史，最后参考手册有条件建议。所有值须存在于当前飞书定义；用户已有值（含空值）不被后来的建议覆盖。硬规则冲突在预览与真实提交前校验，集中提示修改。
 
-```sql
-invoice_files (
-  file_id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
-  mime TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL,
-  created_at INTEGER NOT NULL, remote_code TEXT, remote_app_id TEXT,
-  uploaded_at INTEGER, UNIQUE(owner, sha256, name)
-);
-fill_observations (
-  owner TEXT, draft_id TEXT, invoice_id TEXT, field TEXT, value TEXT,
-  project TEXT, method TEXT, merchant TEXT, category TEXT,
-  amount_bucket TEXT, updated_at INTEGER,
-  PRIMARY KEY(owner, draft_id, invoice_id, field)
-);
-CREATE INDEX fill_lookup ON fill_observations(owner, field, updated_at);
-```
+SQLite `.expense-data.sqlite3`（Git 忽略，0600）新增：
 
-同一草稿的重复填写覆盖原记录，修正不重复计数；不同 OAuth 用户隔离。金额区间为 ≤100、≤500、≤1000、≤5000、≤10000、>10000；商户做 Unicode/空白归一化。
+- `workflow_prefills`：按用户与草稿存服务端生成基线，同一采购方式重新整理不会擦除原始基线。
+- `workflow_learning`：保存成功提交的最终版、基线与差异；`verified=0` 仅是待核验证据，不能进入正样本。历史导入的样本没有生成基线，不伪造修改差异。
+- 旧 `fill_observations` 保留作审计，生产建议接口已停止使用未核验草稿作为正样本。
 
-排序采用拉普拉斯平滑条件概率的加权混合：项目/商户/采购方式/金额区间组合优先，稀疏时回退到较粗条件和总体频次。只能给当前飞书定义允许的选项排序，已删除选项会被过滤。概率最高的历史选项置顶并标「历史常用」，仍需用户点击；规格与数量会复用历史答案作为选择项。首次无数据、网络或建议库暂不可用时，保留默认选择及自由输入，不阻断问答。
+后台每分钟核验待学习单；整理清单时也后台导入当前登录发起人的历史（最多每小时一次）。准入要求：Asia/Shanghai 发起月与整体通过月均为 2026 年 11 月、整体已通过，且 connect 实际关联了详情可读取且已通过的立项预算或项目预算变更。只关联出差、审批中、撤回、拒绝、其他月份均不纳入。先检查准入，才读取费用内容。
 
-接口：`POST /api/fill-history` 保存显式填写并返回建议；`POST /api/fill-suggestions` 只读取建议。两者均校验登录，不向其他用户返回记录。
+每张不同审批只计一个支持。同用途、同票面类型、同采购方式至少三单的最终选择一致，才将聚合建议写入手册 `learned` 区；后续出现冲突即撤下建议。手册差旅硬规则不会被自动学习改写。单个历史建议仍标注待检查；模板不复制项目、用途、行程、关联或金额。Markdown 使用原子替换，核验后写入中断会在下次同步修复。
+
+接口均要求登录：`POST /api/prefill` 生成并保存基线；`POST /api/review` 只读校验表单与本地原件，不上传附件、不创建审批。兼容的 `/api/fill-history` 与 `/api/fill-suggestions` 均只返回合格历史建议。提交协议和附件上传路径保持原样。
 
 ## 防重复与失败
 
@@ -105,7 +95,6 @@ CREATE INDEX fill_lookup ON fill_observations(owner, field, updated_at);
 
 ```bash
 cd ~/Code/fill-blank-expense
-git pull --ff-only origin main
 python3 -m unittest discover -s ocr -v
 python3 ocr/test_invoice_extract.py
 ./restart-local.sh
@@ -116,9 +105,11 @@ python3 ocr/test_invoice_extract.py
 1. 公网用飞书登录；旧会话缺写权限时退出重新授权。
 2. 硬刷新 https://baoxiao.xbchen.top ，确认提交页无 stub 提示。
 3. 上传真实 PDF 和图片，在识别汇总确认「原件已保存」，修改一个金额 / 商户 / 发票号。旧草稿缺原件时补传，确认手改数据保持不变。
-4. 逐句问答选择「个人垫付」、真实项目，补全科目、规格、数量；草稿可展开采购明细修改。留空必填项应阻止提交并返回问答。
+4. 一次补充整单用途、采购方式、项目与关联预算，在预填清单直接检查科目、费用类型及其余必填项。预览里留空、缺原件或手册冲突均阻止发起，返回清单集中处理。
 5. 发起后核对真实 `instanceCode`，在本人飞书「我发起的」查看申请人与汇总事实，并在「附件」打开每份 PDF / 图片。页面显示附件个数和确认状态。
 6. 重复点击 / 刷新后重试同样内容，不应出现第二条审批；断网与撤销写 scope 均只能显示失败。
-7. 切换七种采购方式检查条件明细；再用同项目/商户/金额区间新建草稿，确认前次选择置顶高亮且不会自动填写。首次没有历史时正常默认排序；逐票问法不包含商户名。
+7. 切换七种采购方式检查条件明细；25 张票不增加逐票选择题。用合格历史夹具验证同用途同类预填、保留手改、审批后差异学习和手册更新。无合格历史时明确标注待检查。
 
 自动测试不创建真实审批。浏览器回归使用受控响应测试成功 / 权限拒绝 / 断网 / stub 拒绝，不等同于生产 OAuth 创建成功。
+
+批量流程浏览器夹具：`node web/batch-flow.browser.cjs`（需可解析 Playwright；可用 `NODE_PATH` 指向本机已安装依赖）。桌面和手机宽度均测试 25 张批量上传、四项整单回答、五十个逐票预填字段、预览冲突保留与纠正，以及一次模拟提交；所有网络路由被拦截，不发起生产审批。

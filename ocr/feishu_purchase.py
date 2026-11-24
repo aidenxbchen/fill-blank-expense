@@ -219,6 +219,8 @@ def _db():
 
 def save_history(source, receipt):
     expense_records.record_submission(source['owner'],source.get('draftId'),source['claim'],receipt,source.get('submittedAt'))
+    import filling_workflow
+    filling_workflow.capture_submission(source['owner'], source.get('draftId'), source['claim'], receipt)
 
 
 def recover_history(owner):
@@ -239,6 +241,8 @@ def create_purchase(sess, body):
     if not actor.get("openId") or actor["openId"] != (sess.get("user") or {}).get("openId"):
         raise ValidationError("OAuth 用户身份不匹配，请重新登录")
     claim = body.get("claim")
+    import filling_workflow
+    filling_workflow.validate_claim(claim or {})
     schema = definition()
     form = build_form(schema, claim)
     files = approval_files.resolve_invoices(actor["openId"], claim)

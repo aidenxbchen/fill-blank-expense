@@ -9,7 +9,7 @@ for(const inv of [{id:'single',quantity:3,unit:'包',items:[{name:'纸张',quant
     const answers={purchaseMethod:method.name,costCenter:'公共办公',purpose:'合成采购',selectedBudget:{instanceId:'budget'}};
     const queue=p.buildQuestionQueue([Object.assign({amount:123,merchant:'不作为主语',fileName:'商户-1103-123.pdf'},inv)],answers);
     assert.ok(queue.every(q=>!/(数量|规格|单位)$/.test(q.id)),'never ask quantity or unit');
-    for(const field of method.fields.filter(w=>['数量','单位','规格'].includes(w.name)))assert.equal(answers[`purchase:${method.name}:${inv.id}:${field.name}`],String(field.name==='数量' ? (inv.id==='single'?3:1) : (inv.id==='single'?'包':'份/批')));
+    assert.equal(p.quantityUnit(inv).quantity,inv.id==='single'?3:1);assert.equal(p.quantityUnit(inv).unit,inv.id==='single'?'包':'份/批');
     for(const q of queue.filter(q=>q.id.includes(inv.id))) {assert.ok(q.text.includes('【公共办公】'));assert.ok(q.text.includes('¥123.00'));assert.ok(!q.text.includes('商户')&&!q.text.includes('不作为主语'));}
   }
 }
