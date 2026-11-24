@@ -52,13 +52,18 @@ async function run(browser,width){
     const ext=path.extname(file),types={'.html':'text/html','.js':'application/javascript','.css':'text/css','.webp':'image/webp'};
     return route.fulfill({contentType:types[ext]||'application/octet-stream',body:fs.readFileSync(file)});
   });
-  await page.goto('http://fixture.invalid/?v=20261124blue1');
+  await page.goto('http://fixture.invalid/?v=20261124periodic1');
   await page.waitForLoadState('networkidle');
   assert.equal(await page.locator('main, [role=main]').count(),1,'one main landmark');
   assert.equal(await page.locator('#astryx-root').count(),0,'historical blue workspace is active');
   assert.equal(await page.locator('script[src*="astryx/workspace"]').count(),0,'neutral shell must not replace the blue workspace');
   assert.equal(await page.locator('header').count(),1,'single top bar');
   assert.equal(await page.locator('#btn-reset').isVisible(),true,'independent new-expense entry');
+  const periodic=page.getByRole('link',{name:'周期性任务 · 网费预演',exact:true}).first();
+  assert.equal(await periodic.getAttribute('href'),'./automatic-tasks.html?v=20261124periodic1');
+  const entry=await periodic.boundingBox();
+  assert(entry&&entry.x>=0&&entry.y>=0&&entry.y+entry.height<=1000,'periodic entry visible on first screen');
+  assert.equal(await page.locator('.hero #btn-periodic-tasks').count(),1,'entry above three cards');
   assert.equal(await page.locator('.brand-mark img').getAttribute('src'),'./assets/logo-zbs.png?v=20261123handbook1');
   assert.equal(await page.locator('.triad-card').count(),3,'preserve three work areas');
   const appearance=await page.evaluate(()=>{
@@ -82,7 +87,7 @@ async function run(browser,width){
     assert.ok(appearance.cards.every(c=>c.height===appearance.cards[0].height),'desktop cards have equal height');
   } else assert.ok(appearance.cards[1].y>appearance.cards[0].y&&appearance.cards[2].y>appearance.cards[1].y,'mobile cards stack');
   await page.screenshot({path:`/tmp/baoxiao-blue-${width}-home.png`,fullPage:true});
-  await page.locator('a[href="./automatic-tasks.html"]').waitFor({state:'visible'});
+  await page.locator('#btn-periodic-tasks').waitFor({state:'visible'});
   assert.equal(await page.locator('#btn-start-interview').isDisabled(),true,'cannot proceed before upload');
   const ids=await page.locator('[id]').evaluateAll(nodes=>nodes.map(n=>n.id));
   assert.equal(new Set(ids).size,ids.length,'desktop and mobile shell must not duplicate command IDs');

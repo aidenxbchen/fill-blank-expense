@@ -4,7 +4,7 @@ const {chromium}=require('playwright');
 async function run(browser,width){
   const context=await browser.newContext({viewport:{width,height:1000},reducedMotion:'reduce'});
   const page=await context.newPage(),errors=[],requests=[];
-  let holdPreview=false,releasePreview=null;
+  let holdPreview=false,releasePreview=null,loadStatus=200;
   let task={ok:true,enabled:false,dryRun:true,liveSubmissionEnabled:false,revision:0,running:null,nextRun:null,
     schedulerRegistered:false,expectedBuyer:'澜理商贸（珠海）有限公司',missingConfig:[],
     config:{intervalSeconds:86400,scanSince:1795449600,templateDraftId:'template',emptyTaxIdAllowed:null,expectedTaxId:'',internetAccount:''},runs:[]};
@@ -20,6 +20,7 @@ async function run(browser,width){
       assert(!p.includes('feishu-expense'),'real approval endpoint forbidden');
       if(p==='/api/drafts')return json({ok:true,items:[{id:'template',title:'常规网费配置草稿'}]});
       if(p==='/api/automatic-tasks/internet'){
+        if(loadStatus!==200)return json({ok:false,error:loadStatus===401?'请先登录飞书并确认读取权限':'夹具读取失败'},loadStatus);
         if(req.method()==='POST'){
           const b=req.postDataJSON();assert.equal(b.dryRun,true);assert.equal(b.revision,task.revision);
           if(b.config)task.config=b.config;
@@ -47,8 +48,11 @@ async function run(browser,width){
     return route.fulfill({body:fs.readFileSync(file),contentType:types[path.extname(file)]||'application/octet-stream'});
   });
   await page.goto('http://fixture.invalid/automatic-tasks.html');await page.waitForLoadState('networkidle');
-  assert.equal(await page.getByRole('heading',{name:'常规网费自动任务',exact:true}).count(),1);
+  assert.equal(await page.getByRole('heading',{name:'周期性任务',exact:true}).count(),1);
   assert.equal(await page.getByRole('button',{name:'扫描邮箱并预演一次',exact:true}).isDisabled(),true);
+  await page.getByRole('heading',{name:'周期性任务列表',exact:true}).waitFor();
+  await page.getByText('周期：每 86400 秒',{exact:true}).waitFor();
+  await page.getByText('最近结果：尚未运行',{exact:true}).waitFor();
   await page.getByLabel('已确认的网费账户',{exact:true}).fill('confirmed-internet-account');
   await page.getByLabel('扫描起始时间',{exact:true}).fill('2026-11-20T00:00:00+08:00');
   await page.getByRole('button',{name:'保存预演配置',exact:true}).click();
@@ -78,9 +82,34 @@ async function run(browser,width){
   assert.equal(await page.getByRole('button',{name:'扫描邮箱并预演一次',exact:true}).isDisabled(),true);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'no horizontal overflow');
   assert.deepEqual(errors,[]);
-  await page.screenshot({path:`/tmp/baoxiao-internet-task-${width}.png`,fullPage:true});
+  await page.screenshot({path:`/tmp/baoxiao-t104-task-configured-${width}.png`,fullPage:true});
+  // Empty/config/login/error states are all isolated fixtures, never production rows.
+  task={...task,config:{},runs:[],missingConfig:['扫描周期','已核对的报销配置草稿','扫描起始时间（避免历史票）']};
+  await page.reload();await page.waitForLoadState('networkidle');
+  await page.getByText('尚未配置周期性任务',{exact:true}).waitFor();
+  assert.equal(await page.getByText('常规网费 · 仅预演',{exact:true}).count(),0,'no fabricated task row');
+  assert.equal(await page.getByRole('button',{name:'开启预演任务',exact:true}).isDisabled(),true);
+  const configLink=page.getByRole('link',{name:'前往配置网费预演',exact:true});
+  await configLink.click();assert.equal(new URL(page.url()).hash,'#task-config');
+  assert.equal(await page.getByLabel('扫描周期（秒）',{exact:true}).inputValue(),'');
+  await page.goto('http://fixture.invalid/automatic-tasks.html');await page.waitForLoadState('networkidle');
+  await page.screenshot({path:`/tmp/baoxiao-t104-task-empty-${width}.png`,fullPage:true});
+  for(const status of [401,403,503]){
+    loadStatus=status;await page.reload();await page.waitForLoadState('networkidle');
+    await page.getByText(status===401?'请先登录飞书查看周期性任务':status===403?'暂时无权读取周期性任务':'任务列表暂时无法加载',{exact:true}).waitFor();
+    assert.equal(await page.getByText('尚未配置周期性任务',{exact:true}).count(),0,'failure is not an empty list');
+    assert.equal(await page.getByLabel('扫描周期（秒）',{exact:true}).count(),0,'no stale config after failed read');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+    if(status===401){
+      assert.equal(await page.getByRole('link',{name:'用飞书登录',exact:true}).getAttribute('href'),'/api/auth/feishu/login');
+      await page.screenshot({path:`/tmp/baoxiao-t104-task-login-${width}.png`,fullPage:true});
+    }
+  }
+  loadStatus=200;await page.getByRole('button',{name:'重新加载任务',exact:true}).click();
+  await page.getByText('尚未配置周期性任务',{exact:true}).waitFor();
+  assert.deepEqual(errors,[]);
   assert(!requests.some(p=>p.includes('feishu-expense')));
-  console.log(`${width}px: config, start/pause, preview, zero real endpoints, no overflow passed`);
+  console.log(`${width}px: config, start/pause, preview, empty/login/403/503 recovery, zero real endpoints, no overflow passed`);
   await context.close();
 }
 (async()=>{const browser=await chromium.launch({headless:true,executablePath:process.env.BAOXIAO_CHROME||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});try{await run(browser,1200);await run(browser,390);}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1);});
