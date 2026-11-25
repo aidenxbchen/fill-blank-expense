@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261124batch1";
+  const ASSET_V = "20261125t113u-travel1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -29,6 +29,54 @@
   let budgetRequest = null, budgetDataOwner = null, budgetAuthExpiredOwner = null;
   let budgetLastAttempt = 0, budgetRefreshBound = false, budgetRefreshMessage = "";
   let aiSetupOwner = null, aiSetupConfigured = null, aiSetupEpoch = 0;
+  let travelMatchKey = '', travelEpoch = 0, travelTimer;
+
+  function travelContext() {
+    return JSON.stringify({owner:ownerId(),draft:session.draftId,claim:fillingClaim()});
+  }
+
+  function queueTravelMatch() {
+    clearTimeout(travelTimer);
+    if(session.answers.purchaseMethod==='差旅费')travelTimer=setTimeout(()=>refreshTravelMatch(),500);
+  }
+
+  async function refreshTravelMatch(force=false) {
+    if(!authUser || session.submitted || submitting || session.answers.purchaseMethod!=='差旅费')return;
+    const owner=ownerId(), target=session, key=travelContext();
+    if(!force && travelMatchKey===key)return;
+    travelMatchKey=key;
+    const epoch=++travelEpoch, previous=session.answers.selectedBudget;
+    session.travelMatch={message:'正在按旅客、实际日期和路线检索出差申请…',groups:[]};
+    try {
+      const result=await recordsAPI('/api/travel-match','POST',{claim:fillingClaim()});
+      if(owner!==ownerId() || target!==session || epoch!==travelEpoch || key!==travelContext())return;
+      if(result.owner!==owner)throw Error('出差候选身份不匹配，请重新登录');
+      session.travelMatch=result;
+      approvedBudgets=[...approvedBudgets.filter(b=>b.kind!=='travel'),...result.candidates];
+      window.__approvedBudgets=approvedBudgets;
+      if(!previous && !session.answers.selectedBudget && result.autoSelectId) selectBudget(result.autoSelectId, 'auto');
+      travelMatchKey=travelContext();
+    } catch(e) {
+      if(owner!==ownerId() || target!==session || epoch!==travelEpoch)return;
+      session.travelMatch={message:'出差申请读取/匹配失败：'+e.message,groups:[]};travelMatchKey='';
+    }
+    if(session.stage==='draft')renderDraft();
+    if(session.stage==='interview')renderInterview();
+    renderBudgets();
+  }
+
+  function travelMarkup(invoiceId) {
+    if(session.answers.purchaseMethod!=='差旅费')return '';
+    const inv=session.invoices.find(i=>i.id===invoiceId), travel=inv.travel || {};
+    const segments=travel.segments && travel.segments.length ? travel.segments : [{date:'',origin:'',destination:''}];
+    return `<fieldset><legend>实际行程（开票日期不参与匹配）</legend><label>旅客<input aria-label="旅客" data-travel-invoice="${esc(invoiceId)}" data-travel-field="passenger" value="${esc(travel.passenger || '')}" /></label>${segments.map((s,n)=>['date','origin','destination'].map((k,j)=>`<label>${['乘坐日 YYYY-MM-DD','出发站 / 机场 / 城市','到达站 / 机场 / 城市'][j]}<input data-travel-invoice="${esc(invoiceId)}" data-travel-segment="${n}" data-travel-field="${k}" value="${esc(s[k] || '')}" /></label>`).join('')).join('')}</fieldset>`;
+  }
+
+  function travelStatusMarkup() {
+    const m=session.travelMatch || {};
+    if(session.answers.purchaseMethod!=='差旅费')return '';
+    return `<section aria-live="polite" role="status"><p>${esc(m.message || '选择差旅费后会按真实可读候选匹配；可手动选择关联。')}</p><p>${esc(m.notice || '')}</p><ul>${(m.groups || []).map(g=>`<li>${esc(formatMoney((session.invoices.find(i=>i.id===g.invoiceId) || {}).amount))}：${esc(g.reason)}；候选 ${g.candidateIds.length} 条</li>`).join('')}</ul><button type="button" class="btn btn-secondary" data-refresh-travel>重新匹配出差申请</button></section>`;
+  }
 
   const SHEET_KIND_META = {
     meal: { kind: "meal", title: "餐饮表" },
@@ -789,12 +837,15 @@
       confidence: result.confidence || 0,
       source: result.source || "",
       raw: result.raw || null,
+      travel: entry._travelEdited ? entry.travel : result.travel || null,
       extract_method: result.extract_method,
       review_model: result.review_model || "",
       review_error: result.review_error || "",
       corrections: result.corrections || [],
       needsReview: !!result.needsReview,
     });
+    if(result.travel && result.travel.isTicket && !session.answers.purchaseMethod)session.answers.purchaseMethod='差旅费';
+    queueTravelMatch();
   }
 
   // Exported for unit tests: OCR merge must keep user-picked 类别 across concurrent parses.
@@ -924,6 +975,7 @@
       }
     }
     answers[qid] = value;
+    queueTravelMatch();
   }
 
   function pushChat(role, text, meta) {
@@ -931,6 +983,8 @@
   }
 
   function renderInterview() {
+    const travelStatus=document.getElementById('travel-interview-status');
+    if(travelStatus)travelStatus.innerHTML=travelStatusMarkup()+ (session.answers.purchaseMethod==='差旅费' ? '<button type="button" class="btn btn-secondary" data-open-travel-editor>到清单核对实际行程</button>' : '');
     if(choiceRequestKey!==JSON.stringify(choiceContext()))window.__choiceSuggestions=null;
     const side = document.getElementById("sidebar-invoices");
     const pill = document.getElementById("invoice-count-pill");
@@ -1031,7 +1085,7 @@
 
   function fillingClaim() {
     return {costCenter:session.answers.costCenter || "", purchaseMethod:session.answers.purchaseMethod || "",
-      purpose:session.answers.purpose || "", answers:{...session.answers}, selectedBudget:session.answers.selectedBudget || null, invoices:okInvoices().map(({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source})=>({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source}))};
+      purpose:session.answers.purpose || "", answers:{...session.answers}, selectedBudget:session.answers.selectedBudget || null, invoices:okInvoices().map(({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source,travel,raw})=>({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source,travel,raw}))};
   }
 
   let choiceRequestKey = "";
@@ -1138,6 +1192,7 @@
   async function prepareDraft() {
     if(preparingDraft) return;
     preparingDraft=true;
+    await refreshTravelMatch();
     const owner=ownerId(), target=session, context=JSON.stringify(choiceContext()), requested={...session.answers};
     try {
       const result=await recordsAPI('/api/prefill','POST',{draftId:session.draftId,claim:fillingClaim()});
@@ -1231,10 +1286,10 @@
         <div class="field"><label>花销目的 / 采购事由（整单）</label><input aria-label="采购事由" data-meta="purpose" value="${esc(d.purpose)}" /></div>
         <div class="field"><label>项目</label><select aria-label="项目" data-meta="costCenter">${choices(schema.projects,d.costCenter)}</select></div>
         <div class="field"><label>采购方式</label><select aria-label="采购方式" data-meta="purchaseMethod">${choices(schema.methods.map(m=>m.name),d.purchaseMethod)}</select></div>
-        <div class="field"><label>关联审批${d.purchaseMethod==='预付款项' ? '（当前方式隐藏）' : '（整单必填）'}</label>${d.purchaseMethod==='预付款项' ? '<span>无需提交</span>' : `<select aria-label="关联审批" data-meta-budget><option value="">请选择已通过预算</option>${approvedBudgets.map(b=>`<option value="${esc(b.instanceId)}" ${b.instanceId===(session.answers.selectedBudget || {}).instanceId ? 'selected' : ''}>${esc(b.title || b.project)}</option>`).join('')}</select>`}</div>
+        <div class="field"><label>关联审批${d.purchaseMethod==='预付款项' ? '（当前方式隐藏）' : '（整单必填）'}</label>${d.purchaseMethod==='预付款项' ? '<span>无需提交</span>' : `<select aria-label="关联审批" data-meta-budget><option value="">请选择已通过预算或出差申请</option>${approvedBudgets.filter(b=>d.purchaseMethod!=='差旅费' || b.kind==='travel').map(b=>`<option value="${esc(b.instanceId)}" ${b.instanceId===(session.answers.selectedBudget || {}).instanceId ? 'selected' : ''}>${esc(b.title || b.project)}</option>`).join('')}</select>`}</div>
         ${sharedFields}
         ${method && sharedFields ? [...new Set(method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name)).map(w=>window.ExpensePolicy.bankSide(w.name)))].map(side=>`<button type="button" class="btn btn-secondary" data-open-bank="${side}">点选${side==='ours' ? '我方' : '收款'}银行档案 / 新增</button>`).join('') : ''}
-      </div><p class="section-hint">整单信息只填一次。修改采购方式后，点「整理当前清单」应用对应规则；已填写内容会保留。提交前集中预览所有必填项与附件。</p>`;
+      </div>${travelStatusMarkup()}<p class="section-hint">整单信息只填一次。修改采购方式后，点「整理当前清单」应用对应规则；已填写内容会保留。提交前集中预览所有必填项与附件。</p>`;
     }
 
     if (sheetsEl) {
@@ -1290,6 +1345,13 @@
   function syncDraftFromDom() {
     if (!session.draft) return;
     const previousMethod=session.answers.purchaseMethod;
+    document.querySelectorAll('[data-travel-field]').forEach(input=>{
+      const inv=session.invoices.find(i=>i.id===input.dataset.travelInvoice);
+      if(!inv)return;
+      inv.travel=inv.travel || {passenger:'',segments:[]};
+      if(input.dataset.travelField==='passenger') {if(inv.travel.passenger!==input.value)inv._travelEdited=true;inv.travel.passenger=input.value;}
+      else {const n=Number(input.dataset.travelSegment);inv.travel.segments[n]=inv.travel.segments[n] || {};if(inv.travel.segments[n][input.dataset.travelField]!==input.value)inv._travelEdited=true;inv.travel.segments[n][input.dataset.travelField]=input.value;}
+    });
     document.querySelectorAll('[data-invoice-field]').forEach(input=>{
       const inv=session.invoices.find(i=>i.id===input.dataset.invoice);
       if(inv) {inv[input.dataset.invoiceField]=input.value;inv._userEdited=true;inv._editedFields={...(inv._editedFields || {}),[input.dataset.invoiceField]:true};}
@@ -1320,6 +1382,7 @@
       if (inv) Object.assign(inv, {date:row.date, merchant:row.description, invoiceNo:row.invoiceNo, amount:row.amount, note:row.note});
     }));
     recomputeDraftTotal();
+    queueTravelMatch();
     if(previousMethod!==session.answers.purchaseMethod) {
       session.prefillEvidence={};session.prefillContext='';
       renderDraft();
@@ -1340,14 +1403,14 @@
       const control = w.options.length ? `<select data-answer="${esc(key)}"><option value="">请选择</option>${value && !w.options.includes(value) ? `<option value="${esc(value)}" selected>已失效：${esc(value)}</option>` : ''}${w.options.map(o=>`<option ${o===value ? "selected":""}>${esc(o)}</option>`).join("")}</select>` : `<input data-answer="${esc(key)}" value="${esc(value)}" />`;
       const evidence=(session.prefillEvidence || {})[key];
       return `<label>${esc(w.name)}${w.required ? " · 表单必填" : ""}${control}<small>${esc(evidence ? evidence.source : "无同类历史 / 待检查")}</small></label>`;
-    }).join("")}</div>`;
+    }).join("")}${travelMarkup(invoiceId)}</div>`;
   }
 
   function buildFeishuPayload() {
     if (session.stage==="draft") syncDraftFromDom();
     const d = session.draft;
     return {draftId:session.draftId,claim:{purchaseMethod:d.purchaseMethod, purpose:d.purpose, costCenter:d.costCenter,
-      invoices:okInvoices().map(({id,date,merchant,invoiceNo,invoiceCode,items,quantity,unit,amount,category,note,fileName,source,attachment})=>({id,date,merchant,invoiceNo,invoiceCode,items,quantity,unit,amount,category,note,fileName,source,attachment})), answers:{...session.answers},
+      invoices:okInvoices().map(({id,date,merchant,invoiceNo,invoiceCode,items,quantity,unit,amount,category,note,fileName,source,attachment,travel,raw})=>({id,date,merchant,invoiceNo,invoiceCode,items,quantity,unit,amount,category,note,fileName,source,attachment,travel,raw})), answers:{...session.answers},
       selectedBudget:session.answers.selectedBudget || null}};
   }
 
@@ -1373,7 +1436,7 @@
       <div class="submit-stat"><span>项目 · 整单必填</span><strong>${esc(c.costCenter || '未填')}</strong></div>
       <div class="submit-stat"><span>花销目的 / 采购事由 · 整单必填</span><strong>${esc(c.purpose || '未填')}</strong></div>
       <div class="submit-stat"><span>关联审批${c.purchaseMethod==='预付款项' ? ' · 当前方式隐藏' : ' · 表单必填'}</span><strong>${esc(c.purchaseMethod==='预付款项' ? '无需提交' : (c.selectedBudget || {}).title || '未选择')}</strong></div>
-      <div class="submit-stat"><span>发票合计</span><strong>${c.invoices.length} 张 · ${esc(formatMoney(c.invoices.reduce((a,i)=>a+Number(i.amount),0)))}</strong></div>
+      ${travelStatusMarkup()}<div class="submit-stat"><span>发票合计</span><strong>${c.invoices.length} 张 · ${esc(formatMoney(c.invoices.reduce((a,i)=>a+Number(i.amount),0)))}</strong></div>
       <div class="preview-checks" role="status">${issues.length ? '<strong>请集中处理以下必填项或冲突</strong><ul>'+issues.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>' : '表内必填项已齐，请检查下方完整清单。'}<p id="preview-server-status">正在核验当前表单与原件完整性…</p></div>
       <h3>发票清单及对应必填项</h3>${rows}<p class="section-hint">发起后保存本次预填与最终修改的差异；整体审批通过并核验实际预算关联后才参与学习。</p>`;
   }
@@ -1636,6 +1699,10 @@
       syncDraftFromDom();
     });
     document.getElementById("draft-meta").addEventListener("input", () => syncDraftFromDom());
+    document.getElementById('travel-interview-status').addEventListener('click',event=>{
+      if(event.target.closest('[data-refresh-travel]'))refreshTravelMatch(true);
+      if(event.target.closest('[data-open-travel-editor]')) {buildDraft();setStage('draft');}
+    });
     document.getElementById("draft-meta").addEventListener("change", event => {
       if(event.target.matches('[data-meta-budget]')) {
         syncDraftFromDom();
@@ -1645,7 +1712,7 @@
       }
     });
     document.getElementById("detail-sheets").addEventListener("change", () => syncDraftFromDom());
-    document.getElementById("draft-meta").addEventListener("click",event=>{const b=event.target.closest('[data-open-bank]');if(b)openBankProfiles(b.dataset.openBank);});
+    document.getElementById("draft-meta").addEventListener("click",event=>{if(event.target.closest('[data-refresh-travel]'))refreshTravelMatch(true);const b=event.target.closest('[data-open-bank]');if(b)openBankProfiles(b.dataset.openBank);});
     document.getElementById('btn-bank-profiles').addEventListener('click',()=>openBankProfiles(bankTargetSide));
     document.getElementById('btn-close-bank-profiles').addEventListener('click',()=>{document.getElementById('bank-profiles-modal').hidden=true;});
     document.getElementById('btn-refresh-bank-profiles').addEventListener('click',event=>window.ExpenseUI.run(event.currentTarget,async()=>{try{await loadBankProfiles();renderBankModal();}catch(e){document.getElementById('bank-profile-error').textContent=e.message;}},'正在读取…'));
@@ -1747,12 +1814,12 @@
     window.addEventListener("pagehide",()=>{save();});
   }
 
-  function selectBudget(id) {
+  function selectBudget(id, source='manual') {
     if(session.submitted || submitting) return;
     const b = approvedBudgets.find((x) => x.instanceId === id || x.instanceCode === id);
     if (!b) return;
     session.selectedBudgetId = b.instanceId;
-    session.answers.costCenter = b.project || b.title || "";
+    if(b.kind!=='travel')session.answers.costCenter = b.project || b.title || "";
     session.answers.selectedBudgetId = b.instanceId;
     session.answers.selectedBudget = {
       instanceId: b.instanceId,
@@ -1762,13 +1829,14 @@
       title: b.title,
       totalAmount: b.totalAmount,
       subjects: b.subjects || [],
+      selectionSource: source, kind:b.kind, trip:b.trip,
     };
-    if (b.project) session.answers.purchaseProject = b.project;
+    if (b.project && b.kind!=='travel') session.answers.purchaseProject = b.project;
     queueFillingHistory();
     if (session.draft) session.draft.costCenter = session.answers.costCenter;
     save();
     renderBudgets();
-    showToast("已选择预算：" + (b.project || b.title || ""));
+    showToast("已选择关联审批：" + (b.project || b.title || ""));
   }
 
   function renderBudgets() {
@@ -1818,7 +1886,7 @@
       grid.innerHTML = `<p class="budget-empty">暂无已通过的立项 / 变更预算。<span class="empty-next">去飞书完成预算审批后，点刷新或重新登录即可出现在这里。</span></p>`;
       return;
     }
-    if (hint && !budgetWarning) hint.textContent = "点选一条已通过的预算，问答会自动带上项目，不必再手填。";
+    if (hint && !budgetWarning) hint.textContent = "预算会带上项目；选择差旅费后会另查当前用户可关联的已通过出差申请，按日期、地点核对。";
     const html = approvedBudgets
       .map((b) => {
         const selected = session.selectedBudgetId === b.instanceId;
@@ -2212,7 +2280,7 @@
         throw new Error(data.error || data.warning || "预算读取失败，请检查网络并点刷新预算重试");
       budgetAuthExpiredOwner=null;
       budgetRefreshMessage="预算已更新";
-      approvedBudgets = data.budgets;
+      approvedBudgets = [...data.budgets,...approvedBudgets.filter(b=>b.kind==='travel')];
       window.__approvedBudgets = approvedBudgets;
     } catch (e) {
       if(!current())return;
@@ -2236,6 +2304,7 @@
     document.getElementById('btn-refresh-budgets').addEventListener('click',()=>{
       if(!authUser){showToast('请先用飞书登录，再刷新预算');return;}
       loadBudgets({manual:true});
+      if(session.answers.purchaseMethod==='差旅费') refreshTravelMatch(true);
     });
     document.addEventListener('visibilitychange',refreshVisibleBudgets);
     window.addEventListener('focus',refreshVisibleBudgets);
@@ -2267,6 +2336,7 @@
       aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;
       document.getElementById("ai-first-use-modal").hidden=true;
       resetBudgets();
+      travelEpoch++;travelMatchKey='';
       renderBudgets();
     }
   }
@@ -2286,6 +2356,7 @@
     const aiModal = document.getElementById("ai-settings-modal");
     if (aiModal) aiModal.hidden = true;
     authUser = null;
+    travelEpoch++;travelMatchKey='';clearTimeout(travelTimer);
     resetBudgets();
     bankProfiles=[];bankProfilesOwner=null;document.getElementById('bank-profiles-modal').hidden=true;
     aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;

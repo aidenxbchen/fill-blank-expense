@@ -22,6 +22,7 @@ import expense_data
 import invoice_registry
 import invoice_items
 import expense_records
+import travel_context
 import time
 
 APPROVAL_CODE = "D448D0FB-77DB-4640-9650-1FB99512888C"
@@ -81,6 +82,22 @@ def public_schema(form):
     method_widget = next(w for w in form if w["name"] == "采购方式")
     return {"approvalCode": APPROVAL_CODE, "projects": next(field(w)["options"] for w in form if w["name"] == "项目"),
             "methods": [{"name": o["text"], "fields": [field(w) for w in active_group(form, o["text"])[2]["children"]]} for o in method_widget["option"]]}
+
+
+def validate_connect_definition(form, claim, approval_code):
+    """Read the *live* connect restriction, including deployed numeric definition IDs."""
+    method = claim.get('purchaseMethod') or (claim.get('answers') or {}).get('purchaseMethod')
+    _, _, _, values = active_group(form, method)
+    connects = [w for w in form if w.get('type') == 'connect' and visible(w, values)]
+    if len(connects) != 1: raise ValidationError('当前采购定义无法唯一确定关联审批控件')
+    option = connects[0].get('option')
+    if isinstance(option, dict):
+        if option.get('notLimitScope') is True: return
+        allowed = option.get('definitionIds')
+    else: allowed = option
+    definition = next((d for d in auth.BUDGET_DEFINITIONS + [auth.TRAVEL_DEFINITION] if d['approval_code'] == approval_code), None)
+    if not definition or not isinstance(allowed, list) or not {approval_code, definition['numeric_id']} & set(allowed):
+        raise ValidationError('所选关联定义不在当前飞书采购表单允许范围内，请刷新表单')
 
 
 def number(value, label, money=False):
@@ -173,16 +190,26 @@ def build_form(form, claim):
     return result
 
 
-def validate_relation(claim, actor, token):
+def validate_relation(claim, actor, token, sess=None, schema=None):
     b = claim.get("selectedBudget") or {}
     code = b.get("instanceId") or b.get("instanceCode")
     if not code:
         return
+    if (claim.get('purchaseMethod') or (claim.get('answers') or {}).get('purchaseMethod')) == '差旅费':
+        if not sess: raise ValidationError('差旅关联必须通过当前 OAuth 用户实时核验')
+        travel_context.validate_travel(sess, actor, claim)
+        validate_connect_definition(schema or definition(), claim, auth.TRAVEL_DEFINITION['approval_code'])
+        return
     detail = auth.fetch_instance(token, code)
     if detail.get("approval_code") not in ALLOWED_LINKS or not auth.is_approved_status(detail.get("status")):
         raise ValidationError("关联审批必须是已通过的立项预算、项目预算变更或出差申请")
+    if detail.get('approval_code') == auth.TRAVEL_DEFINITION['approval_code']:
+        if not sess: raise ValidationError('出差关联必须通过当前 OAuth 用户实时核验')
+        travel_context.validate_travel(sess, actor, claim)
+        validate_connect_definition(schema or definition(), claim, detail['approval_code'])
+        return
     # Reuse the same server-side budget visibility rules and ID alias expansion.
-    budgets, warning = auth.list_approved_budgets(actor)
+    budgets, warning = auth.list_approved_budgets(actor, refresh=True)
     if warning: raise ValidationError(warning)
     if any(x["instanceId"] == code for x in budgets):
         return
@@ -248,7 +275,7 @@ def create_purchase(sess, body):
     files = approval_files.resolve_invoices(actor["openId"], claim)
     token = auth.get_tenant_access_token()
     if (claim.get("purchaseMethod") or (claim.get("answers") or {}).get("purchaseMethod")) != "预付款项":
-        validate_relation(claim, actor, token)
+        validate_relation(claim, actor, token, sess, schema)
     # Content-addressed idempotency survives reloads, repeated clicks and server restarts.
     canonical = json.dumps([actor["openId"], form, [{"sha256":r["sha256"],"name":r["name"]} for r,raw in files]], ensure_ascii=False, sort_keys=True)
     request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, hashlib.sha256(canonical.encode()).hexdigest()))

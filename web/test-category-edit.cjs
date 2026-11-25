@@ -20,7 +20,7 @@ function normalizeCategory(c) {
   return c && known[c] ? c : "other";
 }
 `;
-const sandbox = { window: {}, console };
+const sandbox = { window: {}, console, session:{answers:{}}, queueTravelMatch(){} };
 vm.createContext(sandbox);
 vm.runInContext(snippet + "; this.ExpenseInvoiceMerge = window.ExpenseInvoiceMerge;", sandbox);
 const api = sandbox.window.ExpenseInvoiceMerge;

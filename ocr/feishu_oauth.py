@@ -634,7 +634,7 @@ def list_initiated(access_token: str, definition_code: str | None = None) -> lis
     pages = 0
     while pages < 10:
         pages += 1
-        query: dict[str, Any] = {"page_size": 100, "locale": "zh-CN"}
+        query: dict[str, Any] = {"page_size": 100, "locale": "zh-CN", "user_id_type": "open_id"}
         if definition_code:
             query["definition_code"] = definition_code
         if page_token:
@@ -647,7 +647,9 @@ def list_initiated(access_token: str, definition_code: str | None = None) -> lis
         batch = data.get("instances") or []
         if isinstance(batch, list):
             items.extend(x for x in batch if isinstance(x, dict))
-        if data.get("has_more") and data.get("page_token"):
+        if data.get("has_more"):
+            if pages == 10 or not data.get('page_token') or data.get('page_token') == page_token:
+                raise FeishuAPIError(502, {"msg": "已发起审批超过读取上限，候选不完整，请缩小查询范围"})
             page_token = str(data.get("page_token"))
             continue
         break
@@ -1112,6 +1114,8 @@ def list_approved_budgets(user: dict[str, Any] | None, *, refresh: bool = False)
                     details_by_code[code] = detail
         if missing_scope:
             return [], MISSING_SCOPE_WARNING
+        if fetch_error is not None:
+            return [], '读取预算详情失败，候选不完整，请检查应用读取权限后刷新；不能视为没有可用申请'
 
         candidates: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, Any], Any]] = []
         for defn, approval_node, inst_node, instance_code in pending:

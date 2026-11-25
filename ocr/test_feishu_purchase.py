@@ -71,7 +71,7 @@ class FormTests(unittest.TestCase):
         for detail in [dict(approval_code='evil',status='APPROVED'),dict(approval_code=next(iter(p.ALLOWED_LINKS)),status='PENDING')]:
             with patch.object(auth,'fetch_instance',return_value=detail):
                 with self.assertRaises(p.ValidationError):p.validate_relation(claim_for(),ACTOR,'tenant')
-        with patch.object(auth,'fetch_instance',return_value={'approval_code':next(iter(p.ALLOWED_LINKS)),'status':'APPROVED','form':[]}),patch.object(auth,'list_approved_budgets',return_value=([],'')):
+        with patch.object(auth,'fetch_instance',return_value={'approval_code':auth.BUDGET_DEFINITIONS[0]['approval_code'],'status':'APPROVED','form':[]}),patch.object(auth,'list_approved_budgets',return_value=([],'')):
             with self.assertRaisesRegex(p.ValidationError,'范围'):p.validate_relation(claim_for(),ACTOR,'tenant')
 
 

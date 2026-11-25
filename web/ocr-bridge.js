@@ -109,6 +109,7 @@
           : Number(data.confidence) || 0,
       source: data.source || "xiaomi-ocr-0",
       raw: data.raw,
+      travel: data.travel || null,
       extract_method: data.extract_method || "",
       review_model: data.reviewModel || data.review_model || "",
       review_error: data.review_error || data.reviewError || "",

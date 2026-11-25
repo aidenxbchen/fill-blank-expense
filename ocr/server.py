@@ -41,6 +41,8 @@ import ai_settings
 import jev_settings
 import jev_client
 import choice_suggestions
+import travel_context
+import travel_matching
 import handbook
 import filling_workflow
 import recurring_internet
@@ -262,8 +264,10 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "ok": True,
+                    "releaseVersion": "20261125t113u-travel1",
                     "backend": "ollama-openai-compat",
                     "features": {
+                        "travelMatching": True,
                         "invoiceOriginals": True,
                         "invoiceDedupe": True,
                         "invoiceQuantity": True,
@@ -540,7 +544,7 @@ class Handler(BaseHTTPRequestHandler):
             handle_logout(self)
             return
 
-        if path in ("/api/fill-history", "/api/fill-suggestions", "/api/choice-suggestions", "/api/prefill", "/api/review"):
+        if path in ("/api/fill-history", "/api/fill-suggestions", "/api/choice-suggestions", "/api/prefill", "/api/review", '/api/travel-match'):
             try:
                 owner = self._owner()
                 length = int(self.headers.get("Content-Length") or 0)
@@ -550,7 +554,26 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(claim, dict) or not isinstance(claim.get("answers", {}), dict):
                     raise ValueError("无效填写数据")
                 if path == '/api/review':
-                    self._json(200, filling_workflow.review(owner, claim, definition()))
+                    form = definition()
+                    # Only travel adds OAuth relation checks. Other methods retain production behavior.
+                    if claim.get('purchaseMethod') == '差旅费':
+                        sess = auth.ensure_fresh_session(auth.cookie_from_headers(self.headers), auth.get_session(auth.cookie_from_headers(self.headers)))
+                        actor = travel_context.actor_for(sess)
+                        if actor['openId'] != owner: raise ValueError('OAuth 用户已变更，请重新登录')
+                        from feishu_purchase import validate_relation
+                        validate_relation(claim, actor, '', sess, form)
+                    self._json(200, filling_workflow.review(owner, claim, form))
+                    return
+                if path == '/api/travel-match':
+                    sess = auth.ensure_fresh_session(auth.cookie_from_headers(self.headers), auth.get_session(auth.cookie_from_headers(self.headers)))
+                    actor = travel_context.actor_for(sess)
+                    if actor['openId'] != owner: raise ValueError('OAuth 用户已变更，请重新登录')
+                    form = definition()  # live schema, never old hand-maintained options
+                    public_schema(form)
+                    from feishu_purchase import validate_connect_definition
+                    validate_connect_definition(form, claim, auth.TRAVEL_DEFINITION['approval_code'])
+                    candidates = travel_context.travel_candidates(sess, actor)
+                    self._json(200, {'ok': True, 'owner': owner, **travel_matching.match(owner, actor, claim, candidates)})
                     return
                 if path == '/api/prefill':
                     result = filling_workflow.prefill(owner, body.get('draftId'), claim, public_schema(definition()))
@@ -563,7 +586,8 @@ class Handler(BaseHTTPRequestHandler):
                                if path == '/api/choice-suggestions' else filling_workflow.suggestions(owner, claim, public_schema(definition())))
                 self._json(200, {"ok":True, "suggestions":suggestions})
             except auth.FeishuAPIError as e:
-                self._json(e.http_status if e.http_status in (401,403) else 502, {"ok":False,"error":str(e)})
+                self._json(403 if auth.is_missing_scope(e) else e.http_status if e.http_status in (401,403) else 502,
+                    {"ok":False,"error":'当前产品 OAuth 用户无权读取出差候选，请检查 approval:instance:read、approval:approval:readonly / approval:task:list_by_user 及通讯录姓名读取范围；CLI 的授权不能替代网页 OAuth，本功能不会自动扩大授权' if auth.is_missing_scope(e) else str(e)})
             except (ValueError, TypeError, KeyError, AttributeError) as e:
                 self._json(422, {"ok":False,"error":str(e)})
             except Exception:
@@ -635,6 +659,7 @@ class Handler(BaseHTTPRequestHandler):
                     filename, mime = original['name'], original['mime']
                     try:
                         out=invoice_registry.parse_once(owner,meta["attachment"],parse_uploaded_invoice,draft_id,invoice_id)
+                        travel_matching.enrich(out)
                         out.update(ok=True,attachment=expense_data.public_file(original))
                         self._json(200,out)
                     except invoice_registry.DuplicateError as e:
@@ -681,6 +706,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             out = invoice_registry.parse_once(owner,attachment,parse_uploaded_invoice,draft_id,invoice_id)
+            travel_matching.enrich(out)
         except invoice_registry.DuplicateError as e:
             self._json(409,{"ok":False,"duplicate":True,"error":str(e)});return
         except Exception as e:

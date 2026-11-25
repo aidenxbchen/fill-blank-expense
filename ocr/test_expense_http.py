@@ -94,7 +94,7 @@ class ExpenseHTTPTests(unittest.TestCase):
         claim['answers']={'purchaseMethod':'差旅费','costCenter':claim['costCenter'],'purpose':claim['purpose']}
         claim['invoices'][0].update(category='meal',merchant='合成餐饮服务')
         body={'draftId':'batch','claim':claim}
-        with patch.object(server.filling_workflow,'start_sync') as sync, patch.object(server,'handle_create') as create:
+        with patch.object(server.travel_context,'actor_for',return_value=self.session['user']), patch.object(server.travel_context,'validate_travel'), patch.object(server.filling_workflow,'start_sync') as sync, patch.object(server,'handle_create') as create:
             status,result,_=self.request('/api/prefill',json.dumps(body).encode())
             self.assertEqual(status,200)
             self.assertEqual(result['answers']['purchase:差旅费:inv1:费用类型'],'餐费补贴')
