@@ -1,0 +1,38 @@
+{
+  "name": "fill-blank-expense",
+  "version": "1.0.0",
+  "description": "把报销从「对着表格填空」变成「**把发票全丢进来 → 补充整单信息 → 预填清单 → 检查完整预览 → 提交飞书**」。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs",
+    "build": "node scripts/build-ui.mjs",
+    "test:flow": "node web/batch-flow.browser.cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aidenxbchen/fill-blank-expense.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/aidenxbchen/fill-blank-expense/issues"
+  },
+  "homepage": "https://github.com/aidenxbchen/fill-blank-expense#readme",
+  "dependencies": {
+    "@astryxdesign/core": "0.7.17",
+    "@astryxdesign/theme-neutral": "0.7.17",
+    "@stylexjs/stylex": "0.19.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@astryxdesign/cli": "0.7.17",
+    "esbuild": "0.28.2",
+    "playwright": "1.65.1"
+  },
+  "private": true
+}

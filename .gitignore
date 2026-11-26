@@ -11,3 +11,8 @@ __pycache__/
 .expense-data.sqlite3*
 .invoice-files/
 .baoxiao-secrets-key
+
+node_modules/
+
+# Local design handoff archive
+baoxiao-taste-brief.tgz

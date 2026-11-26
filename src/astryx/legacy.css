@@ -1,0 +1,4 @@
+/* Compatibility layer for the existing invoice editor and dialogs. The official
+   Astryx reset, component and theme layers take precedence over legacy tokens. */
+@layer reset, legacy, astryx-base, astryx-theme;
+@import '../../web/styles.css' layer(legacy);
