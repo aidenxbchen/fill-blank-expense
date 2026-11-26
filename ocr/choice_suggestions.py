@@ -50,9 +50,9 @@ def _text(value, limit=800):
 def invoice_state(claim, inv):
     answers = claim.get('answers') or {}
     # Deliberate whitelist: no original/image, invoice number, bank account or tax ID.
-    return {'项目名称': _text(claim.get('costCenter') or answers.get('costCenter')),
-        '采购方式': _text(claim.get('purchaseMethod') or answers.get('purchaseMethod')),
-        '采购事由': _text(answers.get('purpose')),
+    return {'费用类型': _text(claim.get('expenseType') or answers.get('expenseType')),
+        '支出方': _text(claim.get('payer') or answers.get('payer')),
+        '报销事由': _text(answers.get('purpose') or claim.get('purpose')),
         '票面': {k: _text(inv.get(k)) for k in ('amount', 'category', 'quantity', 'unit')},
         '明细': [{k: _text(row.get(k), 200) for k in ('name', 'specification', 'quantity', 'unit', 'unit_price', 'amount')}
                  for row in (inv.get('items') or [])[:40] if isinstance(row, dict)]}
@@ -143,7 +143,8 @@ def suggest(owner, claim, schema):
     if not isinstance(invoices, list) or len(invoices) > 100:
         raise ValueError('发票列表无效或超过 100 张')
     answers = claim.get('answers') or {}
-    method = next((m for m in schema['methods'] if m['name'] == (claim.get('purchaseMethod') or answers.get('purchaseMethod'))), None)
+    typ = claim.get('expenseType') or answers.get('expenseType')
+    method = next((m for m in schema['methods'] if m['name'] == typ), None)
     tasks = []
     for index, inv in enumerate(invoices):
         if not isinstance(inv, dict) or not isinstance(inv.get('id'), str):
@@ -151,10 +152,10 @@ def suggest(owner, claim, schema):
         fields = {w['name']: list(dict.fromkeys(w['options'])) for w in (method or {}).get('fields', [])
                   if w.get('required') and 0 < len(w.get('options', [])) <= 255}
         if index == 0:
-            if not answers.get('purchaseMethod'):
-                fields['采购方式'] = [m['name'] for m in schema['methods']]
-            if not answers.get('costCenter') and schema.get('projects'):
-                fields['项目'] = schema['projects']
+            if not typ:
+                fields['费用类型'] = [m['name'] for m in schema['methods']]
+            if not (claim.get('payer') or answers.get('payer')) and schema.get('payers'):
+                fields['支出方'] = schema['payers']
         if fields:
             tasks.append((inv['id'], invoice_state(claim, inv), fields))
     result = {'global': {}, 'rows': {}, 'notices': []}
@@ -165,8 +166,8 @@ def suggest(owner, claim, schema):
             choices, notices = future.result()
             row = {}
             for name, values in choices.items():
-                if name in ('采购方式', '项目'):
-                    result['global']['purchaseMethod' if name == '采购方式' else 'costCenter'] = values
+                if name in ('费用类型', '支出方'):
+                    result['global']['expenseType' if name == '费用类型' else 'payer'] = values
                 else:
                     row['科目' if '科目' in name else name] = values
             result['rows'][ident] = row

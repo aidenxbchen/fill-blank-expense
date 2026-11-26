@@ -105,5 +105,7 @@ assert.equal(hooks.renderMarkdown(''), '');
 const full = hooks.renderMarkdown(md);
 assert.ok(!/<(?:p|li|h[1-4])>(?!<span class="handbook-text">)/.test(full), 'every text block needs an inline selection wrapper');
 assert.equal((full.match(/class="handbook-text"/g) || []).length, (full.match(/<(?:p|li|h[1-4])>/g) || []).length);
-assert.ok(full.includes('本轮历史审批学习严格限定为：2026 年 11 月'), 'rendered handbook keeps its learning scope');
+assert.ok(full.includes('发起日期不早于 2026 年 11 月'), 'rendered handbook keeps its learning scope');
+assert.ok(full.includes('抄送给我'), 'handbook mentions CC learning');
+assert.ok(full.includes('提交人所属部门'), 'handbook mentions department selection');
 console.log('Handbook: readonly entry, unchanged source rules, inline selection wrappers, headings, paragraphs, lists, code and safe links passed');

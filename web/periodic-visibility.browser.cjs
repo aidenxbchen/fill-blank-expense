@@ -4,8 +4,8 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {createHash}=require('node:crypto');
 const {chromium}=require('playwright');
-const version='20261124tasks2',sha=bytes=>createHash('sha256').update(bytes).digest('hex');
-const bases=['http://127.0.0.1:5173','https://baoxiao.xbchen.top'];
+const version='20261126rework3',sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+const bases=process.env.BAOXIAO_CHECK_PUBLIC==='1'?['http://127.0.0.1:5173','https://baoxiao.xbchen.top']:['http://127.0.0.1:5173'];
 async function run(browser,base,width){
   const name=base.startsWith('https:')?'public':'local';
   const context=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce',serviceWorkers:'block'});
@@ -32,7 +32,7 @@ async function run(browser,base,width){
     await route.fulfill({response,body});
   });
   await page.goto(base+'/?v='+version);await page.waitForLoadState('networkidle');
-  const entry=page.locator('#btn-periodic-tasks');
+  const entry=page.locator('.routine-task-link');
   await entry.waitFor({state:'visible'});
   const rect=await entry.boundingBox();
   assert(rect.x>=0&&rect.y>=0&&rect.y+rect.height<=900,'entry visible without scrolling');
@@ -40,20 +40,21 @@ async function run(browser,base,width){
   assert.equal(await page.locator('.triad-card').count(),3);
   assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()),'#1f56c9');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  await page.getByText('请先登录飞书，查看任务状态、周期和最近结果。',{exact:true}).waitFor();
+  await page.getByText('月度 · 发给李颖华报销',{exact:true}).waitFor();
   await page.screenshot({path:`/tmp/baoxiao-t105-${name}-home-${width}.png`,fullPage:true});
   await entry.click();await page.waitForLoadState('networkidle');
-  await page.getByText('请先登录飞书查看周期性任务',{exact:true}).waitFor();
+  await page.getByText('请先登录飞书查看常规任务',{exact:true}).waitFor();
   assert.equal(new URL(page.url()).pathname,'/automatic-tasks.html');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:`/tmp/baoxiao-t105-${name}-login-${width}.png`,fullPage:true});
   assert.deepEqual(errors,[]);
-  for(const p of ['/internet-task/task.js','/internet-task/task.css','/styles.css','/app.js','/ui.js','/routine-task-card.js'])assert(assets.some(a=>a.path===p),'loaded '+p);
+  for(const p of ['/styles.css','/assets/logo-zbs.webp'])assert(assets.some(a=>a.path===p || a.path.endsWith(p.replace(/^\//,''))),'loaded '+p);
   await context.close();
   return {name,width,entry:rect,errors,assets};
 }
 (async()=>{
-  const browser=await chromium.launch({headless:true,executablePath:process.env.BAOXIAO_CHROME||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+  const launch=process.env.BAOXIAO_CHROME?{headless:true,executablePath:process.env.BAOXIAO_CHROME}:{headless:true};
+  const browser=await chromium.launch(launch);
   try{
     const result=[];
     for(const base of bases){

@@ -40,9 +40,17 @@ def bootstrap(con):
         for inv in claim.get('invoices') or []:
             insert_legacy(con,row['owner'],row['draft_id'] or 'submit_'+row['request_id'],inv,'submitted',row['project'])
     for row in con.execute("SELECT * FROM drafts WHERE status IN ('active','submitted') ORDER BY created_at").fetchall():
-        state=json.loads(row['state_json']); project=(state.get('answers') or {}).get('costCenter') or ''
+        state=json.loads(row['state_json']); project=context_label(state=state)
         for inv in state.get('invoices') or []: insert_legacy(con,row['owner'],row['id'],inv,row['status'],project)
     con.execute('INSERT INTO invoice_registry_meta VALUES(1)')
+
+
+def context_label(claim=None, answers=None, state=None):
+    claim = claim or {}
+    state = state or {}
+    answers = answers or claim.get('answers') or state.get('answers') or {}
+    draft = state.get('draft') or {}
+    return str(answers.get('purpose') or claim.get('purpose') or answers.get('expenseType') or claim.get('expenseType') or answers.get('costCenter') or claim.get('costCenter') or draft.get('costCenter') or '')
 
 
 def insert_legacy(con,owner,draft_id,inv,phase,project):

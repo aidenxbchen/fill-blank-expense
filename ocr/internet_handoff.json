@@ -1,0 +1,9 @@
+{
+  "recipientName": "李颖华",
+  "messageHonorific": "颖华",
+  "lookupQuery": "李颖华",
+  "lookupTime": "2026-11-26T12:07:00+08:00",
+  "lookupMethod": "lark-cli contact +search-user --as user --exclude-external-users",
+  "selection": "activated same-tenant colleague with enterprise email and recent direct message; two same-name matches existed",
+  "openIdEnv": "BAOXIAO_HANDOFF_OPEN_ID"
+}

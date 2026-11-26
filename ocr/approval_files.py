@@ -53,7 +53,7 @@ def resolve_invoices(owner, claim):
         # One file may legitimately be referenced more than once, attach it once.
         if record['file_id'] not in seen:
             files.append((record,None));seen.add(record['file_id'])
-    if not files:raise data.DataError('必须附上发票原文件才能发起采购申请')
+    if not files:raise data.DataError('必须附上发票原文件才能发起费用报销')
     return files
 
 
@@ -73,5 +73,5 @@ def file_codes(owner, files):
 
 def add_attachment(form, schema, codes):
     fields=[w for w in schema if w['type']=='attachmentV2' and w.get('visible',True)]
-    if len(fields)!=1:raise data.DataError('采购申请的附件字段已变化，已停止提交，请联系管理员')
+    if len(fields)!=1:raise data.DataError('费用报销的附件字段已变化，已停止提交，请联系管理员')
     form.append({'id':fields[0]['id'],'type':'attachmentV2','value':codes})

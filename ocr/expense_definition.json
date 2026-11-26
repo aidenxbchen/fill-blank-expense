@@ -1,0 +1,659 @@
+{
+  "approval_name": "费用报销",
+  "approval_code": "7C35D7A9-DFF0-46BC-9FC7-61C90E142E51",
+  "fetched_at": "2026-11-26T12:07:00+08:00",
+  "source": "lark-cli approval approvals get --as user --locale zh-CN",
+  "form": [
+    {
+      "default_value_type": "",
+      "display_condition": null,
+      "enable_default_value": false,
+      "id": "widget16510509704570001",
+      "name": "报销事由",
+      "printable": true,
+      "required": true,
+      "type": "textarea",
+      "visible": true,
+      "widget_default_value": ""
+    },
+    {
+      "default_value_type": "",
+      "display_condition": null,
+      "enable_default_value": false,
+      "id": "widget17664045922450001",
+      "name": "支出方",
+      "option": [
+        {
+          "value": "mjh3oqd1-q30xdfeo5f-0",
+          "text": "支付宝小荷包"
+        },
+        {
+          "value": "mjh3oqd1-1dss4yv7gtz-0",
+          "text": "对公转账"
+        },
+        {
+          "value": "mjh3oqd1-aiq3dzgi0ki-0",
+          "text": "个人支付"
+        }
+      ],
+      "printable": true,
+      "required": true,
+      "type": "radioV2",
+      "visible": true,
+      "widget_default_value": ""
+    },
+    {
+      "default_value_type": "",
+      "display_condition": null,
+      "enable_default_value": false,
+      "id": "widget17664806208460001",
+      "name": "费用类型",
+      "option": [
+        {
+          "value": "mjicyaem-h6xdf4qzts8-0",
+          "text": "差旅费"
+        },
+        {
+          "value": "mjicyaem-u4xljx7miy9-0",
+          "text": "普通采购"
+        },
+        {
+          "value": "mkmc05zm-t5hys0wtcls-1",
+          "text": "薪酬"
+        }
+      ],
+      "printable": true,
+      "required": true,
+      "type": "radioV2",
+      "visible": true,
+      "widget_default_value": ""
+    },
+    {
+      "default_value_type": "",
+      "display_condition": null,
+      "enable_default_value": false,
+      "id": "widget16510509818090001",
+      "name": "费用汇总",
+      "option": {
+        "isCapital": false
+      },
+      "printable": true,
+      "required": true,
+      "type": "formula",
+      "visible": true,
+      "widget_default_value": ""
+    },
+    {
+      "children": [
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17691526449720001",
+          "name": "名称",
+          "printable": true,
+          "required": true,
+          "type": "input",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17690683284570001",
+          "name": "申请人",
+          "option": {
+            "ignore": false,
+            "multi": false,
+            "range": [
+              1
+            ]
+          },
+          "printable": true,
+          "required": true,
+          "type": "contact",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17781293808840001",
+          "name": "明细采购类别",
+          "option": [
+            {
+              "value": "mov0bn6f-tj868udnt0j-0",
+              "text": "办公费"
+            },
+            {
+              "value": "mov0bn8a-lfqvpoanv3j-0",
+              "text": "办公设备"
+            },
+            {
+              "value": "mov0bn8a-bvikd6ry4i-1",
+              "text": "研发耗材"
+            },
+            {
+              "value": "mov0bn8a-wj9nuqei0e-2",
+              "text": "研发设备"
+            },
+            {
+              "value": "mov0bn8a-rp4bhrboja-3",
+              "text": "研发服务费"
+            },
+            {
+              "value": "mov0bn8a-ks8ds9cfsq-4",
+              "text": "服务费"
+            },
+            {
+              "value": "mov0bn8a-ppjo9i31wx-5",
+              "text": "福利费"
+            },
+            {
+              "value": "mov0bn8a-34azeeaqwyv-6",
+              "text": "差旅费"
+            },
+            {
+              "value": "mov0bn8a-5tjr36yully-7",
+              "text": "业务招待费"
+            },
+            {
+              "value": "mov0bn8a-e2ft5zfk0ar-8",
+              "text": "快递通讯费"
+            },
+            {
+              "value": "mov0bn8a-2tw1ngdu98l-9",
+              "text": "市内交通费"
+            },
+            {
+              "value": "mov0bn8a-t88jn0vnwe9-10",
+              "text": "委托外部研究开发费用"
+            },
+            {
+              "value": "mov0bn8a-l5uvgeqrrm-11",
+              "text": "其他研发费用-用户调研/共创"
+            },
+            {
+              "value": "mov0bn8a-okawhkr6ox-12",
+              "text": "其他研发费用-其他"
+            },
+            {
+              "value": "mov0bn8a-ug60qxik5p-13",
+              "text": "租金、物业管理费、水电费"
+            },
+            {
+              "value": "mov0bn8a-uxn8nuq4xa9-14",
+              "text": "招聘费"
+            },
+            {
+              "value": "mov0bn8a-kjcuh37n72h-15",
+              "text": "租赁保证金"
+            },
+            {
+              "value": "mov0bn8a-iz02tpooqf-16",
+              "text": "保险费"
+            },
+            {
+              "value": "mov0bn8a-ng2g5o8ua3-17",
+              "text": "其他"
+            },
+            {
+              "value": "mpq8npq4-0tx4avhfs1er-1",
+              "text": "劳动保护费"
+            },
+            {
+              "value": "mra19iqn-aienjtz6n3o-3",
+              "text": "咨询费"
+            },
+            {
+              "value": "msipmbs7-kipad63j26-1",
+              "text": "装修费"
+            }
+          ],
+          "printable": true,
+          "required": true,
+          "type": "radioV2",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17676854023290001",
+          "name": "金额",
+          "option": {
+            "currencyRange": [
+              "CNY"
+            ],
+            "isCapital": false
+          },
+          "printable": true,
+          "required": true,
+          "type": "amount",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": true,
+          "id": "widget16510510138590001",
+          "name": "日期（年-月-日）",
+          "option": {
+            "dateCheckEnd": 0,
+            "dateCheckStart": 0,
+            "dateCheckType": 0
+          },
+          "options": {
+            "dateCheckEnd": 0,
+            "dateCheckStart": 0,
+            "dateCheckType": 0
+          },
+          "printable": true,
+          "required": true,
+          "type": "date",
+          "value": "YYYY-MM-DD",
+          "visible": true,
+          "widget_default_value": "0"
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17676829076240001",
+          "name": "发票号码",
+          "printable": true,
+          "required": true,
+          "type": "input",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "CURRENT_VALUE",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17664022223750001",
+          "name": "部门",
+          "option": {
+            "displayPath": false,
+            "multi": false
+          },
+          "printable": true,
+          "required": true,
+          "type": "department",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17689878238500001",
+          "name": "数量",
+          "option": {
+            "maxValue": "",
+            "minValue": ""
+          },
+          "printable": true,
+          "required": true,
+          "type": "number",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17676833744870001",
+          "name": "采购备注",
+          "printable": true,
+          "required": true,
+          "type": "input",
+          "visible": true,
+          "widget_default_value": ""
+        }
+      ],
+      "default_value_type": "",
+      "display_condition": {
+        "conditional": "OR",
+        "conditions": [
+          {
+            "conditional": "AND",
+            "conditions": null,
+            "expressions": [
+              {
+                "source_widget": {
+                  "id": "widget17664806208460001",
+                  "custom_id": ""
+                },
+                "compare_type": "is",
+                "standard_value": "mjicyaem-u4xljx7miy9-0"
+              }
+            ]
+          }
+        ],
+        "expressions": null
+      },
+      "enable_default_value": false,
+      "id": "widget16510509950440001",
+      "name": "费用明细",
+      "option": {
+        "input_type": "LIST",
+        "mobile_detail_type": "CARD",
+        "print_type": "LIST"
+      },
+      "printable": true,
+      "required": true,
+      "type": "fieldList",
+      "visible": true,
+      "widget_default_value": ""
+    },
+    {
+      "children": [
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17665637652330001",
+          "name": "名称",
+          "option": [
+            {
+              "value": "mjjqgd0x-crrwgwiyffn-0",
+              "text": "交通费"
+            },
+            {
+              "value": "mjjqgd0x-71wm7h9nmdb-0",
+              "text": "住宿费"
+            },
+            {
+              "value": "mjjqgd0x-erxqqz5dm35-0",
+              "text": "餐费补贴"
+            },
+            {
+              "value": "mjjqggi7-uz84df3873s-1",
+              "text": "其他"
+            }
+          ],
+          "printable": true,
+          "required": true,
+          "type": "radioV2",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17665611061960001",
+          "name": "发起人",
+          "option": {
+            "ignore": false,
+            "multi": false,
+            "range": [
+              1
+            ]
+          },
+          "printable": true,
+          "required": true,
+          "type": "contact",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17665611235060001",
+          "name": "金额",
+          "option": {
+            "currencyRange": [
+              "CNY"
+            ],
+            "isCapital": false
+          },
+          "printable": true,
+          "required": true,
+          "type": "amount",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17669926588160001",
+          "name": "发票号码",
+          "printable": true,
+          "required": true,
+          "type": "input",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17664824713350001",
+          "name": "数量",
+          "option": {
+            "maxValue": "",
+            "minValue": ""
+          },
+          "printable": true,
+          "required": true,
+          "type": "number",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": true,
+          "id": "widget17664824846100001",
+          "name": "日期",
+          "option": {
+            "dateCheckEnd": 0,
+            "dateCheckStart": 0,
+            "dateCheckType": 0
+          },
+          "options": {
+            "dateCheckEnd": 0,
+            "dateCheckStart": 0,
+            "dateCheckType": 0
+          },
+          "printable": true,
+          "required": true,
+          "type": "date",
+          "value": "YYYY-MM-DD",
+          "visible": true,
+          "widget_default_value": "0"
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17665621225460001",
+          "name": "出差备注",
+          "printable": true,
+          "required": true,
+          "type": "input",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17669784381640001",
+          "name": "关联审批",
+          "option": {
+            "definitionIds": [],
+            "limitAssociateTicket": false,
+            "notLimitScope": true
+          },
+          "printable": false,
+          "required": true,
+          "type": "connect",
+          "visible": true,
+          "widget_default_value": ""
+        }
+      ],
+      "default_value_type": "",
+      "display_condition": {
+        "conditional": "OR",
+        "conditions": [
+          {
+            "conditional": "AND",
+            "conditions": null,
+            "expressions": [
+              {
+                "source_widget": {
+                  "id": "widget17664806208460001",
+                  "custom_id": ""
+                },
+                "compare_type": "is",
+                "standard_value": "mjicyaem-h6xdf4qzts8-0"
+              }
+            ]
+          }
+        ],
+        "expressions": null
+      },
+      "enable_default_value": false,
+      "id": "widget17664813893330001",
+      "name": "出差明细",
+      "option": {
+        "input_type": "LIST",
+        "mobile_detail_type": "CARD",
+        "print_type": "LIST"
+      },
+      "printable": true,
+      "required": true,
+      "type": "fieldList",
+      "visible": true,
+      "widget_default_value": ""
+    },
+    {
+      "children": [
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17690488566470001",
+          "name": "费用类型",
+          "option": [
+            {
+              "value": "mkou0htz-2nplbwyll5y-0",
+              "text": "社保-研发人工费用"
+            },
+            {
+              "value": "mkou0htz-xq5o65vs0od-0",
+              "text": "社保-管理费用"
+            },
+            {
+              "value": "mkou0htz-jk40bzxcph-0",
+              "text": "社保-个人"
+            },
+            {
+              "value": "mkou0huy-p9leqfvpl4d-1",
+              "text": "公积金-研发人工费用"
+            },
+            {
+              "value": "mkou0huy-mpuxnbxhtd-2",
+              "text": "公积金-管理费用"
+            },
+            {
+              "value": "mkou0huy-hisvzamvdrt-3",
+              "text": "公积金-个人"
+            },
+            {
+              "value": "mkou0huy-fijijh40ay-4",
+              "text": "工资-研发人工费用"
+            },
+            {
+              "value": "mkou0huy-8i5aocales-5",
+              "text": "工资-管理费用"
+            },
+            {
+              "value": "mnwvg0jh-katrdfe22gm-1",
+              "text": "个人所得税"
+            }
+          ],
+          "printable": true,
+          "required": true,
+          "type": "radioV2",
+          "visible": true,
+          "widget_default_value": ""
+        },
+        {
+          "default_value_type": "",
+          "display_condition": null,
+          "enable_default_value": false,
+          "id": "widget17690491564180001",
+          "name": "金额",
+          "option": {
+            "currencyRange": [
+              "CNY"
+            ],
+            "isCapital": false
+          },
+          "printable": true,
+          "required": true,
+          "type": "amount",
+          "visible": true,
+          "widget_default_value": ""
+        }
+      ],
+      "default_value_type": "",
+      "display_condition": {
+        "conditional": "OR",
+        "conditions": [
+          {
+            "conditional": "AND",
+            "conditions": null,
+            "expressions": [
+              {
+                "source_widget": {
+                  "id": "widget17664806208460001",
+                  "custom_id": ""
+                },
+                "compare_type": "is",
+                "standard_value": "mkmc05zm-t5hys0wtcls-1"
+              }
+            ]
+          }
+        ],
+        "expressions": null
+      },
+      "enable_default_value": false,
+      "id": "widget17688906870550001",
+      "name": "薪酬明细",
+      "option": {
+        "input_type": "LIST",
+        "mobile_detail_type": "CARD",
+        "print_type": "LIST"
+      },
+      "printable": true,
+      "required": true,
+      "type": "fieldList",
+      "visible": true,
+      "widget_default_value": ""
+    },
+    {
+      "default_value_type": "",
+      "display_condition": null,
+      "enable_default_value": false,
+      "id": "widget16510510447300001",
+      "name": "附件",
+      "option": null,
+      "printable": true,
+      "required": true,
+      "type": "attachmentV2",
+      "visible": true,
+      "widget_default_value": ""
+    }
+  ]
+}

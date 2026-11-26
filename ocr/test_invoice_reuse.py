@@ -55,7 +55,7 @@ class ReuseTests(IsolatedData):
     def test_different_bytes_same_digital_invoice_blocked_and_cache_not_repeated(self):
         ref=self.attach();self.save(ref);registry.parse_once('alice',ref,self.parser,'draft_a','inv_a')
         other=self.attach('bob','draft_b','inv_b',self.raw+b'different encoding')
-        with self.assertRaisesRegex(registry.DuplicateError,'公共办公'):
+        with self.assertRaisesRegex(registry.DuplicateError,'购买办公用品'):
             registry.parse_once('bob',other,self.parser,'draft_b','inv_b')
         self.assertEqual(self.parser.call_count,2)  # Different bytes need one recognition to learn their number.
         with self.assertRaises(registry.DuplicateError):registry.parse_once('bob',other,self.parser,'draft_b','inv_b')
@@ -89,7 +89,7 @@ class ReuseTests(IsolatedData):
         with self.assertRaises(records.RecordError):self.save(ref,revision=1)
         with self.assertRaises(records.RecordError):records.change_draft('alice','draft_a',1,delete=True)
         registry.reject_submission('alice','draft_a');self.save(ref,revision=1)
-        claim={'invoices':invs,'costCenter':'公共办公','purchaseMethod':'个人垫付'}
+        claim={'invoices':invs,'expenseType':'普通采购','payer':'个人支付'}
         records.record_submission('alice','draft_a',claim,{'ok':True,'instanceCode':'synthetic-result','requestId':'synthetic-request','approvalUrl':'https://example.invalid'})
         with self.assertRaises(registry.DuplicateError):self.attach('bob','draft_b','inv_b')
 
@@ -126,7 +126,7 @@ class ItemTests(unittest.TestCase):
         import feishu_purchase as purchase
         for row,quantity,unit in [({'quantity':4,'unit':'包'},4,'包'),({'items':[{'name':'纸'},{'name':'笔'}],'quantity':9,'unit':'件'},1,'份/批')]:
             claim=claim_for();claim['invoices'][0].update(row)
-            form=purchase.build_form(SCHEMA,claim);group=purchase.active_group(SCHEMA,'个人垫付')[2]
+            form=purchase.build_form(SCHEMA,claim);group=purchase.active_group(SCHEMA,'普通采购')[2]
             cells=next(w['value'][0] for w in form if w['type']=='fieldList')
             byid={w['id']:w['value'] for w in cells}
             for widget in group['children']:

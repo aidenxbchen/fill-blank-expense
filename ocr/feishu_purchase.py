@@ -1,7 +1,8 @@
-"""Native 采购申请 through the OAuth user's /instances/initiate API.
+"""Native 费用报销 through the OAuth user's /instances/initiate API.
 
-Definition and budget reads retain the existing tenant read-only access.
-Creation exclusively uses the verified OAuth user token; no tenant fallback.
+The live 费用报销 definition is the only source for questions, details,
+preview and initiate. Definition reads may use a snapshot when the live
+API is unavailable; creation still uses the verified OAuth user token.
 """
 from __future__ import annotations
 
@@ -24,8 +25,15 @@ import invoice_items
 import expense_records
 import travel_context
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-APPROVAL_CODE = "D448D0FB-77DB-4640-9650-1FB99512888C"
+import form_alignment
+
+APPROVAL_CODE = form_alignment.EXPENSE_CODE
+APPROVAL_NAME = "费用报销"
+SNAPSHOT_PATH = Path(__file__).with_name("expense_definition.json")
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 CREATE_URL = "https://open.feishu.cn/open-apis/approval/v4/instances/initiate"
 ALLOWED_LINKS = {d["approval_code"] for d in auth.BUDGET_DEFINITIONS} | {auth.TRAVEL_DEFINITION["approval_code"]}
 DB_PATH = Path(__file__).resolve().parent.parent / ".submissions.sqlite3"
@@ -36,15 +44,52 @@ class ValidationError(ValueError):
     pass
 
 
-def definition():
-    obj = auth.http_json("GET", f"https://open.feishu.cn/open-apis/approval/v4/approvals/{APPROVAL_CODE}?locale=zh-CN", token=auth.get_tenant_access_token())
-    if obj.get("code") != 0:
-        raise auth.FeishuAPIError(502, obj)
-    data = obj.get("data") or {}
-    if data.get("approval_name") != "采购申请":
-        raise ValidationError("审批定义名称不匹配，已停止提交")
+
+def snapshot_form():
+    data = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
     form = data.get("form")
-    return json.loads(form) if isinstance(form, str) else form
+    if isinstance(form, str):
+        form = json.loads(form)
+    if data.get("approval_name") not in (None, APPROVAL_NAME):
+        raise ValidationError("快照审批定义名称不匹配，已停止提交")
+    return form
+
+
+def definition():
+    try:
+        obj = auth.http_json("GET", f"https://open.feishu.cn/open-apis/approval/v4/approvals/{APPROVAL_CODE}?locale=zh-CN", token=auth.get_tenant_access_token())
+        if obj.get("code") != 0:
+            raise auth.FeishuAPIError(502, obj)
+        data = obj.get("data") or {}
+        if data.get("approval_name") != APPROVAL_NAME:
+            raise ValidationError("审批定义名称不匹配，已停止提交")
+        form = data.get("form")
+        return json.loads(form) if isinstance(form, str) else form
+    except (ValidationError, auth.FeishuAPIError):
+        raise
+    except Exception:
+        return snapshot_form()
+
+
+def claim_type(claim):
+    answers = (claim or {}).get("answers") or {}
+    return str((claim or {}).get("expenseType") or answers.get("expenseType") or "").strip()
+
+
+def claim_payer(claim):
+    answers = (claim or {}).get("answers") or {}
+    return str((claim or {}).get("payer") or answers.get("payer") or "").strip()
+
+
+def row_key(claim, invoice_id, name, shared=False):
+    typ = claim_type(claim)
+    mid = "shared" if shared else invoice_id
+    return f"expense:{typ}:{mid}:{name}"
+
+
+def answer_value(claim, invoice_id, name, shared=False):
+    answers = claim.get("answers") or {}
+    return answers.get(row_key(claim, invoice_id, name, shared), "")
 
 
 def visible(widget, values):
@@ -52,7 +97,7 @@ def visible(widget, values):
         tests = [evaluate(x) for x in (c.get("conditions") or [])]
         for exp in c.get("expressions") or []:
             if exp.get("compare_type") != "is":
-                raise ValidationError("采购定义出现不支持的显隐条件，请更新字段映射")
+                raise ValidationError("费用报销定义出现不支持的显隐条件，请更新字段映射")
             tests.append(values.get(exp["source_widget"]["id"]) == exp.get("standard_value"))
         return (any(tests) if c.get("conditional") == "OR" else all(tests))
     return widget.get("visible", True) and (not widget.get("display_condition") or evaluate(widget["display_condition"]))
@@ -65,39 +110,102 @@ def option_value(widget, value):
     raise ValidationError(f"{widget['name']}必须从飞书现有选项中选择")
 
 
-def active_group(form, method):
-    method_widget = next(w for w in form if w["name"] == "采购方式")
-    selected = option_value(method_widget, method)
-    values = {method_widget["id"]: selected}
+def active_group(form, expense_type):
+    type_widget = next(w for w in form if w["name"] == "费用类型")
+    selected = option_value(type_widget, expense_type)
+    values = {type_widget["id"]: selected}
     groups = [w for w in form if w["type"] == "fieldList" and visible(w, values)]
     if len(groups) != 1:
-        raise ValidationError("采购明细定义无法唯一匹配，请管理员检查审批配置")
-    return method_widget, selected, groups[0], values
+        raise ValidationError("费用明细定义无法唯一匹配，请管理员检查审批配置")
+    return type_widget, selected, groups[0], values
 
 
 def public_schema(form):
     def field(w):
         return {"name": w["name"], "type": w["type"], "required": w.get("required", False),
                 "options": [o["text"] for o in w.get("option", [])] if isinstance(w.get("option"), list) else []}
-    method_widget = next(w for w in form if w["name"] == "采购方式")
-    return {"approvalCode": APPROVAL_CODE, "projects": next(field(w)["options"] for w in form if w["name"] == "项目"),
-            "methods": [{"name": o["text"], "fields": [field(w) for w in active_group(form, o["text"])[2]["children"]]} for o in method_widget["option"]]}
+    type_widget = next(w for w in form if w["name"] == "费用类型")
+    payer_widget = next(w for w in form if w["name"] == "支出方")
+    groups = []
+    for option in type_widget["option"]:
+        _, _, group, _ = active_group(form, option["text"])
+        groups.append({"expenseType": option["text"], "name": group["name"],
+                       "fields": [field(w) for w in group["children"]]})
+    return {
+        "approvalCode": APPROVAL_CODE,
+        "approvalName": APPROVAL_NAME,
+        "payers": [o["text"] for o in payer_widget["option"]],
+        "expenseTypes": [o["text"] for o in type_widget["option"]],
+        "groups": groups,
+        "methods": [{"name": g["expenseType"], "group": g["name"], "fields": g["fields"]} for g in groups],
+    }
+
+
+def pack_date(value, label):
+    text = str(value or "").strip()
+    if not text:
+        raise ValidationError(f"请填写{label}")
+    if text.isdigit():
+        stamp = float(text)
+        if stamp > 10**11:
+            stamp /= 1000
+        return int(stamp * 1000) if stamp < 10**11 else int(stamp)
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y年%m月%d日"):
+        try:
+            dt = datetime.strptime(text, fmt).replace(tzinfo=SHANGHAI)
+            return int(dt.timestamp() * 1000)
+        except ValueError:
+            continue
+    raise ValidationError(f"{label}必须是有效日期")
+
+
+def pack_contact(open_id, label):
+    if not open_id or not str(open_id).startswith("ou_"):
+        raise ValidationError(f"请确认{label}")
+    return [{"id": str(open_id)}]
+
+
+def pack_department(dept_id, label):
+    if not dept_id or not str(dept_id).strip():
+        raise ValidationError(f"请选择{label}")
+    return [{"id": str(dept_id).strip()}]
+
+
+def pack_connect(links, label, required=True):
+    values = []
+    for item in links:
+        if not item:
+            continue
+        code = item.get("instanceId") if isinstance(item, dict) else item
+        if isinstance(item, dict) and not code:
+            code = item.get("instanceCode") or item.get("instance_code")
+        try:
+            uuid.UUID(str(code))
+        except (ValueError, TypeError, AttributeError):
+            raise ValidationError(f"{label}实例编号无效")
+        if code not in values:
+            values.append(code)
+    if required and not values:
+        raise ValidationError(f"请选择{label}")
+    return values
 
 
 def validate_connect_definition(form, claim, approval_code):
-    """Read the *live* connect restriction, including deployed numeric definition IDs."""
-    method = claim.get('purchaseMethod') or (claim.get('answers') or {}).get('purchaseMethod')
-    _, _, _, values = active_group(form, method)
-    connects = [w for w in form if w.get('type') == 'connect' and visible(w, values)]
-    if len(connects) != 1: raise ValidationError('当前采购定义无法唯一确定关联审批控件')
-    option = connects[0].get('option')
-    if isinstance(option, dict):
-        if option.get('notLimitScope') is True: return
-        allowed = option.get('definitionIds')
-    else: allowed = option
-    definition = next((d for d in auth.BUDGET_DEFINITIONS + [auth.TRAVEL_DEFINITION] if d['approval_code'] == approval_code), None)
-    if not definition or not isinstance(allowed, list) or not {approval_code, definition['numeric_id']} & set(allowed):
-        raise ValidationError('所选关联定义不在当前飞书采购表单允许范围内，请刷新表单')
+    """Travel 关联审批 lives inside 出差明细. notLimitScope means any definition is allowed."""
+    typ = claim_type(claim)
+    if typ != "差旅费":
+        return
+    _, _, group, _ = active_group(form, typ)
+    connects = [w for w in group.get("children") or [] if w.get("type") == "connect"]
+    if len(connects) != 1:
+        raise ValidationError("当前费用报销定义无法唯一确定出差明细中的关联审批控件")
+    option = connects[0].get("option")
+    if isinstance(option, dict) and option.get("notLimitScope") is True:
+        return
+    allowed = option.get("definitionIds") if isinstance(option, dict) else option
+    definition = next((d for d in auth.BUDGET_DEFINITIONS + [auth.TRAVEL_DEFINITION] if d["approval_code"] == approval_code), None)
+    if not definition or not isinstance(allowed, list) or not {approval_code, definition["numeric_id"]} & set(allowed):
+        raise ValidationError("所选关联定义不在当前飞书费用报销表单允许范围内，请刷新表单")
 
 
 def number(value, label, money=False):
@@ -112,24 +220,27 @@ def number(value, label, money=False):
     return float(n)
 
 
-def build_form(form, claim):
+
+def build_form(form, claim, actor=None):
     if not isinstance(claim, dict):
-        raise ValidationError("缺少采购申请数据")
-    if claim.get('workflowVersion') == 2:
-        if not claim.get('matchedBudget') and not str(claim.get('noBudgetReason') or '').strip():
-            raise ValidationError('请确认匹配预算，或填写无预算原因')
-        if claim.get('purchaseMethod') == '差旅费' and not claim.get('relatedApproval'):
-            raise ValidationError('差旅必须关联已通过的出差申请')
-    answers = claim.get("answers") or {}
-    method = claim.get("purchaseMethod") or answers.get("purchaseMethod")
-    method_widget, selected, group, values = active_group(form, method)
-    project = claim.get("costCenter") or answers.get("costCenter")
-    purpose = str(claim.get("purpose") or "").strip()
+        raise ValidationError("缺少费用报销数据")
+    typ = claim_type(claim)
+    payer = claim_payer(claim)
+    if not typ:
+        raise ValidationError("请选择费用类型")
+    type_widget, selected, group, values = active_group(form, typ)
+    purpose = str(claim.get("purpose") or (claim.get("answers") or {}).get("purpose") or "").strip()
     if not purpose or len(purpose) > 10000:
-        raise ValidationError("请填写采购事由（最多 10000 字）")
+        raise ValidationError("请填写报销事由（最多 10000 字）")
     invoices = claim.get("invoices")
-    if not isinstance(invoices, list) or not 1 <= len(invoices) <= 100:
+    if typ == "薪酬":
+        if not isinstance(invoices, list) or not 1 <= len(invoices) <= 100:
+            raise ValidationError("请确认薪酬明细，至少一行，最多 100 行")
+    elif not isinstance(invoices, list) or not 1 <= len(invoices) <= 100:
         raise ValidationError("请确认识别汇总，至少一张发票，最多 100 张")
+    open_id = ((actor or {}).get("openId") or claim.get("submitterOpenId")
+               or (claim.get("answers") or {}).get("submitterOpenId"))
+    dept_id = claim.get("submitterDepartmentId") or (claim.get("answers") or {}).get("submitterDepartmentId")
     rows = []
     invoice_ids = set()
     for row_number, inv in enumerate(invoices, 1):
@@ -140,90 +251,90 @@ def build_form(form, claim):
             raise ValidationError("模拟发票不能发起真实审批，请上传真实发票并核对识别汇总")
         amount = number(inv.get("amount"), "发票金额", money=True)
         cells = []
+        packed = []
         for w in group["children"]:
             name = w["name"]
-            key = f"purchase:{method}:{inv['id']}:{name}"
-            val = answers.get(key, "")
-            if name == "金额":
+            val = answer_value(claim, inv["id"], name)
+            if name in ("金额",):
                 val = amount
-            elif name in ("数量","单位","规格"):
-                auto=invoice_items.quantity_unit(inv)
-                val=auto["quantity"] if name=="数量" else auto["unit"]
-            elif name == "名称":
-                val = inv.get("merchant") or inv.get("fileName") or ""
-            elif name == "备注":
-                val = " · ".join(str(x) for x in [inv.get("date"), inv.get("merchant"), f"发票号：{inv['invoiceNo']}" if inv.get("invoiceNo") else "", inv.get("category"), inv.get("note"), val] if x)
-            elif name in ("账户名称", "银行账户", "收款账号", "开户支行"):
-                val = answers.get(f"purchase:{method}:shared:{name}", "")
-            if w.get("required") and not str(val).strip():
-                raise ValidationError(f"【{project}】¥{amount:.2f} 还缺{name}，请返回问答补充")
-            if val == "" and not w.get("required"):
-                continue
+            elif name in ("数量", "单位", "规格"):
+                auto = invoice_items.quantity_unit(inv)
+                val = auto["quantity"] if name == "数量" else auto["unit"]
+            elif name == "名称" and w["type"] == "input":
+                val = val or inv.get("merchant") or inv.get("fileName") or ""
+            elif name in ("发票号码",):
+                val = val or inv.get("invoiceNo") or inv.get("invoice_no") or ""
+            elif name in ("日期", "日期（年-月-日）"):
+                val = val or inv.get("date") or inv.get("invoiceDate") or ""
+            elif name in ("采购备注", "出差备注"):
+                val = val or inv.get("note") or purpose
+            elif name in ("申请人", "发起人"):
+                val = pack_contact(open_id, name)
+            elif name == "部门":
+                val = pack_department(dept_id, "明细部门")
+            elif name == "关联审批":
+                links = [claim.get("relatedApproval")]
+                val = pack_connect(links, "出差关联审批", required=w.get("required", False))
+            if w["type"] not in ("contact", "department", "connect") and w.get("required") and not str(val).strip() and val != 0:
+                raise ValidationError(f"{group['name']}第 {row_number} 行还缺{name}，请返回检查")
             if w["type"] == "radioV2":
                 val = option_value(w, val)
             elif w["type"] == "number":
                 val = number(val, name)
-            elif w["type"] not in ("amount", "input", "textarea"):
-                raise ValidationError(f"不支持的采购明细控件：{name}")
-            cell = {"id": w["id"], "type": w["type"], "value": val}
+            elif w["type"] == "date":
+                val = pack_date(val, name)
+            elif w["type"] == "contact":
+                pass
+            elif w["type"] == "department":
+                pass
+            elif w["type"] == "connect":
+                pass
+            elif w["type"] in ("amount", "input", "textarea"):
+                pass
+            else:
+                raise ValidationError(f"不支持的费用明细控件：{name}")
+            if val in ("", [], None) and not w.get("required"):
+                continue
+            cell = {"id": w["id"], "type": w["type"], "value": val, "name": w["name"]}
             if w["type"] == "amount":
                 cell["currency"] = "CNY"
             cells.append(cell)
-        rows.append(cells)
+            packed.append({"id": w["id"], "name": w["name"]})
+        form_alignment.assert_row_in_group(form, group["name"], packed)
+        rows.append([{k: v for k, v in cell.items() if k != "name"} for cell in cells])
     result = []
     for w in form:
         if not visible(w, values):
             continue
         name = w["name"]
-        if name == "采购方式": val = selected
-        elif name == "项目": val = option_value(w, project)
-        elif name == "采购事由":
+        if name == "费用类型":
+            val = selected
+        elif name == "支出方":
+            val = option_value(w, payer)
+        elif name == "报销事由":
             val = purpose
-            if claim.get('workflowVersion') == 2 and not claim.get('matchedBudget'):
-                val += '\n无预算说明：' + str(claim.get('noBudgetReason') or '').strip()
-        elif w["id"] == group["id"]: val = rows
-        elif w["type"] == "connect":
-            links = [claim.get('matchedBudget'),claim.get('relatedApproval')] if claim.get('workflowVersion') == 2 else [claim.get('selectedBudget')]
-            val = []
-            for b in links:
-                if not b: continue
-                code=b.get('instanceId') or b.get('instanceCode')
-                try: uuid.UUID(code)
-                except (ValueError,TypeError,AttributeError): raise ValidationError('关联审批实例编号无效')
-                if code not in val: val.append(code)
-            if not val:
-                if w.get('required'):
-                    if claim.get('workflowVersion') != 2: raise ValidationError('请选择一条已通过的预算或出差申请')
-                    raise ValidationError('已记录无预算且无额外审批，但当前飞书表单将关联审批设为必填；需调整飞书表单后才能提交')
-                continue
+        elif w["type"] == "formula":
+            continue
+        elif w["id"] == group["id"]:
+            val = rows
         elif w["type"] == "attachmentV2":
-            continue  # Always populated from owned originals after upload.
+            continue
         elif w.get("required"):
-            raise ValidationError(f"采购定义新增必填字段：{name}，请更新问答")
-        else: continue
+            raise ValidationError(f"费用报销定义新增必填字段：{name}，请更新问答")
+        else:
+            continue
         result.append({"id": w["id"], "type": w["type"], "value": val})
     return result
 
 
 def validate_relation(claim, actor, token, sess=None, schema=None):
-    if claim.get('workflowVersion') != 2:
-        return _validate_link(claim,actor,token,sess,schema)
-    budget=claim.get('matchedBudget')
-    if budget:
-        code=budget.get('instanceId') or budget.get('instanceCode')
-        budgets,warning=auth.list_approved_budgets(actor,refresh=True)
-        if warning: raise ValidationError(warning)
-        verified=next((b for b in budgets if b['instanceId']==code and b.get('kind')!='travel'),None)
-        if not verified: raise ValidationError('匹配预算不在当前用户已通过的立项或变更预算范围内')
-        if claim.get('purchaseMethod') != '预付款项':
-            validate_connect_definition(schema or definition(),claim,verified['approvalCode'])
-    elif not str(claim.get('noBudgetReason') or '').strip():
-        raise ValidationError('请填写无预算原因')
-    relation=claim.get('relatedApproval')
-    if claim.get('purchaseMethod')=='差旅费' and not relation:
-        raise ValidationError('差旅必须关联已通过的出差申请')
-    if relation:
-        return _validate_link({**claim,'selectedBudget':relation},actor,token,sess,schema)
+    typ = claim_type(claim)
+    if typ == "差旅费":
+        relation = claim.get("relatedApproval")
+        if not relation:
+            raise ValidationError("差旅必须关联已通过的出差申请")
+        return _validate_link({**claim, "selectedBudget": relation}, actor, token, sess, schema)
+    # 普通采购 / 薪酬 have no top-level or row-level budget connect on this form.
 
 
 def _validate_link(claim, actor, token, sess=None, schema=None):
@@ -231,14 +342,17 @@ def _validate_link(claim, actor, token, sess=None, schema=None):
     code = b.get("instanceId") or b.get("instanceCode")
     if not code:
         return
-    if (claim.get('purchaseMethod') or (claim.get('answers') or {}).get('purchaseMethod')) == '差旅费':
+    if claim_type(claim) == '差旅费':
         if not sess: raise ValidationError('差旅关联必须通过当前 OAuth 用户实时核验')
         travel_context.validate_travel(sess, actor, claim)
-        validate_connect_definition(schema or definition(), claim, auth.TRAVEL_DEFINITION['approval_code'])
+        detail = auth.fetch_instance(token, code)
+        if detail.get('approval_code') != auth.TRAVEL_DEFINITION['approval_code'] or not auth.is_approved_status(detail.get('status')):
+            raise ValidationError('差旅关联审批必须是已通过的出差申请')
+        validate_connect_definition(schema or definition(), claim, detail['approval_code'])
         return
     detail = auth.fetch_instance(token, code)
     if detail.get("approval_code") not in ALLOWED_LINKS or not auth.is_approved_status(detail.get("status")):
-        raise ValidationError("关联审批必须是已通过的立项预算、项目预算变更或出差申请")
+        raise ValidationError("差旅关联审批必须是已通过的出差申请")
     if detail.get('approval_code') == auth.TRAVEL_DEFINITION['approval_code']:
         if not sess: raise ValidationError('出差关联必须通过当前 OAuth 用户实时核验')
         travel_context.validate_travel(sess, actor, claim)
@@ -320,10 +434,10 @@ def create_purchase(sess, body):
     import filling_workflow
     filling_workflow.validate_claim(claim or {})
     schema = definition()
-    form = build_form(schema, claim)
+    form = build_form(schema, claim, actor)
     files = approval_files.resolve_invoices(actor["openId"], claim)
     token = auth.get_tenant_access_token()
-    if (claim.get("purchaseMethod") or (claim.get("answers") or {}).get("purchaseMethod")) != "预付款项" or claim.get("workflowVersion") == 2:
+    if claim_type(claim) == "差旅费":
         validate_relation(claim, actor, token, sess, schema)
     # Content-addressed idempotency survives reloads, repeated clicks and server restarts.
     canonical = json.dumps([actor["openId"], form, [{"sha256":r["sha256"],"name":r["name"]} for r,raw in files]], ensure_ascii=False, sort_keys=True)
@@ -344,7 +458,7 @@ def create_purchase(sess, body):
                 source={'owner':actor['openId'],'draftId':body.get('draftId'),'claim':json.loads(json.dumps(claim)),'submittedAt':int(time.time())}
                 for invoice,(meta,_) in zip(source['claim']['invoices'],files): invoice['attachment']=expense_data.public_file(meta)
                 try: save_history(source,receipt)
-                except Exception: receipt['historyWarning']='采购已发起，历史同步暂失败；请稍后在我的报销刷新'
+                except Exception: receipt['historyWarning']='费用报销已发起，历史同步暂失败；请稍后在我的报销刷新'
                 return receipt
             raise ValidationError(f"该申请提交结果待确认（请求号 {request_id}），请先在飞书「已发起」核对，勿重复提交")
         if body.get('draftId'):
@@ -365,8 +479,11 @@ def create_purchase(sess, body):
         db.execute("INSERT INTO submissions(id,status,receipt) VALUES (?, 'pending', '')", (request_id,))
         db.commit()
         try:
-            obj = auth.http_json("POST", CREATE_URL, token=sess["access_token"], payload={"approval_code": APPROVAL_CODE,
-                "form": json.dumps(form, ensure_ascii=False), "uuid": request_id})
+            payload={"approval_code": APPROVAL_CODE, "form": json.dumps(form, ensure_ascii=False), "uuid": request_id}
+            dept=claim.get("submitterDepartmentId") or (claim.get("answers") or {}).get("submitterDepartmentId")
+            if isinstance(dept, str) and dept.strip():
+                payload["department_id"]=dept.strip()
+            obj = auth.http_json("POST", CREATE_URL, token=sess["access_token"], payload=payload)
             if obj.get("code") != 0:
                 raise auth.FeishuAPIError(400, obj)
         except auth.FeishuAPIError as e:
@@ -382,7 +499,7 @@ def create_purchase(sess, body):
         link = data.get("instance_link") or f"https://applink.feishu.cn/client/approval?instanceCode={code}"
         if urlparse(link).scheme != "https":
             link = f"https://applink.feishu.cn/client/approval?instanceCode={code}"
-        receipt = {"ok": True, "approvalCode": APPROVAL_CODE, "approvalName": "采购申请", "instanceCode": code,
+        receipt = {"ok": True, "approvalCode": APPROVAL_CODE, "approvalName": APPROVAL_NAME, "instanceCode": code,
                    "feishuApprovalId": code, "approvalUrl": link, "serialNumber": data.get("serial_number") or "",
                    "requestId": request_id, "initiator": actor["name"],
                    "attachmentCount": len(codes), "attachmentsConfirmed": False}
@@ -404,7 +521,7 @@ def create_purchase(sess, body):
         db.execute("UPDATE submissions SET status='created', receipt=?,history_source=? WHERE id=?", (json.dumps(receipt, ensure_ascii=False),json.dumps(source,ensure_ascii=False),request_id))
         db.commit()
         try: save_history(source,receipt)
-        except Exception: receipt['historyWarning']='采购已发起，历史同步暂失败；请稍后在我的报销刷新' 
+        except Exception: receipt['historyWarning']='费用报销已发起，历史同步暂失败；请稍后在我的报销刷新' 
         try:
             if body.get("draftId"):
                 expense_data.record_fills(actor["openId"], body["draftId"], claim, public_schema(schema))
@@ -421,7 +538,7 @@ def handle_schema(handler):
     except (ValidationError, ValueError) as e:
         handler._json(422, {"ok": False, "error": str(e)})
     except Exception:
-        handler._json(502, {"ok": False, "error": "采购表单加载失败，请稍后重试"})
+        handler._json(502, {"ok": False, "error": "费用报销表单加载失败，请稍后重试"})
 
 
 def handle_create(handler, body):

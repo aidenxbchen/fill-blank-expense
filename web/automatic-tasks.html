@@ -2,12 +2,131 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>周期性任务 · 网费预演 · 报了呗</title>
-  <link rel="stylesheet" href="./internet-task/task.css?v=20261124tasks2" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>常规任务 · 报了呗</title>
+  <link rel="stylesheet" href="./styles.css?v=20261126rework3" />
+  <style>
+    .task-page { max-width: 860px; margin: 0 auto; padding: var(--space-xl) var(--space-lg) 4rem; }
+    .task-card { margin-top: var(--space-lg); }
+    .task-preview {
+      margin-top: var(--space-md);
+      padding: var(--space-md);
+      border-radius: var(--radius-md, 12px);
+      border: 1px solid var(--border);
+      background: var(--panel, #fff);
+    }
+    .task-preview strong { display:block; margin: .4rem 0; }
+    .task-actions { display:flex; flex-wrap:wrap; gap: var(--space-sm); margin-top: var(--space-md); }
+    .task-status { margin: 0 0 var(--space-sm); color: var(--muted); }
+  </style>
 </head>
-<body>
-  <section id="internet-task-root" aria-label="周期性任务 · 网费预演"></section>
-  <script src="./internet-task/task.js?v=20261124tasks2"></script>
+<body class="delight-body">
+  <a class="skip-link" href="#main-content">跳到工作区</a>
+  <div class="ambient" aria-hidden="true">
+    <div class="ambient-mesh"></div>
+    <div class="ambient-vignette"></div>
+  </div>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <picture>
+            <source type="image/webp" srcset="./assets/logo-zbs.webp?v=20261123handbook1" />
+            <img src="./assets/logo-zbs.png?v=20261123handbook1" alt="" width="44" height="44" />
+          </picture>
+        </div>
+        <div class="brand-text">
+          <h1>常规任务</h1>
+          <p>网络服务费转交给李颖华。本版只预览发送，不会真发，也不会发起审批。</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <a class="btn btn-secondary" href="./">返回报销工作台</a>
+      </div>
+    </div>
+  </header>
+  <main class="page delight-page task-page" id="main-content">
+    <p id="task-message" class="task-status" role="status" aria-live="polite"></p>
+    <section class="panel task-card" id="task-panel"></section>
+  </main>
+  <footer class="site-footer">
+    <a href="./">报销工作台</a>
+    <a href="./handbook.html">工作手册</a>
+  </footer>
+  <script>
+    const BASE = ['127.0.0.1','localhost'].includes(location.hostname) ? 'http://127.0.0.1:18790' : '';
+    const ENDPOINT = '/api/automatic-tasks/internet';
+    const root = document.getElementById('task-panel');
+    const messageEl = document.getElementById('task-message');
+    const labels = {running:'运行中',previewed:'已预览',paused:'已暂停',blocked:'已阻止',failed:'失败',empty:'未发现候选',interrupted:'运行中断',duplicate:'重复，已跳过'};
+    const at = t => t ? new Date(t*1000).toLocaleString('zh-CN') : '暂无';
+    let task = null, loadError = null, busy = false;
+    async function api(path, body, method) {
+      const res = await fetch(BASE+path, {method: method || (body ? 'POST' : 'GET'), credentials:'include', cache:'no-store',
+        headers: body ? {'Content-Type':'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+      const value = await res.json();
+      if (!res.ok || !value.ok) { const error = new Error(value.error || '任务请求失败'); error.status = res.status; throw error; }
+      return value;
+    }
+    async function load() {
+      loadError = null;
+      try { task = await api(ENDPOINT); messageEl.textContent = ''; }
+      catch (e) { task = null; loadError = e; messageEl.textContent = e.message || ''; }
+      render();
+      return task;
+    }
+    async function action(fn) {
+      if (busy) return;
+      busy = true; render();
+      try { await fn(); await load(); }
+      catch (e) { messageEl.textContent = e.message || '操作失败'; }
+      finally { busy = false; render(); }
+    }
+    function render() {
+      if (!task && loadError) {
+        const login = loadError.status === 401;
+        root.innerHTML = `<h2>常规任务</h2>
+          <p><strong>${login ? '请先登录飞书查看常规任务' : loadError.status===403 ? '暂时无权读取常规任务' : '任务列表暂时无法加载'}</strong></p>
+          <p>${login ? '当前未登录或登录已过期，尚未读取你的任务记录。登录后请重新进入。' : (loadError.message || '')}</p>
+          <div class="task-actions">
+            ${login ? `<a class="btn btn-primary" href="${BASE}/api/auth/feishu/login">用飞书登录</a>` : ''}
+            <button type="button" class="btn btn-secondary" id="btn-reload">重新加载任务</button>
+          </div>`;
+        root.querySelector('#btn-reload').onclick = () => action(load);
+        return;
+      }
+      if (!task) { root.innerHTML = '<p>正在加载常规任务…</p>'; return; }
+      const latest = (task.runs && task.runs[0] && task.runs[0].result) || {};
+      const item = (latest.items || []).find(i => i.preview) || (latest.items || [])[0] || {};
+      const preview = item.preview;
+      const recent = task.runs && task.runs.length ? `${labels[task.runs[0].status] || task.runs[0].status} · ${at(task.runs[0].started)}` : '尚未运行';
+      const tax = preview && preview.buyer ? (preview.buyer.taxId || '票面未识别到税号') : '';
+      root.innerHTML = `<h2>常规任务</h2>
+        <ol class="routine-task-summary" aria-label="月度业务规则">
+          <li>
+            <p><span class="routine-task-index">1.</span> 网络服务费</p>
+            <p>月度 · 发给${task.recipientName || '李颖华'}报销</p>
+          </li>
+        </ol>
+        <p>读取邮箱中的电信网络发票后，预览将发送的消息和附件。不会发起审批，也不会真实发消息。</p>
+        <p>最近结果：${recent}</p>
+        <p>调度：${task.enabled ? '已启用' : '未启用'} · 下次：${at(task.nextRun)}</p>
+        <div class="task-actions">
+          <button type="button" class="btn btn-secondary" id="btn-toggle">${task.enabled ? '暂停常规任务' : '启用常规任务'}</button>
+          <button type="button" class="btn btn-primary" id="btn-run">立即执行一次（仅预览发送，不会真发）</button>
+        </div>
+        ${preview ? `<div class="task-preview">
+          <h3>最近一次预览</h3>
+          <p>${preview.notice || '以下内容不会真实发送。'}</p>
+          ${preview.message ? `<strong>${preview.message}</strong>` : ''}
+          ${preview.month ? `<p>发票月份：${preview.month}（来源：${preview.monthSource || '发票'}）</p>` : ''}
+          ${preview.buyer ? `<p>购方：${preview.buyer.name} · 税号：${tax}</p>` : ''}
+          ${(preview.attachments || []).map(f => `<p>附件：${f.name}</p>`).join('')}
+        </div>` : ''}`;
+      root.querySelector('#btn-toggle').onclick = () => action(() => api(ENDPOINT, {revision: task.revision, enabled: !task.enabled, dryRun: true}));
+      root.querySelector('#btn-run').onclick = () => action(() => api(ENDPOINT + '/run', {dryRun: true}));
+    }
+    load().catch(() => {});
+  </script>
 </body>
 </html>

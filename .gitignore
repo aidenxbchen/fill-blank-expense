@@ -16,3 +16,8 @@ node_modules/
 
 # Local design handoff archive
 baoxiao-taste-brief.tgz
+
+# Local skill installs; not part of the product
+.agents/
+skills-lock.json
+ocr/internet_handoff.local.json
