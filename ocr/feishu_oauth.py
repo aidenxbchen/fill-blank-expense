@@ -957,6 +957,82 @@ def query_approved_instances(token: str, approval_code: str) -> list[dict[str, A
         raise
 
 
+
+def query_cc_instances(token: str, approval_code: str, actor: dict[str, Any] | str) -> list[dict[str, Any]]:
+    """List approved instances carbon-copied to the learner. Fail closed if every endpoint errors."""
+    user_id = actor if isinstance(actor, str) else (actor.get('openId') or actor.get('open_id') or actor.get('userId') or '')
+    if not user_id:
+        return []
+    query = urllib.parse.urlencode({"page_size": 100, "user_id_type": "open_id"})
+    payload = {
+        "user_id": user_id,
+        "approval_code": approval_code,
+        "instance_status": "APPROVED",
+        "locale": "zh-CN",
+    }
+    urls = (
+        "https://open.feishu.cn/open-apis/approval/v4/instances/search/cc?" + query,
+        "https://open.feishu.cn/open-apis/approval/v4/tasks/query?" + query,
+    )
+    items: list[dict[str, Any]] = []
+    last_error = None
+    for url in urls:
+        try:
+            body = dict(payload)
+            if 'tasks/query' in url:
+                body = {"user_id": user_id, "topic": "CC", "approval_code": approval_code}
+            obj = http_json("POST", url, token=token, payload=body)
+            if obj.get("code") not in (0, None):
+                last_error = obj
+                continue
+            data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+            batch = data.get("instance_list") or data.get("cc_list") or data.get("tasks") or data.get("items") or []
+            if isinstance(batch, list):
+                items.extend(x for x in batch if isinstance(x, dict))
+            if items or obj.get("code") in (0, None):
+                return items
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        message = str(last_error)[:300] if not isinstance(last_error, FeishuAPIError) else str(last_error)
+        raise FeishuAPIError(502, {"code": -1, "msg": f"抄送列表读取失败，不能把抄送学习标记为已完成：{message}"})
+    return items
+
+
+def list_user_departments(access_token: str, open_id: str) -> list[dict[str, str]]:
+    """Departments the current OAuth user belongs to, for 提交人所属部门."""
+    if not open_id:
+        return []
+    query = urllib.parse.urlencode({"user_id_type": "open_id", "department_id_type": "open_department_id"})
+    obj = http_json("GET", f"https://open.feishu.cn/open-apis/contact/v3/users/{urllib.parse.quote(open_id)}?{query}", token=access_token)
+    if obj.get("code") not in (0, None):
+        raise FeishuAPIError(400, obj)
+    user = (obj.get("data") or {}).get("user") or {}
+    dept_ids = [str(x) for x in (user.get("department_ids") or user.get("orders") or []) if x]
+    if user.get("department_ids") is None and isinstance(user.get("orders"), list):
+        dept_ids = [str(item.get("department_id") or item) for item in user["orders"] if item]
+    departments: list[dict[str, str]] = []
+    for dept_id in dict.fromkeys(dept_ids):
+        if not dept_id or dept_id in {x.get("id") for x in departments}:
+            continue
+        try:
+            detail = http_json(
+                "GET",
+                "https://open.feishu.cn/open-apis/contact/v3/departments/"
+                + urllib.parse.quote(dept_id)
+                + "?"
+                + urllib.parse.urlencode({"department_id_type": "open_department_id"}),
+                token=access_token,
+            )
+            name = ((detail.get("data") or {}).get("department") or {}).get("name") or dept_id
+        except Exception:
+            name = dept_id
+        departments.append({"id": dept_id, "name": str(name)})
+    return departments
+
+
+
 def fetch_instance(access_token: str, instance_id: str) -> dict[str, Any]:
     url = FEISHU_INSTANCE_URL.format(instance_id=urllib.parse.quote(instance_id, safe=""))
     url += "?locale=zh-CN&user_id_type=open_id"
@@ -1292,6 +1368,23 @@ def handle_me(handler: Any) -> None:
         )
         return
     handler._json(200, {"ok": True, "loggedIn": True, "user": public_user(sess)})
+
+
+
+def handle_departments(handler: Any) -> None:
+    sid = cookie_from_headers(handler.headers)
+    sess = get_session(sid)
+    if not sess:
+        handler._json(401, {"ok": False, "loggedIn": False, "error": "未登录", "departments": []})
+        return
+    try:
+        sess = ensure_fresh_session(sid, sess)
+        open_id = (sess.get("user") or {}).get("openId") or ""
+        departments = list_user_departments(sess.get("access_token") or "", open_id)
+        handler._json(200, {"ok": True, "departments": departments})
+    except FeishuAPIError as e:
+        status = 403 if is_missing_scope(e) else (e.http_status if e.http_status in (401, 403) else 502)
+        handler._json(status, {"ok": False, "error": "暂时无法读取提交人所属部门，请检查通讯录权限后重试", "departments": []})
 
 
 def handle_logout(handler: Any) -> None:

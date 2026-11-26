@@ -4,12 +4,12 @@ function harness(){
   const button={textContent:'',disabled:false,setAttribute(k,v){attributes[k]=v;}};
   const elements={'btn-feishu-submit':button,'submit-preview':{innerHTML:''},'preview-server-status':{textContent:''}};
   const policy={issues:[],buildQuestionQueue(){return this.issues.map(text=>({text}));},rowIssues(){return [];},quantityUnit(){return {quantity:1,unit:'份'};}};
-  const window={ExpensePolicy:policy,__purchaseSchema:{methods:[{name:'个人垫付',fields:[]}]}};
+  const window={ExpensePolicy:policy,__purchaseSchema:{methods:[{name:'普通采购',fields:[]}],expenseTypes:['普通采购'],payers:['个人支付']}};
   const context={window,document:{readyState:'loading',getElementById:id=>elements[id]||null,querySelectorAll:()=>[],addEventListener(){}},location:{hostname:'fixture.invalid'},AbortController,AbortSignal:{timeout(ms){timeouts.push(ms);return AbortSignal.timeout(ms);}},console,setTimeout,clearTimeout,setInterval,fetch(url,options){return new Promise((resolve,reject)=>requests.push({url,options,resolve,reject}));}};
   let source=fs.readFileSync(require.resolve('./app.js'),'utf8');const end=source.lastIndexOf('})();');
   source=source.slice(0,end)+`window.h={renderSubmit,submitFeishu,refreshTravelMatch,buildFeishuPayload,state(){return session;},setState(value){session=Object.assign(emptySession(),value);},setUser(id){authUser={openId:id,name:'夹具'};}};`+source.slice(end);
   vm.runInNewContext(source,context);
-  const h=window.h;h.setUser('alice');h.setState({stage:'submit',draftId:'fixture',answers:{purchaseMethod:'个人垫付',costCenter:'公共办公',purpose:'夹具',matchedBudget:{instanceId:'budget'}},draft:{purchaseMethod:'个人垫付',costCenter:'公共办公',purpose:'夹具'},invoices:[{id:'one',amount:10,status:'ok',merchant:'商户',raw:'原票面',attachment:{file_id:'fixture'}}]});
+  const h=window.h;h.setUser('alice');h.setState({stage:'submit',draftId:'fixture',answers:{expenseType:'普通采购',payer:'个人支付',purpose:'夹具',matchedBudget:{instanceId:'budget'}},draft:{expenseType:'普通采购',payer:'个人支付',purpose:'夹具'},invoices:[{id:'one',amount:10,status:'ok',merchant:'商户',invoiceNo:'INV-1',raw:'原票面',attachment:{file_id:'fixture'}}]});
   return {h,requests,timeouts,attributes,button,elements,policy};
 }
 function success(req){req.resolve({ok:true,json:async()=>({ok:true,attachmentCount:1})});}
@@ -30,7 +30,7 @@ function success(req){req.resolve({ok:true,json:async()=>({ok:true,attachmentCou
   const e=harness(),first=e.h.renderSubmit();e.h.state().invoices[0].note='changed';const second=e.h.renderSubmit();
   success(e.requests[1]);await second;const proven=e.h.state().reviewContext;
   e.requests[0].reject(new Error('old failure'));await first;assert.equal(e.h.state().reviewState,'ready');assert.equal(e.h.state().reviewContext,proven,'late failure cannot overwrite a newer successful review');
-  const f=harness();f.h.state().answers.purchaseMethod='差旅费';f.h.state().draft.purchaseMethod='差旅费';
+  const f=harness();f.h.state().answers.expenseType='差旅费';f.h.state().draft.expenseType='差旅费';f.h.state().answers.relatedApproval={instanceId:'trip'};
   const before=JSON.stringify(f.h.buildFeishuPayload().claim),matching=f.h.refreshTravelMatch();
   f.requests[0].resolve({ok:true,json:async()=>({ok:true,owner:'alice',candidates:[],groups:[{invoiceId:'one',facts:{isTicket:true,segments:[]}}],autoSelectId:null})});await matching;
   assert.equal(JSON.stringify(f.h.buildFeishuPayload().claim),before,'background travel matching cannot mutate the preview payload');

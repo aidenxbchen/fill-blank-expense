@@ -1,12 +1,12 @@
 /**
  * 填空报销 · delight flow
- * batch upload → claim-wide facts → handbook/history prefill → full preview → native Feishu purchase approval
+ * batch upload → claim-wide facts → handbook/history prefill → full preview → native Feishu expense reimbursement
  */
 (function () {
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261126submission-confirm1";
+  const ASSET_V = "20261126rework3";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -21,6 +21,7 @@
   }
 
   let authUser = null;
+  let userDepartments = [];
   let approvedBudgets = [];
   let budgetWarning = "";
   let budgetsLoading = false;
@@ -33,17 +34,17 @@
 
   function travelContext() {
     const claim=fillingClaim();
-    return JSON.stringify({owner:ownerId(),draft:session.draftId,method:claim.purchaseMethod,purpose:claim.purpose,
+    return JSON.stringify({owner:ownerId(),draft:session.draftId,method:claim.expenseType || currentExpenseType(),purpose:claim.purpose,
       invoices:claim.invoices.map(i=>({id:i.id,raw:i.raw,fileName:i.fileName,travel:i._travelEdited ? i.travel : null}))});
   }
 
   function queueTravelMatch() {
     clearTimeout(travelTimer);
-    if(['relation','draft','submit'].includes(session.stage) && session.answers.purchaseMethod==='差旅费')travelTimer=setTimeout(()=>refreshTravelMatch(),500);
+    if(['relation','draft','submit'].includes(session.stage) && isTravel())travelTimer=setTimeout(()=>refreshTravelMatch(),500);
   }
 
   async function refreshTravelMatch(force=false, mode='candidates') {
-    if(!authUser || session.submitted || submitting || session.answers.purchaseMethod!=='差旅费')return;
+    if(!authUser || session.submitted || submitting || !isTravel())return;
     const owner=ownerId(), target=session, key=travelContext();
     if(travelRequest && travelRequest.owner===owner && travelRequest.target===target && travelRequest.key===key && travelRequest.mode===mode)return;
     if(!force && travelMatchKey===key)return;
@@ -84,7 +85,7 @@
 
   function travelStatusMarkup() {
     const m=session.travelMatch || {};
-    if(session.answers.purchaseMethod!=='差旅费')return '';
+    if(!isTravel())return '';
     const recommended=approvedBudgets.find(c=>c.instanceId===m.recommendedId);
     const hint=recommended ? `<p><strong>建议关联：${esc(recommended.title)}</strong>（根据票面线索推测，请确认）</p><ul>${(recommended.recommendation?.evidence || []).map(x=>`<li>${esc(x)}</li>`).join('')}</ul><p>${(recommended.recommendation?.warnings || []).length ? '部分交通票日期或路线不同，请核对是否属于同次出差；无需补填行程。' : ''}</p>` : '';
     return `<section aria-live="polite" role="status">${hint}<p>${esc(m.message || '选择差旅费后会按真实可读候选匹配；可手动选择关联。')}</p><p>${esc(m.notice || '')}</p><ul>${(m.groups || []).map(g=>`<li>${esc(formatMoney((session.invoices.find(i=>i.id===g.invoiceId) || {}).amount))}：${esc(g.reason)}；候选 ${(g.suggestedCandidateIds || g.candidateIds || []).length} 条</li>`).join('')}</ul><button type="button" class="btn btn-secondary" data-refresh-travel ${m.loading ? 'disabled' : ''}>重新读取出差申请</button> <button type="button" class="btn btn-ghost" data-rank-travel ${m.loading || !approvedBudgets.some(b=>b.kind==='travel') ? 'disabled' : ''}>AI 辅助匹配（可选）</button></section>`;
@@ -290,7 +291,7 @@
 
   let bankProfiles = [], bankProfilesOwner = null, bankTargetSide = 'counterparty', bankEditing = null;
   function activeBankMethod() {
-    return ((window.__purchaseSchema || {}).methods || []).find(m=>m.name === session.answers.purchaseMethod);
+    return ((window.__purchaseSchema || {}).methods || []).find(m=>m.name === currentExpenseType());
   }
   async function loadBankProfiles() {
     const owner=ownerId();
@@ -335,14 +336,14 @@
   function useBankProfile(profile) {
     if(busyEditing() || bankProfilesOwner!==ownerId())return;
     const method=activeBankMethod();
-    if(!method)return showToast('请先选择采购方式');
+    if(!method)return showToast('请先选择费用类型');
     if(profile.side!==bankTargetSide)return showToast('档案已保存；当前字段需要'+(bankTargetSide==='ours' ? '我方' : '对方收款')+'档案，请切回对应类型选择');
     // Snapshot current edits before replacing the pair, never copy a partial pair.
     if(session.stage==='draft')syncDraftFromDom();
     const targets=method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name) && window.ExpensePolicy.bankSide(w.name)===bankTargetSide);
-    if(!targets.length)return showToast('当前采购表单没有此类银行字段');
+    if(!targets.length)return showToast('当前费用报销表单没有此类银行字段');
     if(targets.some(w=>w.required && window.ExpensePolicy.bankRole(w.name)==='holder') && !profile.fields.holder)
-      return showToast('此采购方式需要户名，请修改档案补齐户名后再选');
+      return showToast('此费用类型需要户名，请修改档案补齐户名后再选');
     window.ExpensePolicy.applyBankProfile(method,session.answers,profile,bankTargetSide);
     document.getElementById('bank-profiles-modal').hidden=true;
     if(session.stage==='interview') {pushChat('user',`已选择「${profile.title}」，账号与开户行已一起填入。`);renderInterview();}
@@ -484,7 +485,7 @@
       recordItems=more ? recordItems.concat(result.items) : result.items;
       recordsOffset=result.nextOffset;
       renderRecords();
-      message.textContent=recordItems.length ? "" : (tab==="drafts" ? "还没有进行中的报销。上传发票并登录后，草稿会自动出现在这里，可随时继续。" : "还没有已提交记录。完成「发起飞书采购申请」后，摘要会出现在这里；审批进度请在飞书查看。");
+      message.textContent=recordItems.length ? "" : (tab==="drafts" ? "还没有进行中的报销。上传发票并登录后，草稿会自动出现在这里，可随时继续。" : "还没有已提交记录。完成「发起飞书费用报销」后，摘要会出现在这里；审批进度请在飞书查看。");
     } catch(e) { message.textContent=e.message; }
     finally { recordsLoading=false;controls.forEach(b=>{b.disabled=false;});document.getElementById("records-list").removeAttribute("aria-busy"); }
   }
@@ -504,12 +505,12 @@
     const c=r.snapshot.claim, answers=c.answers || {};
     const detail=document.getElementById("record-detail");
     const names=r.snapshot.attachmentNames || [];
-    const rows=(c.invoices || []).map(i=>`<tr><td>${esc(i.date)}</td><td>${esc(i.merchant)}</td><td>${esc(i.invoiceNo)}</td><td>${esc(formatMoney(i.amount))}</td><td>${Object.entries(answers).filter(([k])=>k.startsWith("purchase:"+c.purchaseMethod+":"+i.id+":")).map(([k,v])=>esc(k.split(":").pop())+"："+esc(v)).join("<br>")}</td></tr>`).join("");
+    const rows=(c.invoices || []).map(i=>`<tr><td>${esc(i.date)}</td><td>${esc(i.merchant)}</td><td>${esc(i.invoiceNo)}</td><td>${esc(formatMoney(i.amount))}</td><td>${Object.entries(answers).filter(([k])=>k.startsWith("expense:"+(c.expenseType||c.purchaseMethod)+":"+i.id+":")).map(([k,v])=>esc(k.split(":").pop())+"："+esc(v)).join("<br>")}</td></tr>`).join("");
     detail.hidden=false;
-    detail.innerHTML=`<h4>${esc(r.title)}</h4><p>${esc(c.costCenter)} · ${esc(c.purchaseMethod)} · 合计 ${esc(formatMoney(r.total))}</p><p>${esc(c.purpose)}</p>
+    detail.innerHTML=`<h4>${esc(r.title)}</h4><p>${esc(c.expenseType || c.purchaseMethod || '')} · ${esc(c.payer || '')} · 合计 ${esc(formatMoney(r.total))}</p><p>${esc(c.purpose)}</p>
       <p>关联审批：${esc((c.selectedBudget || {}).title || "未关联")}</p><p>状态：已提交（实时进度请在飞书查看）</p><p>单号：${esc(r.serialNumber || "同步中")} · 实例：${esc(r.instance_code)}</p>
       <div class="table-wrap"><table class="sheet-table"><thead><tr><th>日期</th><th>商户</th><th>发票号</th><th>金额</th><th>采购明细</th></tr></thead><tbody>${rows}</tbody></table></div><p>发票附件：${names.map(esc).join("、") || "无"}</p>`;
-    if (/^https:\/\//.test(r.approval_url)) { const a=document.createElement("a"); a.href=r.approval_url;a.target="_blank";a.rel="noopener noreferrer";a.className="btn btn-primary";a.textContent="打开飞书采购申请";detail.append(a); }
+    if (/^https:\/\//.test(r.approval_url)) { const a=document.createElement("a"); a.href=r.approval_url;a.target="_blank";a.rel="noopener noreferrer";a.className="btn btn-primary";a.textContent="打开飞书费用报销";detail.append(a); }
     detail.scrollIntoView({block:"nearest",behavior:"smooth"});
   }
 
@@ -559,13 +560,49 @@
     finally {button.disabled=false;}
   }
 
+
+  function currentExpenseType() {
+    return session.answers.expenseType || (session.draft && session.draft.expenseType) || '';
+  }
+  function isTravel() { return currentExpenseType() === '差旅费'; }
+  function rowAnswerKey(invoiceId, name) {
+    return 'expense:' + currentExpenseType() + ':' + invoiceId + ':' + name;
+  }
+  function budgetTitle(b) {
+    if (!b) return '';
+    return b.title || b.approvalName || b.serialId || '';
+  }
+  function tripDateText(trip, fields) {
+    trip = trip || {}; fields = fields || {};
+    const start = trip.start || fields['开始时间'] || '';
+    const end = trip.end || fields['结束时间'] || '';
+    if (start && end) return start + ' 至 ' + end;
+    if (start) return start;
+    if (end) return end;
+    return '见审批详情';
+  }
+  function clearToast() {
+    const el = document.getElementById('toast');
+    if (el) el.classList.remove('is-visible');
+    clearTimeout(showToast._t);
+  }
+
+  function placeToast(el) {
+    const header=document.querySelector('.app-header');
+    if(!el||!header)return;
+    const bottom=header.getBoundingClientRect().bottom;
+    el.style.top=Math.round(bottom+8)+'px';
+    el.style.bottom='auto';
+  }
   function showToast(msg, ms) {
     const el = document.getElementById("toast");
     if (!el) return;
+    if (session.stage === 'submit' || session.stage === 'done' || session.stage === 'confirmation') return;
+    placeToast(el);
     el.textContent = msg;
     el.classList.add("is-visible");
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => el.classList.remove("is-visible"), ms || 2800);
+    showToast._t = setTimeout(() => el.classList.remove("is-visible"), ms || 2200);
     // Login-wall toasts should not leave a stuck focus ring on the trigger.
     const active = document.activeElement;
     if (active && active !== document.body && typeof active.blur === "function" && active.closest(".header-actions, .auth-box, .workspace-menu")) {
@@ -606,7 +643,8 @@
   /* ---------- stage chrome ---------- */
 
   function setStage(stage) {
-    if (session.submitted && stage !== "submit") { showToast("这份采购已提交，可在我的报销查看摘要；继续填新单请点新建报销"); stage="submit"; }
+    if(stage==="submit" || stage==="done" || stage==="confirmation") clearToast();
+    if (session.submitted && stage !== "submit") { showToast("这份报销已提交，可在我的报销查看摘要；继续填新单请点新建报销"); stage="submit"; }
     if(stage==='upload' && session.stage!=='upload') document.getElementById('invoice-summary-body').replaceChildren();
     const old=session.answers.selectedBudget;
     if(old && !session.answers.matchedBudget && !session.answers.relatedApproval) {
@@ -781,11 +819,11 @@
   }
 
   async function handleFiles(fileList) {
-    if (session.submitted) { showToast("这份采购已提交，请点新建报销"); return; }
+    if (session.submitted) { showToast("这份费用报销已提交，请点新建报销"); return; }
     if(submitting) return;
     const files = Array.from(fileList || []);
     if (!files.length) return;
-    if (!authUser) { showToast("请先用飞书登录，再上传发票；原件会随采购申请提交"); return; }
+    if (!authUser) { showToast("请先用飞书登录，再上传发票；原件会随费用报销提交"); return; }
 
     remindAiOnUpload();
 
@@ -871,7 +909,7 @@
       corrections: result.corrections || [],
       needsReview: !!result.needsReview,
     });
-    if(result.travel && result.travel.isTicket && !session.answers.purchaseMethod)session.answers.purchaseMethod='差旅费';
+    if(result.travel && result.travel.isTicket && !session.answers.expenseType)session.answers.expenseType='差旅费';
     queueTravelMatch();
   }
 
@@ -1028,7 +1066,7 @@
       side.innerHTML = invs
         .map(
           (inv) => `<li>
-            <strong>【${esc(session.answers.costCenter || "待选项目")}】${esc(formatMoney(inv.amount))}</strong>
+            <strong>${esc(formatMoney(inv.amount))}</strong>
             <span>${esc(formatMoney(inv.amount))} · ${esc(CAT_LABEL[inv.category] || inv.category)}</span>
             <span class="muted-sm">${esc(inv.date || "无日期")}</span>
           </li>`
@@ -1057,7 +1095,7 @@
 
     if (log) {
       log.innerHTML = session.chat
-        .map((m) => `<div class="chat-bubble chat-${m.role==="user" ? "user" : "assistant"}"><div class="chat-bubble-inner">${esc(m.text)}${m.role==='user' && ['purpose','purchaseMethod','costCenter'].includes((m.meta || {}).qid) ? `<button type="button" class="btn btn-ghost btn-sm" data-edit-answer="${esc(m.meta.qid)}">修改</button>` : ''}</div></div>`)
+        .map((m) => `<div class="chat-bubble chat-${m.role==="user" ? "user" : "assistant"}"><div class="chat-bubble-inner">${esc(m.text)}${m.role==='user' && ['purpose','payer','expenseType'].includes((m.meta || {}).qid) ? `<button type="button" class="btn btn-ghost btn-sm" data-edit-answer="${esc(m.meta.qid)}">修改</button>` : ''}</div></div>`)
         .join("");
       log.scrollTop = log.scrollHeight;
     }
@@ -1114,8 +1152,9 @@
   }
 
   function fillingClaim() {
-    return {costCenter:session.answers.costCenter || "", purchaseMethod:session.answers.purchaseMethod || "",
-      purpose:session.answers.purpose || "", answers:{...session.answers}, workflowVersion:2, matchedBudget:session.answers.matchedBudget || null, noBudgetReason:session.answers.noBudgetReason || '', relatedApproval:session.answers.relatedApproval || null, selectedBudget:linkForClaim(), invoices:okInvoices().map(({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source,travel,raw,_travelEdited})=>({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source,travel,raw,_travelEdited}))};
+    const typ=currentExpenseType(), payer=session.answers.payer || "";
+    return {expenseType:typ, payer, costCenter:session.answers.costCenter || "", purchaseMethod:typ,
+      purpose:session.answers.purpose || "", answers:{...session.answers, expenseType:typ, payer}, workflowVersion:2, matchedBudget:session.answers.matchedBudget || null, noBudgetReason:session.answers.noBudgetReason || '', relatedApproval:session.answers.relatedApproval || null, selectedBudget:linkForClaim(), invoices:okInvoices().map(({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source,travel,raw,_travelEdited})=>({id,amount,merchant,category,items,quantity,unit,note,date,invoiceNo,attachment,fileName,source,travel,raw,_travelEdited}))};
   }
 
   let choiceRequestKey = "";
@@ -1124,7 +1163,8 @@
   function choiceContext() {
     const claim=fillingClaim();
     // Closed answers don't invalidate a decision; edits to its invoice facts do.
-    claim.answers={purchaseMethod:claim.purchaseMethod,costCenter:claim.costCenter,purpose:session.answers.purpose || ""};
+    // Closed row answers don't invalidate a decision; invoice facts and claim-wide fields do.
+    claim.answers={expenseType:claim.expenseType || currentExpenseType(), payer:claim.payer || session.answers.payer || '', purpose:session.answers.purpose || ""};
     return {owner:ownerId(),draft:session.draftId,claim};
   }
   async function refreshChoiceSuggestions(force=false) {
@@ -1177,7 +1217,7 @@
       if(owner===ownerId() && draft===session.draftId) window.__fillSuggestions = response.ok && result.ok ? result.suggestions : null;
     } catch (_) { if(owner===ownerId() && draft===session.draftId) window.__fillSuggestions = null; }
     // Don't make a remote model call on every autosave. It runs alongside interview preparation.
-    if((session.stage==="interview" || !record) && !session.answers.purchaseMethod) refreshChoiceSuggestions(!record);
+    if((session.stage==="interview" || !record) && !session.answers.expenseType) refreshChoiceSuggestions(!record);
   }
 
   let fillingTimer;
@@ -1193,7 +1233,7 @@
     if (!value) return;
     const q = session._currentQuestion;
     if (!q) return;
-    if (q.id === "schemaUnavailable") { showToast("采购表单加载失败，请刷新重试"); return; }
+    if (q.id === "schemaUnavailable") { showToast("费用报销表单加载失败，请刷新重试"); return; }
     if (q.numeric && (!Number.isFinite(Number(value)) || Number(value) <= 0)) { showToast("请输入大于零的数量"); return; }
     if (q.options && q.options.length && !q.options.includes(value)) { showToast("请从现有选项中选择"); return; }
     if (q.id === "selectBudget") {
@@ -1235,7 +1275,7 @@
       session.prefillWarning='历史预填暂不可用，清单中的空项请集中补全：'+e.message;
     } finally { preparingDraft=false; }
     if(target!==session || owner!==ownerId() || session.stage!=="relation") return;
-    buildDraft();setStage('draft');showToast('发票清单已整理，请集中检查');
+    buildDraft();setStage('draft');showToast('费用明细已整理，请集中检查');
   }
 
   function buildDraft() {
@@ -1272,7 +1312,9 @@
 
     session.draft = {
       generatedAt: new Date().toISOString(),
-      purchaseMethod: session.answers.purchaseMethod || "",
+      expenseType: currentExpenseType(),
+      payer: session.answers.payer || "",
+      purchaseMethod: currentExpenseType(),
       purpose: session.answers.purpose || "",
       costCenter: session.answers.costCenter || "",
       guestCompany: session.answers.guestCompany || "",
@@ -1306,19 +1348,20 @@
     if (meta) {
       const schema = window.__purchaseSchema || {projects:[], methods:[]};
       const choices = (items, current) => `<option value="">请选择</option>${current && !items.includes(current) ? `<option value="${esc(current)}" selected>已失效：${esc(current)}</option>` : ''}` + items.map(x=>`<option value="${esc(x)}" ${x===current ? "selected":""}>${esc(x)}</option>`).join("");
-      const method = schema.methods.find(m=>m.name === d.purchaseMethod);
+      const method = schema.methods.find(m=>m.name === (d.expenseType || d.purchaseMethod));
       const sharedFields = method ? method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name)).map(w=>{
-        const key = `purchase:${method.name}:shared:${w.name}`;
+        const key = `expense:${method.name}:shared:${w.name}`;
         return `<div class="field"><label>${esc(w.name)}（所有行共用）</label><input aria-label="${esc(w.name)}" data-answer="${esc(key)}" value="${esc(session.answers[key] || "")}" /></div>`;
       }).join("") : "";
-      meta.innerHTML = `<p>匹配预算：${esc((session.answers.matchedBudget || {}).title || '无预算：'+(session.answers.noBudgetReason || '未说明'))}</p><button type="button" class="btn btn-ghost" data-edit-matching>修改预算与关联审批</button><div class="draft-meta-grid">
-        <div class="field"><label>花销目的 / 采购事由（整单）</label><input aria-label="采购事由" data-meta="purpose" value="${esc(d.purpose)}" /></div>
-        <div class="field"><label>项目</label><select aria-label="项目" data-meta="costCenter">${choices(schema.projects,d.costCenter)}</select></div>
-        <div class="field"><label>采购方式</label><select aria-label="采购方式" data-meta="purchaseMethod">${choices(schema.methods.map(m=>m.name),d.purchaseMethod)}</select></div>
+      meta.innerHTML = `<p>匹配预算：${esc(((session.answers.matchedBudget || {}).title) || '无预算：'+(session.answers.noBudgetReason || '未说明'))}${(session.answers.matchedBudget && session.answers.matchedBudget.project) ? '；预算所属项目：'+esc(session.answers.matchedBudget.project) : ''}</p><button type="button" class="btn btn-ghost" data-edit-matching>修改预算与关联审批</button><div class="draft-meta-grid">
+        <div class="field"><label>报销事由 · 表单必填</label><input aria-label="报销事由" data-meta="purpose" value="${esc(d.purpose)}" /></div>
+        <div class="field"><label>支出方 · 表单必填</label><select aria-label="支出方" data-meta="payer">${choices((schema.payers||[]), d.payer)}</select></div>
+        <div class="field"><label>费用类型 · 表单必填</label><select aria-label="费用类型" data-meta="expenseType">${choices((schema.expenseTypes||schema.methods.map(m=>m.name)), d.expenseType)}</select></div>
+        ${departmentFieldMarkup()}
 
         ${sharedFields}
         ${method && sharedFields ? [...new Set(method.fields.filter(w=>window.ExpensePolicy.bankRole(w.name)).map(w=>window.ExpensePolicy.bankSide(w.name)))].map(side=>`<button type="button" class="btn btn-secondary" data-open-bank="${side}">点选${side==='ours' ? '我方' : '收款'}银行档案 / 新增</button>`).join('') : ''}
-      </div>${linkedApprovalSummary(fillingClaim())}<p class="section-hint">整单信息只填一次。修改采购方式后，点「整理当前清单」应用对应规则；已填写内容会保留。提交前集中预览所有必填项与附件。</p>`;
+      </div>${linkedApprovalSummary(fillingClaim())}<p class="section-hint">整单信息只填一次。修改费用类型后，点「整理当前清单」应用对应规则；已填写内容会保留。提交前集中预览所有必填项与附件。</p>`;
     }
 
     if (sheetsEl) {
@@ -1327,9 +1370,9 @@
           const rows = sheet.rows
             .map((row, ri) => {
               return `<tr data-si="${si}" data-ri="${ri}">
-                <td><input aria-label="日期" data-cell="date" value="${esc(row.date)}" /></td>
+                <td class="${row.date ? '' : 'needs-check'}"><input aria-label="日期" data-cell="date" value="${esc(row.date)}" /></td>
                 <td><input aria-label="摘要" data-cell="description" value="${esc(row.description)}" /></td>
-                <td><input aria-label="发票号码" data-cell="invoiceNo" value="${esc(row.invoiceNo || "")}" /></td>
+                <td class="${row.invoiceNo ? '' : 'needs-check'}"><input aria-label="发票号码" data-cell="invoiceNo" value="${esc(row.invoiceNo || "")}" /></td>
                 <td><input aria-label="金额" data-cell="amount" inputmode="decimal" value="${esc(row.amount)}" /></td>
                 <td class="td-inv">${(session.invoices.find(i=>i.id===row.invoiceRef) || {}).attachment ? "原件已保存" : "缺原件 · 实务必填"}</td>
                 <td><input aria-label="备注" data-cell="note" value="${esc(row.note || "")}" placeholder="备注" />${purchaseRowFields(row.invoiceRef)}</td>
@@ -1373,7 +1416,7 @@
 
   function syncDraftFromDom() {
     if (!session.draft) return;
-    const previousMethod=session.answers.purchaseMethod;
+    const previousMethod=currentExpenseType();
     document.querySelectorAll('[data-invoice-field]').forEach(input=>{
       const inv=session.invoices.find(i=>i.id===input.dataset.invoice);
       if(inv) {inv[input.dataset.invoiceField]=input.value;inv._userEdited=true;inv._editedFields={...(inv._editedFields || {}),[input.dataset.invoiceField]:true};}
@@ -1384,6 +1427,10 @@
       session.draft[key] = input.value;
       session.answers[key] = input.value;
     });
+    if (session.answers.submitterDepartmentId) {
+      const hit = userDepartments.find(d => d.id === session.answers.submitterDepartmentId);
+      if (hit) session.answers.submitterDepartment = hit.name;
+    }
     document.querySelectorAll("[data-sheet-title]").forEach((input) => {
       const si = Number(input.getAttribute("data-sheet-title"));
       if (session.draft.detailSheets[si]) session.draft.detailSheets[si].title = input.value;
@@ -1405,7 +1452,7 @@
     }));
     recomputeDraftTotal();
     queueTravelMatch();queueReviewWarmup();
-    if(previousMethod!==session.answers.purchaseMethod) {
+    if(previousMethod!==currentExpenseType()) {
       session.prefillEvidence={};session.prefillContext='';
       renderDraft();
     }
@@ -1413,32 +1460,57 @@
 
   /* ---------- real purchase submission ---------- */
 
+
+  function selectedDepartmentName() {
+    const id = session.answers.submitterDepartmentId || '';
+    const hit = userDepartments.find(d => d.id === id);
+    return (hit && hit.name) || session.answers.submitterDepartment || '';
+  }
+
+  function departmentFieldMarkup() {
+    const current = session.answers.submitterDepartmentId || '';
+    const missing = userDepartments.length > 0 && !current;
+    const options = ['<option value="">请选择所属部门</option>'].concat(
+      userDepartments.map(d => `<option value="${esc(d.id)}" ${d.id===current?'selected':''}>${esc(d.name)}</option>`)
+    ).join('');
+    const body = userDepartments.length
+      ? `<select aria-label="提交人所属部门" data-meta="submitterDepartmentId">${options}</select>`
+      : `<p class="muted-sm">登录后将列出你的所属部门；若列表为空，请检查飞书通讯录权限。</p>`;
+    return `<div class="field ${missing ? 'needs-check' : ''}"><label>提交人所属部门${userDepartments.length ? ' · 必选' : ''}${body}${missing ? '<small class="needs-check-flag">请确认部门后再提交，飞书将按此部门发起</small>' : ''}</label></div>`;
+  }
+
   function purchaseRowFields(invoiceId) {
-    const method = ((window.__purchaseSchema || {}).methods || []).find(m=>m.name === session.draft.purchaseMethod);
+    const method = ((window.__purchaseSchema || {}).methods || []).find(m=>m.name === currentExpenseType());
     if (!method) return "";
     const inv=session.invoices.find(i=>i.id===invoiceId) || {}, auto=window.ExpensePolicy.quantityUnit(inv);
-    const quantityFields=method.fields.some(w=>w.name==='数量') ? `<label>数量 · 表单必填<input aria-label="数量" data-invoice="${esc(invoiceId)}" data-invoice-field="quantity" value="${esc(auto.quantity)}" ${auto.batch ? 'readonly' : ''} inputmode="decimal" /></label><label>规格 / 单位 · 表单必填<input aria-label="规格 / 单位" data-invoice="${esc(invoiceId)}" data-invoice-field="unit" value="${esc(auto.unit)}" ${auto.batch ? 'readonly' : ''} /></label>` : '';
-    return `<div class="purchase-row-fields">${quantityFields}${method.fields.filter(w=>!["金额","名称","备注","数量","规格","单位"].includes(w.name) && !window.ExpensePolicy.bankRole(w.name)).map(w=>{
+    const unitField=method.fields.find(w=>w.name==='规格' || w.name==='单位');
+    const quantityFields=(method.fields.some(w=>w.name==='数量') ? `<label>数量 · 表单必填<input aria-label="数量" data-invoice="${esc(invoiceId)}" data-invoice-field="quantity" value="${esc(auto.quantity)}" ${auto.batch ? 'readonly' : ''} inputmode="decimal" /></label>` : '')
+      +(unitField ? `<label>${esc(unitField.name)} · 表单必填<input aria-label="${esc(unitField.name)}" data-invoice="${esc(invoiceId)}" data-invoice-field="unit" value="${esc(auto.unit)}" ${auto.batch ? 'readonly' : ''} /></label>` : '');
+    return `<div class="purchase-row-fields">${quantityFields}${method.fields.filter(w=>!["金额","数量","规格","单位","日期","日期（年-月-日）","发票号码","备注"].includes(w.name) && !window.ExpensePolicy.bankRole(w.name) && !["contact","department","connect"].includes(w.type)).map(w=>{
       const shared = ["账户名称","银行账户","收款账号","开户支行"].includes(w.name);
-      const key = `purchase:${method.name}:${shared ? "shared":invoiceId}:${w.name}`;
+      const key = `expense:${currentExpenseType()}:${shared ? "shared":invoiceId}:${w.name}`;
       const value = session.answers[key] || "";
       const control = w.options.length ? `<select data-answer="${esc(key)}"><option value="">请选择</option>${value && !w.options.includes(value) ? `<option value="${esc(value)}" selected>已失效：${esc(value)}</option>` : ''}${w.options.map(o=>`<option ${o===value ? "selected":""}>${esc(o)}</option>`).join("")}</select>` : `<input data-answer="${esc(key)}" value="${esc(value)}" />`;
       const evidence=(session.prefillEvidence || {})[key];
-      return `<label>${esc(w.name)}${w.required ? " · 表单必填" : ""}${control}<small>${esc(evidence ? evidence.source : "无同类历史 / 待检查")}</small></label>`;
+      const needsCheck=Boolean(evidence && evidence.needsCheck) || !value;
+      const flag=evidence ? evidence.source : "无同类历史 / 待检查";
+      return `<label class="${needsCheck ? 'needs-check' : ''}">${esc(w.name)}${w.required ? " · 表单必填" : ""}${control}<small class="${needsCheck ? 'needs-check-flag' : ''}">${esc(flag)}</small></label>`;
     }).join("")}${travelMarkup(invoiceId)}</div>`;
   }
 
   function buildFeishuPayload(sync=true) {
     if (sync && session.stage==="draft") syncDraftFromDom();
     const d = session.draft;
-    return {draftId:session.draftId,claim:{purchaseMethod:d.purchaseMethod, purpose:d.purpose, costCenter:d.costCenter,
+    return {draftId:session.draftId,claim:{expenseType:d.expenseType || currentExpenseType(), payer:d.payer || session.answers.payer || '',
+      purpose:d.purpose, purchaseMethod:d.expenseType || currentExpenseType(),
+      submitterDepartmentId:session.answers.submitterDepartmentId || '', submitterDepartment:selectedDepartmentName(), submitterOpenId:(authUser && authUser.openId) || '',
       invoices:okInvoices().map(({id,date,merchant,invoiceNo,invoiceCode,items,quantity,unit,amount,category,note,fileName,source,attachment,travel,raw,_travelEdited})=>({id,date,merchant,invoiceNo,invoiceCode,items,quantity,unit,amount,category,note,fileName,source,attachment,travel,raw,_travelEdited})), answers:{...session.answers},
       workflowVersion:2, matchedBudget:session.answers.matchedBudget || null, noBudgetReason:session.answers.noBudgetReason || '', relatedApproval:session.answers.relatedApproval || null, selectedBudget:linkForClaim()}};
   }
 
   function reviewIssues(c) {
     const q=window.ExpensePolicy.buildQuestionQueue(c.invoices,c.answers);
-    return [...(!c.matchedBudget && !c.noBudgetReason ? ['请确认预算或填写无预算原因'] : []), ...(c.purchaseMethod==='差旅费' && !c.relatedApproval ? ['差旅必须关联出差申请'] : []), ...q.map(x=>x.id==='selectBudget' ? '关联审批未选择（表单强制，预付款项除外）' : x.text),
+    return [...(!c.purpose ? ['请填写报销事由'] : []), ...(!c.payer && !(c.answers && c.answers.payer) ? ['请选择支出方'] : []), ...(!(c.expenseType || c.purchaseMethod) ? ['请选择费用类型'] : []), ...((c.expenseType || c.purchaseMethod)==='差旅费' && !c.relatedApproval ? ['差旅必须关联出差申请'] : []), ...(userDepartments.length && !(c.submitterDepartmentId || c.answers && c.answers.submitterDepartmentId) ? ['请选择提交人所属部门'] : []), ...q.map(x=>x.id==='selectBudget' ? '关联审批未选择' : x.text),
       ...window.ExpensePolicy.rowIssues(c.invoices,c.answers,session.prefillEvidence || {})];
   }
 
@@ -1450,25 +1522,42 @@
     const trip=approval.trip || {}, fields=approval.fields || {};
     const code=approval.instanceId || approval.instanceCode || '';
     return `<section class="linked-approval-summary"><h3>匹配预算</h3><p>${esc(budgetText)}</p><h3>已关联${approval.kind==='travel' || c.purchaseMethod==='差旅费' ? '出差申请' : '审批'}</h3><p><strong>${esc(approval.title || approval.approvalName)}</strong></p>
-      <dl><dt>审批状态</dt><dd>已通过，提交时重新核验</dd><dt>出差日期</dt><dd>${esc(trip.start || fields['开始时间'] || '见审批详情')} ～ ${esc(trip.end || fields['结束时间'] || '')}</dd><dt>目的地</dt><dd>${esc((trip.destinations || []).join('、') || fields['目的地'] || '见审批详情')}</dd><dt>出差事由</dt><dd>${esc(fields['出差事由'] || approval.title || '')}</dd><dt>审批编号</dt><dd>${esc(approval.serialId || code)}</dd></dl>
+      <dl><dt>审批状态</dt><dd>已通过，提交时重新核验</dd><dt>出差日期</dt><dd>${esc(tripDateText(trip, fields))}</dd><dt>目的地</dt><dd>${esc((trip.destinations || []).join('、') || fields['目的地'] || '见审批详情')}</dd><dt>出差事由</dt><dd>${esc(fields['出差事由'] || approval.title || '')}</dd><dt>审批编号</dt><dd>${esc(approval.serialId || code)}</dd></dl>
       <a href="https://applink.feishu.cn/client/approval?instanceCode=${encodeURIComponent(code)}" target="_blank" rel="noopener">查看已关联审批</a></section>`;
   }
 
   function previewMarkup(c, issues) {
-    const method=((window.__purchaseSchema || {}).methods || []).find(m=>m.name===c.purchaseMethod);
+    const method=((window.__purchaseSchema || {}).methods || []).find(m=>m.name===(c.expenseType || c.purchaseMethod));
     const rows=c.invoices.map(inv=>{
       const auto=window.ExpensePolicy.quantityUnit(inv);
-      const fields=(method ? method.fields : []).map(w=>{
+      const fields=(method ? method.fields : []).filter(w=>!['contact','department','connect'].includes(w.type)).map(w=>{
         const bank=window.ExpensePolicy.bankRole(w.name);
-        const key=`purchase:${c.purchaseMethod}:${bank ? 'shared' : inv.id}:${w.name}`;
-        const value=w.name==='金额' ? formatMoney(inv.amount) : w.name==='名称' ? inv.merchant || inv.fileName : w.name==='数量' ? auto.quantity : ['规格','单位'].includes(w.name) ? auto.unit : w.name==='备注' ? inv.note || '—' : c.answers[key] || '未填';
-        return `<li><span>${esc(w.name)}${w.required ? ' · 表单必填' : ''}</span><strong>${esc(value)}</strong></li>`;
+        const key=`expense:${c.expenseType || c.purchaseMethod}:${bank ? 'shared' : inv.id}:${w.name}`;
+        const fromAnswer=c.answers[key];
+        const value=w.name==='金额' ? formatMoney(inv.amount)
+          : (w.name==='名称' && !(w.options && w.options.length)) ? (fromAnswer || inv.merchant || inv.fileName || '未填')
+          : w.name==='数量' ? auto.quantity
+          : ['规格','单位'].includes(w.name) ? auto.unit
+          : (w.name==='备注' || w.name==='采购备注' || w.name==='出差备注') ? (fromAnswer || inv.note || c.purpose || '—')
+          : w.name==='发票号码' ? (fromAnswer || inv.invoiceNo || '未填')
+          : (w.name==='日期' || w.name==='日期（年-月-日）') ? (fromAnswer || inv.date || '未填')
+          : (fromAnswer || '未填');
+        const evidence=(session.prefillEvidence || {})[key];
+        const filled=value && value!=='未填' && value!=='—';
+        const needsCheck=Boolean(evidence && evidence.needsCheck && !evidence.hard) || (w.required && !filled && !(evidence && evidence.hard));
+        return `<li class="${needsCheck ? 'needs-check' : ''}"><span>${esc(w.name)}${w.required ? ' · 表单必填' : ''}${needsCheck ? ' · <span class="confirm-flag">请确认</span>' : ''}</span><strong>${esc(value)}</strong></li>`;
       }).join('');
-      return `<article class="preview-invoice"><h4>【${esc(c.costCenter)}】${esc(formatMoney(inv.amount))}</h4><p class="muted-sm">日期：${esc(inv.date || '未识别')} · 商户：${esc(inv.merchant || '未识别')}</p><ul class="preview-field-list">${fields}</ul><p class="attachment-check ${inv.attachment ? '' : 'is-missing'}">原件附件 · 产品 / 流程强制：${inv.attachment ? '已保存，提交时重新上传并核对' : '缺失，请返回上传补传'}</p></article>`;
+      return `<article class="preview-invoice"><h4>${esc(formatMoney(inv.amount))}</h4><p class="muted-sm">日期：${esc(inv.date || '未识别')} · 商户：${esc(inv.merchant || '未识别')}</p><ul class="preview-field-list">${fields}</ul><p class="attachment-check ${inv.attachment ? '' : 'is-missing'}">原件附件 · 产品 / 流程强制：${inv.attachment ? '已保存，提交时重新上传并核对' : '缺失，请返回上传补传'}</p></article>`;
     }).join('');
-    return `<div class="submit-stat"><span>采购方式 · 整单必填</span><strong>${esc(c.purchaseMethod || '未填')}</strong></div>
-      <div class="submit-stat"><span>项目 · 整单必填</span><strong>${esc(c.costCenter || '未填')}</strong></div>
-      <div class="submit-stat"><span>花销目的 / 采购事由 · 整单必填</span><strong>${esc(c.purpose || '未填')}</strong></div>
+    const deptMissing=userDepartments.length && !(c.submitterDepartmentId || (c.answers||{}).submitterDepartmentId);
+    const budgetLabel = c.matchedBudget ? budgetTitle(c.matchedBudget) : (c.noBudgetReason ? '无匹配预算：' + c.noBudgetReason : '未选（本表单非必填）');
+    const budgetProject = (c.matchedBudget && c.matchedBudget.project) || c.budgetProject || '';
+    return `<div class="submit-stat"><span>费用类型 · 整单必填</span><strong>${esc(c.expenseType || c.purchaseMethod || '未填')}</strong></div>
+      <div class="submit-stat"><span>支出方 · 整单必填</span><strong>${esc(c.payer || '未填')}</strong></div>
+      <div class="submit-stat ${deptMissing ? 'needs-check' : ''}"><span>提交人所属部门 · 必选</span><strong>${esc(c.submitterDepartment || selectedDepartmentName() || '未选')}</strong></div>
+      <div class="submit-stat"><span>报销事由 · 整单必填</span><strong>${esc(c.purpose || '未填')}</strong></div>
+      <div class="submit-stat"><span>匹配预算</span><strong>${esc(budgetLabel)}</strong></div>
+      ${budgetProject ? `<div class="submit-stat"><span>预算所属项目</span><strong>${esc(budgetProject)}</strong></div>` : ''}
 
       ${linkedApprovalSummary(c)}<div class="submit-stat"><span>发票合计</span><strong>${c.invoices.length} 张 · ${esc(formatMoney(c.invoices.reduce((a,i)=>a+Number(i.amount),0)))}</strong></div>
       <div class="preview-checks" role="status">${issues.length ? '<strong>请集中处理以下必填项或冲突</strong><ul>'+issues.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>' : '表内必填项已齐，请检查下方完整清单。'}</div>
@@ -1530,7 +1619,7 @@
         setReviewState('retry','内容已更新，点击重新核验','本次内容已变化，重新核验通过后才能提交。');return;
       }
       session.reviewContext=context;
-      setReviewState('ready','确认清单，发起飞书采购申请',`核验通过：已确认当前表单和 ${result.attachmentCount} 份原件。`);
+      setReviewState('ready','确认清单，发起飞书费用报销',`核验通过：已确认当前表单和 ${result.attachmentCount} 份原件。`);
     } catch(e) {
       if(!current())return;
       const timeout=['AbortError','TimeoutError'].includes(e.name) || /aborted|timed? out/i.test(e.message || '');
@@ -1547,7 +1636,7 @@
     document.getElementById('confirmation-title').textContent=success ? '报销已提交成功' : submissionPhase==='error' ? '提交未完成' : submissionPhase==='unknown' ? '提交结果待确认' : '正在提交报销';
     document.getElementById('confirmation-message').textContent=success ? '已收到飞书成功回执。这份报销已完成提交，无需再次操作。' : submissionMessage || '正在保存并发送给飞书。结果将自动显示，请勿重复提交。';
     const receipt=session.lastFeishu || {}, claim=session.confirmedClaim || {};
-    document.getElementById('confirmation-details').innerHTML=`<p>${esc(claim.purpose || session.answers.purpose || session.draft?.purpose || '')}</p>${success ? `<dl><dt>审批单号</dt><dd>${esc(receipt.serialNumber || '飞书同步中')}</dd><dt>审批实例</dt><dd>${esc(receipt.instanceCode || '')}</dd><dt>发票附件</dt><dd>${esc(receipt.attachmentCount || 0)} 份</dd></dl>${/^https:\/\//.test(receipt.approvalUrl || '') ? `<a class="btn btn-secondary" href="${esc(receipt.approvalUrl)}" target="_blank" rel="noopener">打开飞书采购申请</a>` : ''}` : ''}`;
+    document.getElementById('confirmation-details').innerHTML=`<p>${esc(claim.purpose || session.answers.purpose || session.draft?.purpose || '')}</p>${success ? `<dl><dt>审批单号</dt><dd>${esc(receipt.serialNumber || '飞书同步中')}</dd><dt>审批实例</dt><dd>${esc(receipt.instanceCode || '')}</dd><dt>发票附件</dt><dd>${esc(receipt.attachmentCount || 0)} 份</dd></dl>${/^https:\/\//.test(receipt.approvalUrl || '') ? `<a class="btn btn-secondary" href="${esc(receipt.approvalUrl)}" target="_blank" rel="noopener">打开飞书费用报销</a>` : ''}` : ''}`;
     document.getElementById('btn-check-submission').hidden=success || submissionPhase==='error';
     document.getElementById('btn-confirmation-back').hidden=success || submissionPhase!=='error';
     document.getElementById('btn-confirmation-home').hidden=!success;
@@ -1640,7 +1729,7 @@
     const modal = document.getElementById("result-modal");
     const pre = document.getElementById("result-payload");
     const title = document.getElementById("result-title");
-    if (title) title.textContent = result.ok ? "采购申请已发起" : "采购申请未完成";
+    if (title) title.textContent = result.ok ? "费用报销已发起" : "费用报销未完成";
     document.getElementById("btn-close-result-2").textContent=result.ok ? "完成" : "返回检查";
     const links = document.getElementById("result-links");
     if (links) {
@@ -1649,10 +1738,10 @@
         if (!url || !/^https:\/\//.test(url)) return;
         const a = document.createElement("a"); a.href=url; a.target="_blank"; a.rel="noopener noreferrer"; a.textContent=label; a.className="btn btn-primary"; links.append(a);
       };
-      if (result.ok) addLink("打开飞书采购申请", result.approvalUrl);
+      if (result.ok) addLink("打开飞书费用报销", result.approvalUrl);
       else { addLink("开通飞书审批权限", result.permissionUrl); if (result.loginUrl) addLink("重新用飞书登录", new URL(result.loginUrl, location.origin).href); }
     }
-    if (pre) pre.textContent = result.ok ? `采购申请已发起\n申请人：${result.initiator}\n审批单号：${result.serialNumber || "同步中"}\n实例编号：${result.instanceCode}\n发票附件：${result.attachmentCount || 0} 个${result.attachmentsConfirmed ? "（飞书侧已确认）" : "（请在飞书核对）"}` : result.error;
+    if (pre) pre.textContent = result.ok ? `费用报销已发起\n申请人：${result.initiator}\n审批单号：${result.serialNumber || "同步中"}\n实例编号：${result.instanceCode}\n发票附件：${result.attachmentCount || 0} 个${result.attachmentsConfirmed ? "（飞书侧已确认）" : "（请在飞书核对）"}` : result.error;
     if (modal) modal.hidden = false;
   }
 
@@ -1712,7 +1801,7 @@
     document.getElementById("btn-add-more").addEventListener("click", openPicker);
     document.getElementById("btn-start-interview").addEventListener("click", event => window.ExpenseUI.run(event.currentTarget, async () => {
       syncSummaryFromDom();
-      if (!window.__purchaseSchema) { showToast("采购表单加载失败，请刷新重试"); return; }
+      if (!window.__purchaseSchema) { showToast("费用报销表单加载失败，请刷新重试"); return; }
       if (!authUser) { showToast("请先用飞书登录"); return; }
       if (!okInvoices().length || okInvoices().length !== session.invoices.length) {
         showToast("请先核对全部发票金额，或移除不提交的发票");
@@ -1800,11 +1889,11 @@
     });
     document.getElementById('relation-status').addEventListener('click',event=>{if(event.target.closest('[data-rank-travel]'))refreshTravelMatch(true,'match');if(event.target.closest('[data-refresh-travel]'))refreshTravelMatch(true);});
     document.getElementById('btn-relation-next').addEventListener('click',()=>{
-      if(session.answers.purchaseMethod==='差旅费' && !session.answers.relatedApproval){showToast('差旅必须确认出差申请');return;}
+      if(isTravel() && !session.answers.relatedApproval){showToast('差旅必须确认出差申请');return;}
       prepareDraft();
     });
     document.getElementById("btn-back-upload").addEventListener("click", () => setStage("upload"));
-    document.getElementById("btn-back-interview").addEventListener("click", () => {document.querySelector('[data-meta="purpose"]').focus();showToast("在这里修改本次花销目的、项目和采购方式；改完可整理当前清单");});
+    document.getElementById("btn-back-interview").addEventListener("click", () => {document.querySelector('[data-meta="purpose"]').focus();showToast("在这里修改本次报销事由、支出方和费用类型；改完可整理当前清单");});
     document.getElementById("btn-back-draft").addEventListener("click", () => setStage("draft"));
 
     document.getElementById("btn-send-answer").addEventListener("click", () => {
@@ -1857,9 +1946,24 @@
         if(event.target.value) selectRelatedApproval(event.target.value);
         else {session.answers.relatedApproval=null;session.answers.selectedBudget=linkForClaim();}
         renderDraft();
+      } else if(event.target.matches('[data-meta="submitterDepartmentId"]')) {
+        syncDraftFromDom();
+        renderDraft();
       }
     });
-    document.getElementById("detail-sheets").addEventListener("change", () => syncDraftFromDom());
+    document.getElementById("detail-sheets").addEventListener("change", event => {
+      syncDraftFromDom();
+      const key=event.target.getAttribute('data-answer');
+      if(key && session.prefillEvidence && session.prefillEvidence[key]) {
+        session.prefillEvidence[key]={...session.prefillEvidence[key], needsCheck:false, source:'用户已确认'};
+      }
+      const label=event.target.closest('label');
+      if(label && event.target.value){
+        label.classList.remove('needs-check');
+        const flag=label.querySelector('small');
+        if(flag){flag.classList.remove('needs-check-flag');if(key && session.prefillEvidence && session.prefillEvidence[key])flag.textContent=session.prefillEvidence[key].source||'用户已确认';}
+      }
+    });
     document.getElementById("draft-meta").addEventListener("click",event=>{if(event.target.closest('[data-edit-matching]')){syncDraftFromDom();setStage('budget');return;}if(event.target.closest('[data-rank-travel]'))refreshTravelMatch(true,'match');if(event.target.closest('[data-refresh-travel]'))refreshTravelMatch(true);const b=event.target.closest('[data-open-bank]');if(b)openBankProfiles(b.dataset.openBank);});
     document.getElementById('btn-bank-profiles').addEventListener('click',()=>openBankProfiles(bankTargetSide));
     document.getElementById('btn-close-bank-profiles').addEventListener('click',()=>{document.getElementById('bank-profiles-modal').hidden=true;});
@@ -1963,7 +2067,7 @@
   }
 
   function linkForClaim() {
-    return session.answers.purchaseMethod==='差旅费' ? session.answers.relatedApproval || null : session.answers.relatedApproval || session.answers.matchedBudget || null;
+    return isTravel() ? session.answers.relatedApproval || null : session.answers.relatedApproval || session.answers.matchedBudget || null;
   }
 
   function selectRelatedApproval(id,source='manual') {
@@ -1975,7 +2079,7 @@
   }
 
   function renderRelation() {
-    const travel=session.answers.purchaseMethod==='差旅费';
+    const travel=isTravel();
     document.getElementById('relation-status').innerHTML=travel ? travelStatusMarkup() : '<p>预算已在上一步确认。没有额外审批时，选择“无额外关联审批”继续。</p>';
     const rows=approvedBudgets.filter(b=>travel ? b.kind==='travel' : b.instanceId!==(session.answers.matchedBudget || {}).instanceId);
     const chosen=(session.answers.relatedApproval || {}).instanceId;
@@ -1988,7 +2092,7 @@
     const b = approvedBudgets.find((x) => x.instanceId === id || x.instanceCode === id);
     if (!b) return;
     if(b.kind!=="travel")session.selectedBudgetId = b.instanceId;
-    if(b.kind!=='travel' && ((window.__purchaseSchema || {}).projects || []).includes(b.project))session.answers.costCenter=b.project;
+    if(b.kind!=='travel')session.answers.budgetProject=b.project || session.answers.budgetProject;
     session.answers.selectedBudgetId = b.instanceId;
     const selection = {
       instanceId: b.instanceId,
@@ -2008,7 +2112,7 @@
     if (session.draft) session.draft.costCenter = session.answers.costCenter;
     save();
     renderBudgets();
-    showToast((b.kind==='travel' ? "已选择关联审批：" : "已选择预算：") + (b.project || b.title || ""));
+    showToast((b.kind==='travel' ? "已选择关联审批：" : "已选择预算：") + (budgetTitle(b) || "未命名预算"));
   }
 
   function renderBudgets() {
@@ -2476,12 +2580,24 @@
     document.getElementById('btn-refresh-budgets').addEventListener('click',()=>{
       if(!authUser){showToast('请先用飞书登录，再刷新预算');return;}
       loadBudgets({manual:true});
-      if(session.answers.purchaseMethod==='差旅费') refreshTravelMatch(true);
+      if(isTravel()) refreshTravelMatch(true);
     });
     document.addEventListener('visibilitychange',refreshVisibleBudgets);
     window.addEventListener('focus',refreshVisibleBudgets);
     window.addEventListener('pageshow',refreshVisibleBudgets);
     setInterval(refreshVisibleBudgets,BUDGET_REFRESH_INTERVAL_MS);
+  }
+
+  async function loadDepartments() {
+    if (!authUser) { userDepartments = []; return; }
+    try {
+      const res = await fetch(apiBase() + "/api/me/departments", {credentials:"include", cache:"no-store"});
+      const data = await res.json();
+      userDepartments = Array.isArray(data && data.departments) ? data.departments : [];
+    } catch (e) {
+      userDepartments = [];
+    }
+    if (session.draft) renderDraft();
   }
 
   async function refreshAuth() {
@@ -2504,7 +2620,9 @@
       checkAiSetup(true);
       // Do not block login toast / page paint on slow budget listing.
       loadBudgets();
+      loadDepartments();
     } else {
+      userDepartments = [];
       aiSetupOwner=null;aiSetupConfigured=null;aiSetupEpoch++;
       document.getElementById("ai-first-use-modal").hidden=true;
       resetBudgets();
@@ -2574,10 +2692,19 @@
     try {
       const res = await fetch(apiBase() + "/api/purchase-schema", {cache:"no-store"});
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "采购表单加载失败");
+      if (!res.ok || !data.ok) throw new Error(data.error || "费用报销表单加载失败");
       window.__purchaseSchema = data;
     } catch (err) { showToast(err.message, 10000); }
     await refreshAuth();
+    if (authUser) {
+      try {
+        const learn=await fetch(apiBase()+"/api/learning-status",{credentials:"include",cache:"no-store"});
+        const learnData=await learn.json();
+        if (learn.ok && learnData && (learnData.ccError || learnData.error)) {
+          showToast(learnData.message || learnData.error || '抄送列表读取失败，不能把抄送学习标记为已完成。', 8000);
+        }
+      } catch (e) {}
+    }
     await load();
     readyToSave=true;
     await refreshFillSuggestions(false);

@@ -27,6 +27,7 @@ from feishu_oauth import (
     handle_callback,
     handle_login,
     handle_logout,
+    handle_departments,
     handle_me,
     load_dotenv as load_feishu_dotenv,
 )
@@ -219,6 +220,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/auth/me":
             handle_me(self)
             return
+        if path == "/api/me/departments":
+            handle_departments(self)
+            return
         if path == "/api/purchase-schema":
             handle_schema(self)
             return
@@ -257,6 +261,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(500, {"ok": False, "error": "手册读取失败"})
                 return
             self._json(200, {"ok": True, "filename": handbook.HANDBOOK_NAME, "markdown": markdown})
+            return
+        if path == "/api/learning-status":
+            try:
+                owner = self._owner()
+            except auth.FeishuAPIError as e:
+                self._json(e.http_status if e.http_status in (401, 403) else 502, {"ok": False, "error": str(e)})
+                return
+            status = filling_workflow.last_import_result(owner)
+            error = status.get('ccError') or (None if status.get('ok', True) else status.get('error'))
+            self._json(200, {"ok": not bool(error), "ccError": status.get('ccError'), "error": error,
+                             "message": error and '抄送列表读取失败，已保留本人成功单的学习，但不能把抄送学习标记为已完成。'})
             return
         if path == "/api/health":
             reachable = probe_ollama()
@@ -505,9 +520,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise recurring_internet.TaskError('无效任务请求')
             if path == '/api/automatic-tasks/internet' and self.command == 'POST':
                 result = recurring_internet.update(owner, body)
-            elif path == '/api/automatic-tasks/internet/preview' and self.command == 'POST':
+            elif path in ('/api/automatic-tasks/internet/preview','/api/automatic-tasks/internet/run') and self.command == 'POST':
                 if body != {'dryRun': True}:
-                    raise recurring_internet.TaskError('仅支持强制 dry-run 预演，不能传入发票或提交指令',403)
+                    raise recurring_internet.TaskError('仅支持强制 dry-run 执行，不能传入发票或提交指令',403)
                 sid = auth.cookie_from_headers(self.headers)
                 sess = auth.ensure_fresh_session(sid, auth.get_session(sid) or {})
                 result = recurring_internet.run(sess)
@@ -559,12 +574,18 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/review':
                     form = definition()
                     # Only travel adds OAuth relation checks. Other methods retain production behavior.
-                    if claim.get('purchaseMethod') == '差旅费' or claim.get('workflowVersion') == 2:
+                    from feishu_purchase import claim_type
+                    if claim_type(claim) == '差旅费':
                         sess = auth.ensure_fresh_session(auth.cookie_from_headers(self.headers), auth.get_session(auth.cookie_from_headers(self.headers)))
                         actor = travel_context.actor_for(sess)
                         if actor['openId'] != owner: raise ValueError('OAuth 用户已变更，请重新登录')
                         from feishu_purchase import validate_relation
-                        validate_relation(claim, actor, '', sess, form)
+                        token=sess.get('access_token') or ''
+                        try:
+                            token=auth.get_tenant_access_token() or token
+                        except Exception:
+                            pass
+                        validate_relation(claim, actor, token, sess, form)
                     self._json(200, filling_workflow.review(owner, claim, form))
                     return
                 if path == '/api/travel-match':

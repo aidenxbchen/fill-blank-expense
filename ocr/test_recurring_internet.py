@@ -60,8 +60,7 @@ class TaskTests(unittest.TestCase):
             p=patch.object(obj,key,return_value=val);p.start();self.addCleanup(p.stop)
         self.sess={'access_token':'synthetic','user':{'openId':'alice'}}
         claim=claim_for()
-        state={'draftId':'template','stage':'draft','answers':{**claim['answers'],'purchaseMethod':claim['purchaseMethod'],
-            'costCenter':claim['costCenter'],'purpose':'常规网费','selectedBudget':claim['selectedBudget']},'chat':[],
+        state={'draftId':'template','stage':'draft','answers':{**claim['answers'],'purpose':'常规网费'},'chat':[],
             'invoices':claim['invoices']}
         records.save_draft('alice','template',{'revision':0,'state':state})
         self.config={'intervalSeconds':86400,'scanSince':int(time.time())-86400,'templateDraftId':'template',
@@ -81,7 +80,9 @@ class TaskTests(unittest.TestCase):
         state=tasks.status('alice')
         self.assertFalse(state['enabled']);self.assertTrue(state['dryRun']);self.assertFalse(state['liveSubmissionEnabled'])
         self.assertFalse(state['schedulerRegistered'])
-        with patch.dict(os.environ,{},clear=True),patch.object(threading.Thread,'start') as start:
+        with patch.object(threading.Thread,'start') as start:
+            self.assertTrue(tasks.start_worker());start.assert_called()
+        with patch.object(tasks,'FORCE_DRY_RUN',False),patch.object(threading.Thread,'start') as start:
             self.assertFalse(tasks.start_worker());start.assert_not_called()
         with self.assertRaises(tasks.Paused): self.run_task()
         with self.assertRaises(tasks.TaskError): tasks.tick(self.sess)
@@ -96,11 +97,13 @@ class TaskTests(unittest.TestCase):
         self.enable();result=self.run_task()
         self.assertEqual(result['status'],'previewed',result)
         plan=result['items'][0]['preview']
-        self.assertTrue(plan['wouldSubmit']);self.assertEqual(plan['buyer']['name'],tasks.EXPECTED_BUYER)
-        self.assertEqual(plan['buyer']['taxId'],'');self.assertFalse(plan['buyer']['taxIdPresent'])
-        self.assertEqual(plan['claim']['costCenter'],'软件组')
-        self.assertEqual(plan['attachmentCount'],1)
-        self.assertTrue(any(w['type']=='attachmentV2' for w in plan['form']))
+        self.assertFalse(plan['wouldSubmit']);self.assertTrue(plan['wouldSend']);self.assertFalse(plan['realSend'])
+        self.assertEqual(plan['buyer']['name'],tasks.EXPECTED_BUYER)
+        self.assertEqual(plan['buyer']['taxId'],'')
+        self.assertEqual(plan['month'],'2026年10月')
+        self.assertEqual(plan['monthSource'],'计费周期')
+        self.assertEqual(plan['message'],'颖华，这是2026年10月的电信网络发票，由我垫付，请完成报销。')
+        self.assertEqual(plan['recipientName'],'李颖华')
         self.assertEqual(self.run_task()['items'][0]['status'],'duplicate')
         # Same identity in different original bytes also dedupes.
         def alternate(*args):
@@ -111,25 +114,23 @@ class TaskTests(unittest.TestCase):
             self.assertEqual(con.execute("SELECT count(*) FROM invoice_uses WHERE phase!='active'").fetchone()[0],0)
         self.create.assert_not_called()
 
-    def test_future_submission_plan_uses_normal_protocol_with_mock_transport_only(self):
+    def test_handoff_preview_never_sends_or_submits(self):
         self.enable()
         result=self.run_task()
         plan=result['items'][0]['preview']
-        # Isolated contract rehearsal only. There is no call to this function in
-        # the automatic dispatcher. All stores are temporary; transport/upload
-        # are explicit mocks, and the surrounding deny-network guards remain.
-        def transport(method,url,token,payload=None):
-            self.assertEqual(method,'POST');self.assertEqual(url,purchase.CREATE_URL)
-            self.assertEqual(token,'synthetic')
-            self.assertEqual(payload['approval_code'],purchase.APPROVAL_CODE)
-            form=json.loads(payload['form'])
-            self.assertTrue(any(w['type']=='attachmentV2' and w['value']==['MOCK_FILE_CODE'] for w in form))
-            return {'code':0,'data':{'instance_code':'MOCK_ONLY_INSTANCE','instance_link':'https://example.invalid/mock'}}
-        with patch.object(auth,'http_json',side_effect=transport) as create_transport, patch.object(approval_files,'file_codes',wraps=NORMAL_FILE_CODES), patch.object(approval_files,'upload_file',return_value='MOCK_FILE_CODE') as upload:
-            receipt=NORMAL_CREATE(self.sess,{'draftId':'internet_'+result['runId'],'claim':plan['claim']})
-        self.assertEqual(receipt['instanceCode'],'MOCK_ONLY_INSTANCE')
-        self.assertEqual(create_transport.call_count,1);upload.assert_called_once()
-        self.create.assert_not_called()  # automated dispatcher never called create
+        self.assertEqual(plan['transport']['text'],plan['message'])
+        self.assertEqual(plan['transport']['receiveName'],'李颖华')
+        self.assertTrue(plan['uploadRehearsal']['wouldUpload'])
+        self.assertEqual(plan['uploadRehearsal']['fileName'],'fixture.pdf')
+        self.assertEqual(plan['attachments'][0]['size'],len(b'%PDF fixture internet'))
+        self.assertNotIn('openId', json.dumps(plan))
+        self.assertFalse(plan['sent'])
+        self.assertEqual(result['realApprovalsCreated'],0)
+        self.assertEqual(result.get('realMessagesSent'),0)
+        self.create.assert_not_called()
+        import internet_handoff as handoff
+        blocked=handoff.deliver(invoice(),{'name':'net.pdf','mime':'application/pdf','raw':b'%PDF fixture internet'},dry_run=False,live_enabled=True)
+        self.assertFalse(blocked['sent']);self.assertFalse(blocked['realSend'])
 
     def test_buyer_blank_tax_and_wrong_tax_fail_closed(self):
         self.assertEqual(tasks.check_buyer(invoice(),self.config)['taxId'],'')
@@ -153,19 +154,12 @@ class TaskTests(unittest.TestCase):
             with self.assertRaises(tasks.TaskError):tasks.internet_evidence(inv,cfg)
         self.assertTrue(tasks.internet_evidence({**invoice(),'items':[{'name':'宽带网费'}]},self.config))
 
-    def test_required_fields_permission_relation_and_failure_tracking(self):
+    def test_missing_month_and_failure_tracking(self):
         self.enable()
-        with patch.object(purchase,'validate_relation',side_effect=purchase.ValidationError('预算不在当前用户范围')):
-            result=self.run_task()
+        blank={**invoice(),'raw':TEXT.replace('计费周期:202610;','').replace('开票日期：2026年11月20日',''),'date':'待确认'}
+        result=self.run_task(inv=blank)
         self.assertEqual(result['items'][0]['status'],'blocked')
-        self.assertIn('范围',result['items'][0]['message'])
-        self.assertEqual(tasks.status('alice')['runs'][0]['result']['status'],'blocked')
-        with data.database() as con:
-            state=json.loads(con.execute("SELECT state_json FROM drafts WHERE id='template'").fetchone()[0])
-            state['answers'].pop('purchase:个人垫付:inv1:个人垫付科目',None)
-            state['answers']['purpose']=''
-            con.execute("UPDATE drafts SET state_json=? WHERE id='template'",(json.dumps(state),))
-        self.assertEqual(self.run_task()['items'][0]['status'],'blocked')
+        self.assertIn('月份',result['items'][0]['message'])
         def broken(*args): raise RuntimeError('private-token-should-not-be-recorded')
         result=tasks.run(self.sess,source=broken)
         self.assertEqual(result['status'],'failed');self.assertNotIn('private-token',json.dumps(result))
@@ -258,8 +252,10 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(result['status'],'previewed',result)
         plan=result['items'][0]['preview']
         self.assertEqual(plan['buyer']['name'],tasks.EXPECTED_BUYER)
-        self.assertEqual(plan['buyer']['taxId'],'');self.assertEqual(plan['claim']['invoices'][0]['amount'],379)
-        self.assertTrue(plan['wouldSubmit']);self.create.assert_not_called()
+        self.assertEqual(plan['buyer']['taxId'],'')
+        self.assertTrue(plan['month'])
+        self.assertIn('请完成报销',plan['message'])
+        self.assertFalse(plan['realSend']);self.create.assert_not_called()
 
 
 class TaskHTTPTests(unittest.TestCase):
@@ -286,8 +282,8 @@ class TaskHTTPTests(unittest.TestCase):
     def test_full_http_preview_uses_mock_scan_and_never_creates(self):
         claim=claim_for()
         state={'draftId':'template','stage':'draft','chat':[],'invoices':claim['invoices'],
-               'answers':{**claim['answers'],'purchaseMethod':claim['purchaseMethod'],'costCenter':claim['costCenter'],
-                          'purpose':'常规网费','selectedBudget':claim['selectedBudget']}}
+               'answers':{**claim['answers'],
+                          'purpose':'常规网费'}}
         records.save_draft('alice','template',{'revision':0,'state':state})
         config={'intervalSeconds':86400,'scanSince':int(time.time())-3600,'templateDraftId':'template',
                 'emptyTaxIdAllowed':True,'internetAccount':'internet-test-account'}
@@ -298,7 +294,10 @@ class TaskHTTPTests(unittest.TestCase):
             status,result,_=self.request('/api/automatic-tasks/internet/preview',b'{"dryRun":true}')
         self.assertEqual(status,200)
         self.assertEqual(result['status'],'previewed',result)
-        self.assertTrue(result['items'][0]['preview']['wouldSubmit'])
+        plan=result['items'][0]['preview']
+        self.assertTrue(plan['wouldSend']);self.assertFalse(plan['realSend'])
+        self.assertEqual(plan['month'],'2026年10月')
+        self.assertEqual(plan['message'],'颖华，这是2026年10月的电信网络发票，由我垫付，请完成报销。')
         create.assert_not_called();upload.assert_not_called()
         self.assertEqual(result['realApprovalsCreated'],0)
 

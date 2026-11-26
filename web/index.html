@@ -2,10 +2,10 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="description" content="报了呗，ANEVER 员工的采购工作台：上传发票原件、核对识别汇总、补齐项目信息并发起飞书采购申请。" />
+  <meta name="description" content="报了呗，ANEVER 员工的费用报销工作台：上传发票原件、核对识别汇总、补齐费用报销信息并发起飞书费用报销。" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261126submission-confirm1" />
+  <title>报了呗 | ANEVER 费用报销工作台</title>
+  <link rel="stylesheet" href="./styles.css?v=20261126rework3" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -75,10 +75,8 @@
     <!-- STAGE: upload -->
     <section class="stage-panel" id="stage-upload" data-stage-panel="upload">
       <div class="hero">
-        <h2 class="hero-title">准备这次采购的发票</h2>
+        <h2 class="hero-title">准备这次报销的发票</h2>
         <p class="hero-sub">先上传原件并核对识别结果，再问答、匹配预算和关联审批。</p>
-        <a class="btn btn-secondary" id="btn-periodic-tasks" href="./automatic-tasks.html?v=20261125t113u-travel1">周期性任务 · 网费预演</a>
-        <p class="section-hint">查看任务状态、周期和最近结果；真实审批始终关闭。</p>
       </div>
 
       <div class="upload-triad" id="upload-triad">
@@ -115,7 +113,12 @@
         <section class="routine-task-card panel" aria-labelledby="routine-task-title">
           <h2 id="routine-task-title">常规任务</h2>
           <ol id="routine-task-summary" aria-label="月度业务规则">
-            <li><p>1. 网络服务费</p><p>月度</p></li>
+            <li>
+              <a class="routine-task-link" href="./automatic-tasks.html?v=20261126rework3">
+                <p><span class="routine-task-index">1.</span> 网络服务费</p>
+                <p>月度 · 发给李颖华报销</p>
+              </a>
+            </li>
           </ol>
         </section>
         </section>
@@ -127,7 +130,7 @@
             <svg class="dropzone-icon" aria-hidden="true" width="48" height="56" viewBox="0 0 48 56" fill="none"><path d="M7 3h24l10 10v39l-6-3-6 3-6-3-6 3-10-3V3Z" stroke="currentColor" stroke-width="1.6"/><path d="M31 3v11h10M16 25h16M16 32h16M16 39h9" stroke="currentColor" stroke-width="1.6"/></svg>
             <strong>选择发票文件</strong>
             <span class="muted">支持拖放，多张 PDF / 图片，每份不超过 24MB</span>
-            <span class="upload-assurance">原件随采购申请提交，请先用飞书登录</span>
+            <span class="upload-assurance">原件随费用报销提交，请先用飞书登录</span>
           </div>
           <input class="file-input-hidden" type="file" id="file-input" accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif" multiple />
         </div>
@@ -248,11 +251,11 @@
     <section class="stage-panel" id="stage-submit" data-stage-panel="submit" hidden>
       <div class="submit-card panel">
         <h2>提交前预览</h2>
-        <p class="section-hint">以当前飞书登录用户发起采购申请。请集中检查花销目的、采购方式、发票清单、必填项和原件附件，确认后再发起。</p>
+        <p class="section-hint">以当前飞书登录用户发起费用报销。请集中检查报销事由、支出方、费用类型、发票清单、必填项和原件附件，确认后再发起。</p>
         <div class="submit-preview" id="submit-preview"></div>
         <div class="submit-actions">
           <button type="button" class="btn btn-ghost" id="btn-back-draft">返回清单修改</button>
-          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit" aria-describedby="preview-server-status">确认清单，发起飞书采购申请</button>
+          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit" aria-describedby="preview-server-status">确认清单，发起飞书费用报销</button>
         </div>
         <p id="preview-server-status" class="section-hint" role="status" aria-live="polite"></p>
       </div>
@@ -294,7 +297,7 @@
   <div class="modal-backdrop" id="result-modal" hidden role="dialog" aria-modal="true" aria-labelledby="result-title">
     <div class="modal">
       <div class="modal-header">
-        <h3 id="result-title">飞书采购申请结果</h3>
+        <h3 id="result-title">飞书费用报销结果</h3>
         <button type="button" class="btn btn-ghost btn-sm" id="btn-close-result">关闭</button>
       </div>
       <div class="modal-body"><div id="result-links"></div><pre id="result-payload"></pre></div>
@@ -401,14 +404,14 @@
 
   <footer class="site-footer">
     <a href="./handbook.html">工作手册</a>
-    <a href="./automatic-tasks.html?v=20261125t113u-travel1">周期性任务 · 网费预演</a>
+    <a href="./automatic-tasks.html?v=20261126rework3">常规任务</a>
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <script src="./ui.js?v=20261125t113u-travel1"></script>
   <script src="./ocr-bridge.js?v=20261125t113u-travel1"></script>
-  <script src="./policy.js?v=20261126submission-confirm1"></script>
-  <script src="./app.js?v=20261126submission-confirm1"></script>
+  <script src="./policy.js?v=20261126rework3"></script>
+  <script src="./app.js?v=20261126rework3"></script>
 </body>
 </html>

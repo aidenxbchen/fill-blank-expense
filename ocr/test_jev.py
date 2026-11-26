@@ -24,14 +24,14 @@ class JevTests(unittest.TestCase):
         p = patch.dict('os.environ', {'BAOXIAO_SECRETS_KEY':'synthetic-test-encryption', 'ORG_JEV_OWNER_OPEN_ID':'alice'}); p.start(); self.addCleanup(p.stop)
         choices._cache.clear()
         self.schema = public_schema(SCHEMA)
-        self.claim = {'costCenter':'公共办公','purchaseMethod':'差旅费',
-            'answers':{'costCenter':'公共办公', 'purchaseMethod':'差旅费','purpose':'合成测试用途'},
+        self.claim = {'expenseType':'差旅费','payer':'个人支付',
+            'answers':{'expenseType':'差旅费', 'payer':'个人支付','purpose':'合成测试用途'},
             'invoices':[{'id':'synthetic','category':'meal','amount':128,'quantity':1,'unit':'份',
                          'items':[{'name':'餐饮服务','quantity':1,'unit':'份'}],
                          'attachment':{'fileId':'must-not-send'},'invoiceNo':'must-not-send'}]}
         # Use the live actual method name; no invented production option.
-        self.method = next(m for m in self.schema['methods'] if any(w['name']=='费用类型' for w in m['fields']))
-        self.claim['purchaseMethod'] = self.claim['answers']['purchaseMethod'] = self.method['name']
+        self.method = next(m for m in self.schema['methods'] if m['name']=='差旅费')
+        self.claim['expenseType'] = self.claim['answers']['expenseType'] = self.method['name']
 
     def save_jev(self, owner='alice'):
         return jev_settings.save(owner, {'apiKey':'synthetic-private-key','model':'jev-latest'})
@@ -88,7 +88,8 @@ class JevTests(unittest.TestCase):
             response=self.answer(**kwargs)
             response['answers']['q0']['confidence']=.1
             return response
-        with patch.object(jev_client,'system_one',side_effect=partial), patch.object(choices.ai_client,'chat_completions',return_value='{}') as text:
+        field=next(w for w in self.method['fields'] if w.get('required') and w.get('options'))
+        with patch.object(jev_client,'system_one',side_effect=partial), patch.object(choices.ai_client,'chat_completions',return_value=json.dumps({field['name']:field['options'][0]})) as text:
             result=choices.suggest('alice',self.claim,self.schema)
         sent=json.loads(text.call_args.kwargs['messages'][1]['content'])
         self.assertEqual(len(sent['questions']),1)

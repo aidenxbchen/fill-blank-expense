@@ -192,7 +192,7 @@ def context(claim, inv):
 
 
 def role(name):
-    return '科目' if '科目' in name else name
+    return '科目' if ('科目' in name or name=='明细采购类别') else name
 
 
 def record_fills(owner, draft_id, claim, schema):
@@ -203,7 +203,8 @@ def record_fills(owner, draft_id, claim, schema):
     if not isinstance(invoices,list) or len(invoices)>100:
         raise DataError('填写记录最多 100 张发票')
     answers=claim.get('answers') or {}
-    method=next((m for m in schema['methods'] if m['name']==(claim.get('purchaseMethod') or answers.get('purchaseMethod'))),None)
+    typ=claim.get('expenseType') or answers.get('expenseType') or claim.get('purchaseMethod') or answers.get('purchaseMethod')
+    method=next((m for m in schema['methods'] if m['name']==typ),None)
     with database() as con:
         # One draft/row/field counts once; corrections replace rather than inflate evidence.
         con.execute('DELETE FROM fill_observations WHERE owner=? AND draft_id=?',(owner,draft_id))
@@ -211,13 +212,13 @@ def record_fills(owner, draft_id, claim, schema):
             if not isinstance(inv,dict) or not isinstance(inv.get('id'),str):continue
             ctx=context(claim,inv)
             values={}
-            if ctx['project'] in schema['projects']: values['项目']=ctx['project']
+            if ctx['project'] in (schema.get('projects') or []): values['项目']=ctx['project']
             if method:
                 values['采购方式']=method['name']
                 for w in method['fields']:
                     r=role(w['name'])
                     if r not in ROLES:continue
-                    v=answers.get(f"purchase:{method['name']}:{inv['id']}:{w['name']}")
+                    v=answers.get(f"expense:{method['name']}:{inv['id']}:{w['name']}") or answers.get(f"purchase:{method['name']}:{inv['id']}:{w['name']}")
                     if not isinstance(v,str) or not v.strip() or len(v)>80:continue
                     if w['options'] and v not in w['options']:continue
                     if r=='数量':

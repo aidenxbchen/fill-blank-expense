@@ -91,21 +91,23 @@ class ExpenseHTTPTests(unittest.TestCase):
         from test_feishu_purchase import claim_for
         claim=claim_for('差旅费')
         claim['purpose']='本次出差'
-        claim['answers']={'purchaseMethod':'差旅费','costCenter':claim['costCenter'],'purpose':claim['purpose']}
+        claim['answers']['purpose']='本次出差'
+        claim['answers'].pop('expense:差旅费:inv1:名称', None)
         claim['invoices'][0].update(category='meal',merchant='合成餐饮服务')
         body={'draftId':'batch','claim':claim}
-        with patch.object(server.travel_context,'actor_for',return_value=self.session['user']), patch.object(server.travel_context,'validate_travel'), patch.object(server.filling_workflow,'start_sync') as sync, patch.object(server,'handle_create') as create:
+        travel_detail={'approval_code':__import__('feishu_oauth').TRAVEL_DEFINITION['approval_code'],'status':'APPROVED','form':[]}
+        with patch.object(server.travel_context,'actor_for',return_value=self.session['user']), patch.object(server.travel_context,'validate_travel'), patch.object(server.auth,'fetch_instance',return_value=travel_detail), patch.object(server.auth,'get_tenant_access_token',return_value='mock-tenant'), patch.object(server.filling_workflow,'start_sync') as sync, patch.object(server,'handle_create') as create:
             status,result,_=self.request('/api/prefill',json.dumps(body).encode())
-            self.assertEqual(status,200)
-            self.assertEqual(result['answers']['purchase:差旅费:inv1:费用类型'],'餐费补贴')
+            self.assertEqual(status,200,result)
+            self.assertEqual(result['answers']['expense:差旅费:inv1:名称'],'餐费补贴')
             sync.assert_called_once()
             claim['answers']=result['answers']
             ref=data.save_file('alice',b'%PDF offline fixture','fixture.pdf','application/pdf')
             claim['invoices'][0]['attachment']=ref
             status,result,_=self.request('/api/review',json.dumps(body).encode())
-            self.assertEqual(status,200)
+            self.assertEqual(status,200,result)
             self.assertEqual(result['attachmentCount'],1)
-            claim['answers']['purchase:差旅费:inv1:差旅科目']='业务招待费'
+            claim['answers']['expense:差旅费:inv1:名称']='其他'
             self.assertEqual(self.request('/api/review',json.dumps(body).encode())[0],422)
             create.assert_not_called()
             with patch.object(server.auth,'get_session',return_value=None):

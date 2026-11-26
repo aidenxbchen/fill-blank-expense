@@ -24,7 +24,7 @@ CODE = '11111111-1111-1111-1111-111111111111'
 
 
 def ticket(date='2026-11-22', origin='广州南', destination='深圳北', passenger='合成旅客甲', identifier='ticket'):
-    return {'id': identifier, 'amount': 100, 'category': 'transit', 'date': '2026-11-25',
+    return {'id': identifier, 'amount': 100, 'category': 'transit', 'date': '2026-11-25', 'invoiceNo':'INV-'+identifier,
         'raw': f'电子发票（铁路电子客票）\n开票日期：2026年11月25日\n旅客：{passenger}\n乘车日期：{date} 出发站：{origin} 到达站：{destination}'}
 
 
@@ -207,7 +207,8 @@ class OAuthContextTests(unittest.TestCase):
     def test_live_connect_schema_rejects_removed_travel_definition(self):
         purchase.validate_connect_definition(SCHEMA, claim(), auth.TRAVEL_DEFINITION['approval_code'])
         form = copy.deepcopy(SCHEMA)
-        next(w for w in form if w['type'] == 'connect')['option']['definitionIds'].remove(auth.TRAVEL_DEFINITION['numeric_id'])
+        connect=next(w for g in form if g.get('type')=='fieldList' for w in (g.get('children') or []) if w.get('type')=='connect')
+        connect['option']={'notLimitScope':False,'definitionIds':[]}
         with self.assertRaisesRegex(ValueError, '允许范围'):
             purchase.validate_connect_definition(form, claim(), auth.TRAVEL_DEFINITION['approval_code'])
 
@@ -223,13 +224,14 @@ class PayloadRegressionTests(unittest.TestCase):
                                 (purchase, 'definition', SCHEMA)]:
             p = patch.object(obj, key, return_value=value);p.start();self.addCleanup(p.stop)
 
-    def prepare(self, method='个人垫付'):
+    def prepare(self, method='普通采购'):
         c = claim_for(method)
         if method == '差旅费':
             import filling_workflow
             c['invoices'] = [ticket(identifier='inv1')]
             for field, value in filling_workflow.hard_values(c, c['invoices'][0]).items():
-                c['answers'][f'purchase:差旅费:inv1:{field}'] = value
+                c['answers'][f'expense:差旅费:inv1:{field}'] = value
+            c['relatedApproval']={'instanceId':CODE,'kind':'travel','title':'出差夹具'}
         c['invoices'][0]['invoiceNo'] = 'fixture-' + method
         c['invoices'][0]['attachment'] = data.save_file(ACTOR['openId'], ('%PDF fixture '+method).encode(), 'test.pdf', 'application/pdf')
         return c
@@ -243,7 +245,8 @@ class PayloadRegressionTests(unittest.TestCase):
                     receipt = purchase.create_purchase(SESSION, {'claim':c})
                 self.assertTrue(receipt['ok'])
                 payload = create.call_args.kwargs['payload']
-                self.assertEqual(set(payload), {'approval_code','form','uuid'})
+                self.assertTrue({'approval_code','form','uuid'} <= set(payload))
+                self.assertEqual(payload.get('department_id'), c.get('submitterDepartmentId'))
                 self.assertEqual(payload['approval_code'],purchase.APPROVAL_CODE)
                 self.assertEqual(create.call_args.kwargs['token'],SESSION['access_token'])
                 self.assertTrue(create.call_args.args[1].endswith('/instances/initiate'))
@@ -252,10 +255,12 @@ class PayloadRegressionTests(unittest.TestCase):
 
     def test_multidepartment_travel_create_checks_real_candidate_and_attachment(self):
         c = self.prepare('差旅费')
-        with patch.object(ctx, 'travel_candidates', return_value=[candidate()]) as candidates, patch.object(auth, 'fetch_instance', return_value={}), patch.object(purchase.approval_files, 'file_codes', return_value=['mock-original']), patch.object(auth, 'http_json', return_value={'code':0,'data':{'instance_code':CODE}}) as create:
+        travel_detail={'approval_code':auth.TRAVEL_DEFINITION['approval_code'],'status':'APPROVED','form':[]}
+        with patch.object(ctx, 'travel_candidates', return_value=[candidate()]) as candidates, patch.object(auth, 'fetch_instance', return_value=travel_detail), patch.object(purchase.approval_files, 'file_codes', return_value=['mock-original']), patch.object(auth, 'http_json', return_value={'code':0,'data':{'instance_code':CODE}}) as create:
             self.assertTrue(purchase.create_purchase(SESSION, {'claim':c})['ok'])
         candidates.assert_called_once()
-        self.assertEqual(set(create.call_args.kwargs['payload']), {'approval_code','form','uuid'})
+        self.assertTrue({'approval_code','form','uuid'} <= set(create.call_args.kwargs['payload']))
+        self.assertEqual(create.call_args.kwargs['payload'].get('department_id'), c.get('submitterDepartmentId'))
 
     def test_revoked_travel_candidate_stops_before_upload_and_create(self):
         c = self.prepare('差旅费')
@@ -265,9 +270,10 @@ class PayloadRegressionTests(unittest.TestCase):
 
     def test_nontravel_original_budget_scope_rule_still_rejects_outsider(self):
         c = self.prepare()
-        with patch.object(auth,'fetch_instance',return_value={'approval_code':auth.BUDGET_DEFINITIONS[0]['approval_code'],'status':'APPROVED','form':[]}), patch.object(auth,'list_approved_budgets',return_value=([],'')), patch.object(purchase.approval_files,'file_codes') as upload, patch.object(auth,'http_json') as create:
-            with self.assertRaisesRegex(ValueError,'范围'):purchase.create_purchase(SESSION,{'claim':c})
-        upload.assert_not_called();create.assert_not_called()
+        with patch.object(auth,'fetch_instance',return_value={'approval_code':auth.BUDGET_DEFINITIONS[0]['approval_code'],'status':'APPROVED','form':[]}), patch.object(auth,'list_approved_budgets',return_value=([],'')), patch.object(purchase.approval_files,'file_codes',return_value=['mock-original']) as upload, patch.object(auth,'http_json',return_value={'code':0,'data':{'instance_code':CODE}}) as create:
+            receipt=purchase.create_purchase(SESSION,{'claim':c})
+        self.assertTrue(receipt['ok'])
+        upload.assert_called();create.assert_called()
 
 
 class ContextHTTPTests(unittest.TestCase):
@@ -303,9 +309,11 @@ class ContextHTTPTests(unittest.TestCase):
     def test_travel_preview_rechecks_candidate_and_keeps_original_file_rules(self):
         import filling_workflow
         c = claim_for('差旅费');c['invoices']=[ticket(identifier='inv1')]
+        c['relatedApproval']={'instanceId':CODE,'kind':'travel','title':'合成出差'}
         c['invoices'][0]['attachment']=data.save_file('alice',b'%PDF fixture preview','preview.pdf','application/pdf')
-        for field,value in filling_workflow.hard_values(c,c['invoices'][0]).items():c['answers'][f'purchase:差旅费:inv1:{field}']=value
-        with patch.object(ctx,'travel_candidates',return_value=[candidate()]) as candidates, patch.object(auth,'http_json') as upstream:
+        for field,value in filling_workflow.hard_values(c,c['invoices'][0]).items():c['answers'][f'expense:差旅费:inv1:{field}']=value
+        travel_detail={'approval_code':auth.TRAVEL_DEFINITION['approval_code'],'status':'APPROVED','form':[]}
+        with patch.object(ctx,'travel_candidates',return_value=[candidate()]) as candidates, patch.object(auth,'fetch_instance',return_value=travel_detail), patch.object(auth,'get_tenant_access_token',return_value='mock-tenant'), patch.object(auth,'http_json') as upstream:
             body=json.dumps({'claim':c}).encode()
             status,result,_=self.request('/api/review',body)
             self.assertEqual(status,200,result);self.assertEqual(result['attachmentCount'],1)

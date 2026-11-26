@@ -14,8 +14,8 @@ from test_feishu_purchase import CreateTests
 
 def state_for(ref=None):
     return {'draftId':'draft_test','stage':'interview','invoices':[{'id':'inv1','fileName':'original.pdf','amount':'123.45',
-        **({'attachment':ref} if ref else {})}], 'answers':{'costCenter':'公共办公','purchaseMethod':'个人垫付',
-        'selectedBudget':{'instanceId':'budget1'},'purchase:个人垫付:inv1:采购科目':'办公费'},
+        **({'attachment':ref} if ref else {})}], 'answers':{'payer':'个人支付','expenseType':'普通采购',
+        'purpose':'购买办公用品','expense:普通采购:inv1:明细采购类别':'办公费'},
         'chat':[{'role':'user','text':'已确认'}], 'draft':None, 'composerText':'还没发出的回答'}
 
 
@@ -58,7 +58,7 @@ class RecordTests(unittest.TestCase):
 
     def test_receipt_status_is_owner_scoped_and_uses_submitted_purpose(self):
         self.save()
-        claim={'purpose':'前往深圳与工程师交流','invoices':self.state['invoices'],'costCenter':'公共办公'}
+        claim={'purpose':'前往深圳与工程师交流','invoices':self.state['invoices'],'expenseType':'普通采购','payer':'个人支付'}
         receipt={'ok':True,'instanceCode':'real-code','requestId':'fixture-request','approvalUrl':'https://fixture.invalid/approval','attachmentCount':1}
         records.record_submission('alice','draft_test',claim,receipt)
         status=records.submission_status('alice','draft_test')
@@ -87,7 +87,7 @@ class RecordTests(unittest.TestCase):
 
     def test_submission_snapshot_is_immutable_and_transition_atomic(self):
         self.save()
-        claim={'costCenter':'公共办公','purchaseMethod':'个人垫付','purpose':'购买纸张','answers':self.state['answers'],
+        claim={'expenseType':'普通采购','payer':'个人支付','purpose':'购买纸张','answers':self.state['answers'],
                'invoices':[dict(self.state['invoices'][0],merchant='更正商户',invoiceNo='edited-no')]}
         receipt={'ok':True,'instanceCode':'real-code','requestId':'request-code','approvalUrl':'https://feishu.cn/a','serialNumber':'N123'}
         records.record_submission('alice','draft_test',claim,receipt,1234567890)
@@ -134,7 +134,7 @@ class RecordsHTTPTests(ExpenseHTTPTests):
 
     def test_submission_status_is_authenticated_owner_scoped_and_read_only(self):
         receipt={'ok':True,'instanceCode':'created-code','requestId':'created-request','attachmentCount':0,'approvalUrl':'https://fixture.invalid/approval/created-code'}
-        claim={'purpose':'前往深圳与工程师交流','costCenter':'软件组','invoices':[]}
+        claim={'purpose':'前往深圳与工程师交流','expenseType':'普通采购','payer':'个人支付','invoices':[]}
         records.record_submission('alice','draft_test',claim,receipt)
         with patch.object(purchase,'recover_history') as repair,patch.object(purchase,'receipt_for_draft',return_value=None),patch.object(purchase,'create_purchase') as create:
             status,result,headers=self.call('/api/submission-status/draft_test')

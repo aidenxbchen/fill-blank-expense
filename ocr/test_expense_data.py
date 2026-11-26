@@ -50,21 +50,21 @@ class DataTests(unittest.TestCase):
         self.assertEqual(d.suggestions('b',c)['rows']['inv1']['科目'],[])
 
     def test_corrected_answer_replaces_evidence_and_does_not_learn_bank_info(self):
-        c=claim_for('预付款项');d.record_fills('a','same',c,self.schema);d.record_fills('a','same',c,self.schema)
+        c=claim_for('普通采购');d.record_fills('a','same',c,self.schema);d.record_fills('a','same',c,self.schema)
         with d.database() as con:
             self.assertEqual(con.execute("SELECT count(*) FROM fill_observations WHERE field='科目'").fetchone()[0],1)
             self.assertEqual(con.execute("SELECT count(*) FROM fill_observations WHERE field LIKE '%账户%' OR field LIKE '%账号%'").fetchone()[0],0)
-        key='purchase:预付款项:inv1:预付款科目';c['answers'][key]='研发耗材'
+        key='expense:普通采购:inv1:明细采购类别';c['answers'][key]='研发耗材'
         d.record_fills('a','same',c,self.schema)
         result=d.suggestions('a',c)['rows']['inv1']['科目']
         self.assertEqual(result[0]['value'],'研发耗材');self.assertEqual(result[0]['evidence'],1)
 
     def test_context_beats_unrelated_global_frequency(self):
         for i in range(15):
-            c=claim_for();c['costCenter']='公共办公';c['invoices'][0]['merchant']='无关商户';c['invoices'][0]['amount']=9000
+            c=claim_for();c['invoices'][0]['merchant']='无关商户';c['invoices'][0]['amount']=9000
             d.record_fills('a',f'unrelated{i}',c,self.schema)
         for i in range(3):
-            c=claim_for();c['answers']['purchase:个人垫付:inv1:个人垫付科目']='研发耗材'
+            c=claim_for();c['answers']['expense:普通采购:inv1:明细采购类别']='研发耗材'
             d.record_fills('a',f'match{i}',c,self.schema)
         result=d.suggestions('a',claim_for())['rows']['inv1']['科目']
         self.assertEqual(result[0]['value'],'研发耗材')
@@ -72,7 +72,7 @@ class DataTests(unittest.TestCase):
         self.assertAlmostEqual(sum(x['probability'] for x in result),1.0,places=3)
 
     def test_invalid_option_not_learned(self):
-        c=claim_for();c['answers']['purchase:个人垫付:inv1:个人垫付科目']='不存在的科目'
+        c=claim_for();c['answers']['expense:普通采购:inv1:明细采购类别']='不存在的科目'
         d.record_fills('a','test',c,self.schema)
         self.assertEqual(d.suggestions('a',c)['rows']['inv1']['科目'],[])
 
@@ -92,7 +92,7 @@ class DataTests(unittest.TestCase):
             cached=files.resolve_invoices('a',claim)
             self.assertEqual(files.file_codes('a',cached),['real-native-code']);self.assertEqual(upload.call_count,1)
         form=[];files.add_attachment(form,SCHEMA,['real-native-code'])
-        self.assertEqual(form,[{'id':'widget16510609389860001','type':'attachmentV2','value':['real-native-code']}])
+        self.assertEqual(form,[{'id':'widget16510510447300001','type':'attachmentV2','value':['real-native-code']}])
 
 
     def test_lookup_file_by_name_returns_latest(self):

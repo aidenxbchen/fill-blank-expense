@@ -11,6 +11,7 @@ from decimal import Decimal
 
 import expense_data as data
 import invoice_registry as registry
+from invoice_registry import context_label
 
 
 class RecordError(ValueError):
@@ -33,7 +34,7 @@ def title_for(state):
 
 def draft_title(stored, state):
     answers=state.get('answers') or {};first=next(iter(state.get('invoices') or []),{})
-    legacy={str(v) for v in (answers.get('costCenter'),(state.get('draft') or {}).get('costCenter'),first.get('merchant'),first.get('fileName'),'未命名采购') if v}
+    legacy={str(v) for v in (context_label(answers=answers,state=state),first.get('merchant'),first.get('fileName'),'未命名采购') if v}
     prefix=re.sub(r' · \d{4}-\d{2}-\d{2}$','',str(stored or ''))
     if not stored or prefix in legacy or stored=='待补充报销事由':return title_for(state)
     return stored
@@ -76,7 +77,7 @@ def draft_view(row, detail=False):
     state = json.loads(raw)
     invoices = state.get('invoices') or []
     obj['title']=draft_title(obj.get('title'),state)
-    obj.update(project=(state.get('answers') or {}).get('costCenter') or (state.get('draft') or {}).get('costCenter') or '',
+    obj.update(project=context_label(state=state),
                invoiceCount=len(invoices))
     if detail:
         obj['state'] = state
@@ -124,7 +125,7 @@ def save_draft(owner, id, body):
             title=title_for(body['state']) if draft_title(row['title'],previous)==title_for(previous) else draft_title(row['title'],body['state'])
         else:title=title_for(body['state'])
         try:
-            registry.sync_draft(con,owner,id,body['state']['invoices'],project=(body['state'].get('answers') or {}).get('costCenter') or '')
+            registry.sync_draft(con,owner,id,body['state']['invoices'],project=context_label(state=body['state']))
         except registry.DuplicateError as e: raise RecordError(str(e),409)
         if row:
             con.execute('UPDATE drafts SET state_json=?,stage=?,title=?,revision=revision+1,updated_at=? WHERE owner=? AND id=?',
@@ -210,9 +211,9 @@ def record_submission(owner, draft_id, claim, receipt, submitted_at=None):
         title=title_for({'purpose':claim.get('purpose'),'answers':claim.get('answers') or {}})
         snapshot={'claim':claim,'state':state,'attachmentNames':[i.get('attachment',{}).get('name') or i.get('fileName','') for i in invoices]}
         con.execute('INSERT OR IGNORE INTO submission_history VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-                    (owner,receipt['instanceCode'],receipt['requestId'],draft_id,title,claim.get('costCenter') or '',total,
+                    (owner,receipt['instanceCode'],receipt['requestId'],draft_id,title,context_label(claim=claim),total,
                      'submitted',now,receipt['approvalUrl'],json.dumps(receipt,ensure_ascii=False),json.dumps(snapshot,ensure_ascii=False)))
-        registry.sync_draft(con,owner,draft_id or 'submit_'+receipt['requestId'],claim['invoices'],'submitted',claim.get('costCenter') or '')
+        registry.sync_draft(con,owner,draft_id or 'submit_'+receipt['requestId'],claim['invoices'],'submitted',context_label(claim=claim))
         if row and row['status']=='active':
             con.execute("UPDATE drafts SET status='submitted',instance_code=?,revision=revision+1,updated_at=? WHERE owner=? AND id=?",
                         (receipt['instanceCode'],now,owner,draft_id))

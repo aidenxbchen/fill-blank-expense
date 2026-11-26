@@ -1,4 +1,4 @@
-"""Recurring internet expense planning. This release has NO live submission path.
+"""Recurring internet invoice handoff. This release has NO live send or approval path.
 
 Both switches are code-owned, not environment/request/database settings. A future
 live release requires a separate review and the user's explicit confirmation in
@@ -21,6 +21,7 @@ import feishu_oauth as auth
 import feishu_purchase as purchase
 import filling_workflow as filling
 import internet_mail
+import internet_handoff as handoff
 import invoice_registry as registry
 from invoice_extract import parse_uploaded_invoice
 
@@ -74,15 +75,20 @@ def status(owner):
         r.pop('owner')
         r['result'] = json.loads(r['result'])
     config = json.loads(task['config'])
-    return {'ok':True, 'id':TASK_ID, 'name':'常规网费自动任务', 'enabled':bool(task['enabled']),
-            'mode':'dry-run', 'dryRun':True, 'liveSubmissionEnabled':False,
+    try:
+        recipient = handoff.public_recipient()
+    except Exception:
+        recipient = {'name':'李颖华'}
+    return {'ok':True, 'id':TASK_ID, 'name':'常规任务 · 网络服务费', 'enabled':bool(task['enabled']),
+            'mode':'handoff-dry-run', 'dryRun':True, 'liveSubmissionEnabled':False, 'liveSendEnabled':False,
             'schedulerRegistered':bool(_worker and _worker.is_alive()), 'expectedBuyer':EXPECTED_BUYER,
+            'recipientName':recipient['name'],
             'revision':task['revision'], 'running':task['running'], 'nextRun':task['next_run'],
             'config':config, 'runs':runs, 'missingConfig':missing_config(config)}
 
 
 def missing_config(config):
-    required = {'intervalSeconds':'扫描周期', 'templateDraftId':'已核对的报销配置草稿',
+    required = {'intervalSeconds':'扫描周期',
                 'scanSince':'扫描起始时间（避免历史票）'}
     result = [label for key,label in required.items() if not config.get(key)]
     if config.get('emptyTaxIdAllowed') is None: result.append('购方税号为空的实际规则')
@@ -93,7 +99,7 @@ def missing_config(config):
 
 def update(owner, body):
     if not isinstance(body, dict) or set(body) - {'revision','enabled','config','dryRun'}:
-        raise TaskError('任务请求含不受支持的配置；本版只允许预演')
+        raise TaskError('任务请求含不受支持的配置；本版只允许启停、调度和 dry-run 执行')
     if body.get('dryRun', True) is not True:
         raise TaskError('本版强制 dry-run，用户确认前不能关闭或提交真实审批', 403)
     if 'enabled' in body and type(body['enabled']) is not bool:
@@ -130,7 +136,7 @@ def update(owner, body):
         config = {**json.loads(task['config']), **supplied}
         enabled = body.get('enabled', bool(task['enabled']))
         if enabled and missing_config(config):
-            raise TaskError('预演任务尚缺：' + '、'.join(missing_config(config)))
+            raise TaskError('常规任务尚缺：' + '、'.join(missing_config(config)))
         con.execute('UPDATE internet_tasks SET enabled=?,config=?,revision=revision+1,next_run=? WHERE owner=?',
                     (enabled,json.dumps(config,ensure_ascii=False),int(time.time()) if enabled else None,owner))
     return status(owner)
@@ -194,66 +200,23 @@ def check_buyer(inv, config):
     return buyer
 
 
-def template_claim(owner, config, inv, draft_id):
-    record = records.get_draft(owner, config['templateDraftId'])
-    state = record['state']
-    answers = copy.deepcopy(state.get('answers') or {})
-    draft = state.get('draft') or {}
-    method = draft.get('purchaseMethod') or answers.get('purchaseMethod')
-    # Template must contain one row: never arbitrarily choose among multiple rows.
-    rows = state.get('invoices') or []
-    if len(rows) != 1: raise TaskError('网费配置草稿须有且仅有一个已核对的网费模板行')
-    prefix = f"purchase:{method}:{rows[0]['id']}:"
-    common = {k:v for k,v in answers.items() if not k.startswith('purchase:') or ':shared:' in k}
-    common.update({f"purchase:{method}:{inv['id']}:"+k[len(prefix):]:v for k,v in answers.items() if k.startswith(prefix)})
-    claim = {'purchaseMethod':method, 'costCenter':draft.get('costCenter') or answers.get('costCenter'),
-             'purpose':draft.get('purpose') or answers.get('purpose'), 'answers':common,
-             'selectedBudget':copy.deepcopy(answers.get('selectedBudget') or state.get('selectedBudget') or draft.get('selectedBudget')),
-             'invoices':[inv]}
-    generated = filling.prefill(owner, draft_id, claim, purchase.public_schema(purchase.definition()))
-    # Unreviewed learned suggestions must not silently become automatic answers.
-    for key,evidence in generated['evidence'].items():
-        if key not in common and not evidence['hard'] and generated['answers'].get(key):
-            raise TaskError('预填含待核对建议，请先在配置草稿明确填写该字段')
-    claim['answers'] = generated['answers']
-    return claim
-
-
 def preview(owner, sess, config, inv, draft_id, check_active):
-    buyer = check_buyer(inv,config)
-    claim = template_claim(owner, config, inv, draft_id)
-    schema = purchase.definition()
-    filling.review(owner,claim,schema)
-    actor = auth.fetch_user_info(sess['access_token'])
-    if not actor.get('openId') or actor['openId'] != owner:
-        raise TaskError('OAuth 用户身份不匹配，已停止',403)
-    if claim['purchaseMethod'] != '预付款项':
-        purchase.validate_relation(claim,actor,auth.get_tenant_access_token())
-    files = approval_files.resolve_invoices(owner,claim)
-    form = purchase.build_form(schema,claim)
-    # Placeholder is visibly symbolic; never upload a file during a preview.
-    approval_files.add_attachment(form,schema,['DRY_RUN_OWNED_ORIGINAL'])
-    display = []
-    def describe(control, definitions):
-        widget = next(w for w in definitions if w['id'] == control['id'])
-        value = control['value']
-        if widget['type'] == 'fieldList':
-            for row in value:
-                for cell in row: describe(cell,widget['children'])
-            return
-        if widget['type'] == 'radioV2':
-            value = next(o['text'] for o in widget['option'] if o['value'] == value)
-        if widget['type'] == 'connect':
-            budget = claim.get('selectedBudget') or {}
-            value = budget.get('title') or budget.get('name') or '配置草稿中的关联审批（已核验通过状态与可用范围）'
-        if widget['type'] == 'attachmentV2': value = f'{len(files)} 份原件（仅本地校验）'
-        display.append({'name':widget['name'],'value':str(value)})
-    for control in form: describe(control,schema)
+    """Build a dry-run message-and-attachment handoff. Never send or submit."""
     check_active()
-    return {'dryRun':True, 'wouldSubmit':True, 'realSubmission':False,
-            'message':'若完成启用条件并经用户确认，将通过现有 OAuth 审批与官方附件上传链路提交；本次仅预演',
-            'buyer':buyer, 'claim':claim, 'form':form, 'displayForm':display, 'attachmentCount':len(files),
-            'approvalCode':purchase.APPROVAL_CODE, 'blockers':['本版强制预演','尚未获得用户首次真实提交确认']}
+    buyer = check_buyer(inv, config)
+    attachment = inv.get('attachment') if isinstance(inv.get('attachment'), dict) else {}
+    if not attachment.get('name'):
+        attachment = {**attachment, 'name': inv.get('fileName') or '电信网络发票.pdf'}
+    raw = attachment.get('raw') if isinstance(attachment.get('raw'), (bytes, bytearray)) else None
+    if not raw and (attachment.get('file_id') or attachment.get('fileId')):
+        rec, raw = data.resolve_file(owner, attachment)
+        attachment = {**attachment, 'name': rec.get('name') or attachment.get('name'), 'mime': rec.get('mime') or attachment.get('mime') or 'application/pdf'}
+    plan = handoff.deliver(inv, attachment, dry_run=True, live_enabled=False, raw=raw, owner=owner)
+    plan['buyer'] = buyer
+    plan['notice'] = '已构造发给李颖华的消息和附件，并预演了文件上传。本版强制 dry-run，不会真实发消息，也不会发起审批。'
+    check_active()
+    return plan
+
 
 
 def lease(owner, run_id, keys):
@@ -272,16 +235,15 @@ def lease(owner, run_id, keys):
 def run(sess, *, scheduled=False, source=None, parser=None):
     owner = (sess.get('user') or {}).get('openId')
     if not owner: raise TaskError('请先用飞书登录',401)
-    # Safe under every switch permutation: this release deliberately has no live adapter.
     if not FORCE_DRY_RUN or LIVE_RELEASE_ENABLED:
-        raise TaskError('自动提交发布锁异常；本版不支持真实审批',403)
+        raise TaskError('发布锁异常；本版不支持真实发送或真实审批',403)
     now = int(time.time())
     run_id = uuid.uuid4().hex
     with data.database() as con:
         tables(con)
         con.execute('BEGIN IMMEDIATE')
         task = state_row(con,owner)
-        if not task['enabled']: raise Paused('任务已暂停；扫描、回调与预演均停止',409)
+        if not task['enabled']: raise Paused('任务已暂停；扫描与转交均停止',409)
         if task['running']: raise TaskError('任务正在运行或上次进程中断，请先核对运行记录',409)
         if scheduled and task['next_run'] and task['next_run'] > now: return {'ok':True,'notDue':True,'dryRun':True}
         config = json.loads(task['config'])
@@ -297,7 +259,7 @@ def run(sess, *, scheduled=False, source=None, parser=None):
         if not current or not current['enabled'] or current['revision'] != revision or current['running'] != run_id:
             raise Paused('任务已暂停或配置发生变化，本轮停止',409)
 
-    result = {'ok':True,'runId':run_id,'dryRun':True,'realApprovalsCreated':0,'items':[]}
+    result = {'ok':True,'runId':run_id,'dryRun':True,'realApprovalsCreated':0,'realMessagesSent':0,'items':[]}
     final = 'previewed'
     try:
         scan = source or internet_mail.attachments
@@ -312,13 +274,13 @@ def run(sess, *, scheduled=False, source=None, parser=None):
                 # Check normal manual/submitted occupancy BEFORE saving or parsing originals.
                 registry.reserve_upload(owner,attachment['raw'],attachment['mime'])
                 if not lease(owner,run_id,[ident]):
-                    item.update(status='duplicate',message='相同原件已预演或正在处理，请查看原运行记录')
+                    item.update(status='duplicate',message='相同原件已预览或正在处理，请查看原运行记录')
                     result['items'].append(item)
                     continue
                 with data.database() as con:
                     previous = con.execute("SELECT owner,result FROM internet_candidates WHERE identity=? AND status='previewed' ORDER BY rowid DESC LIMIT 1",(ident,)).fetchone()
                 if previous:
-                    item.update(status='duplicate',message='相同原件已预演，请查看原运行记录')
+                    item.update(status='duplicate',message='相同原件已预览，请查看原运行记录')
                 else:
                     ref = data.save_file(owner,attachment['raw'],attachment['name'],attachment['mime'])
                     inv = registry.parse_once(owner,ref,parse)
@@ -338,7 +300,7 @@ def run(sess, *, scheduled=False, source=None, parser=None):
                             if con.execute('SELECT 1 FROM invoice_uses WHERE invoice_key=?',(key,)).fetchone():
                                 raise registry.DuplicateError('发票已在报销中占用或提交，请核对原报销')
                     if duplicates or not lease(owner,run_id,keys):
-                        item.update(status='duplicate',message='相同发票已预演，请查看原运行记录')
+                        item.update(status='duplicate',message='相同发票已预览，请查看原运行记录')
                     else:
                         plan = preview(owner,sess,config,inv,'internet_'+run_id,active)
                         active()
@@ -355,7 +317,7 @@ def run(sess, *, scheduled=False, source=None, parser=None):
                 item.update(status='blocked',message=str(exc)[:500] if isinstance(exc,ValueError) else '飞书读取或权限校验失败，请检查邮箱、预算权限与 OAuth 登录')
                 final = 'blocked'
             except Exception:
-                item.update(status='failed',message='识别或原件处理失败，请核对服务后重试；尚未提交审批')
+                item.update(status='failed',message='识别或原件处理失败，请核对服务后重试；尚未发送消息或提交审批')
                 final = 'failed'
             result['items'].append(item)
             if item['status'] in ('blocked','failed'):
@@ -387,7 +349,7 @@ def recover_interrupted(owner, revision):
         if task['running']:
             con.execute("DELETE FROM internet_leases WHERE run_id=? AND identity NOT IN (SELECT identity FROM internet_candidates WHERE run_id=? AND status='previewed')",(task['running'],task['running']))
             con.execute("UPDATE internet_runs SET status='interrupted',finished=?,result=? WHERE id=? AND owner=?",
-                        (int(time.time()),json.dumps({'dryRun':True,'realApprovalsCreated':0,'message':'暂停后已清理中断运行；没有真实提交'}),task['running'],owner))
+                        (int(time.time()),json.dumps({'dryRun':True,'realApprovalsCreated':0,'realMessagesSent':0,'message':'暂停后已清理中断运行；没有真实提交'}),task['running'],owner))
             con.execute('UPDATE internet_tasks SET running=NULL,revision=revision+1 WHERE owner=?',(owner,))
     return status(owner)
 
@@ -404,7 +366,7 @@ def record_missing_session(owner):
         task = state_row(con,owner)
         if not task['enabled'] or task['running'] or (task['next_run'] or 0) > now: return
         run_id = uuid.uuid4().hex
-        result = {'dryRun':True,'realApprovalsCreated':0,'items':[],
+        result = {'dryRun':True,'realApprovalsCreated':0,'realMessagesSent':0,'items':[],
                   'message':'当前用户的 OAuth 会话不存在，请重新登录；未扫描邮箱或发起审批'}
         con.execute('INSERT INTO internet_runs VALUES(?,?,?,?,?,?)',
                     (run_id,owner,'blocked',now,now,json.dumps(result,ensure_ascii=False)))
@@ -414,13 +376,12 @@ def record_missing_session(owner):
 
 
 def start_worker():
-    """Optional DRY-RUN worker. Default: no thread, no timer, no registration.
+    """Dry-run scheduler. Starts with the server so an enabled task can run.
 
-    This switch cannot enable real approvals. It is intentionally not set by the
-    task UI or saved config, and is not enabled in this change.
+    This thread cannot enable real sends or approvals while FORCE_DRY_RUN is on
+    and LIVE_RELEASE_ENABLED is off.
     """
     global _worker
-    if os.environ.get('BAOXIAO_INTERNET_DRY_RUN_SCHEDULER') != '1': return False
     if not FORCE_DRY_RUN or LIVE_RELEASE_ENABLED: return False
     if _worker and _worker.is_alive(): return True
     def work():

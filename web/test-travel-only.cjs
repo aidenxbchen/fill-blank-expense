@@ -16,14 +16,14 @@ function harness(){
 }
 const respond=(r,data,status=200)=>r.resolve({ok:status===200,status,json:async()=>data});
 const trip=id=>({instanceId:id,kind:'travel',title:'出差申请 · 11-22 深圳',trip:{start:'2026-11-22',end:'2026-11-22',destinations:['深圳']}});
-const initial={stage:'upload',draftId:'draft-a',invoices:[{id:'one',amount:10,status:'ok',travel:{isTicket:true,passenger:'合成旅客',segments:[{date:'2026-11-22',origin:'广州南',destination:'深圳北'}]}}],answers:{purpose:'业务交流',costCenter:'软件组'},draft:{purchaseMethod:'差旅费',purpose:'业务交流',costCenter:'软件组'}};
+const initial={stage:'upload',draftId:'draft-a',invoices:[{id:'one',amount:10,status:'ok',travel:{isTicket:true,passenger:'合成旅客',segments:[{date:'2026-11-22',origin:'广州南',destination:'深圳北'}]}}],answers:{purpose:'业务交流',expenseType:'差旅费',payer:'个人支付'},draft:{expenseType:'差旅费',purpose:'业务交流',payer:'个人支付'}};
 (async()=>{
   const a=harness();a.h.setUser('alice');a.h.setState(initial);
-  a.h.applyAnswerSideEffects('purchaseMethod','差旅费');assert.equal(a.timers.length,0,'questions must not trigger approval matching before the budget step');
+  a.h.applyAnswerSideEffects('expenseType','差旅费');assert.equal(a.timers.length,0,'questions must not trigger approval matching before the budget step');
   const request=a.h.refreshTravelMatch(true,'match');assert.equal(a.requests[0].url,'/api/travel-match');
   const posted=JSON.parse(a.requests[0].options.body).claim;assert.equal(posted.invoices[0].travel.segments[0].date,'2026-11-22');
   respond(a.requests[0],{ok:true,owner:'alice',candidates:[trip('real')],groups:[{invoiceId:'one',facts:{isTicket:true,passenger:'重新解析旅客',segments:[{date:'2026-11-22',origin:'广州南',destination:'深圳北'}]}}],autoSelectId:'real',message:'唯一匹配'});await request;
-  assert.equal(a.h.state().answers.selectedBudget.instanceId,'real');assert.equal(a.h.state().answers.costCenter,'软件组','trip reason cannot replace project');
+  assert.equal(a.h.state().answers.selectedBudget.instanceId,'real');assert.equal(a.h.state().answers.purpose,'业务交流','trip reason cannot replace purpose');
   assert.equal(a.h.state().invoices[0].travel.passenger,'重新解析旅客','updated generated facts are displayed');
   a.h.state().invoices[0]._travelEdited=true;
   a.h.state().invoices[0].travel.passenger='手动修正旅客';
@@ -31,21 +31,21 @@ const initial={stage:'upload',draftId:'draft-a',invoices:[{id:'one',amount:10,st
   const again=a.h.refreshTravelMatch(true,'match');respond(a.requests[1],{ok:true,owner:'alice',candidates:[trip('other')],groups:[{invoiceId:'one',facts:{passenger:'不应覆盖'}}],autoSelectId:'other'});await again;
   assert.equal(a.h.state().answers.selectedBudget.instanceId,'real','manual selection is never silently overwritten');
   assert.equal(a.h.state().invoices[0].travel.passenger,'手动修正旅客','manual travel facts cannot be overwritten');
-  const b=harness();b.h.setUser('alice');b.h.setState({...initial,answers:{purchaseMethod:'差旅费'}});
-  const late=b.h.refreshTravelMatch();b.h.setUser('bob');b.h.setState({...initial,answers:{purchaseMethod:'差旅费'}});
+  const b=harness();b.h.setUser('alice');b.h.setState({...initial,answers:{expenseType:'差旅费',payer:'个人支付',purpose:'业务交流'}});
+  const late=b.h.refreshTravelMatch();b.h.setUser('bob');b.h.setState({...initial,answers:{expenseType:'差旅费',payer:'个人支付',purpose:'业务交流'}});
   respond(b.requests[0],{ok:true,candidates:[trip('alice-only')],groups:[],autoSelectId:'alice-only'});await late;
   assert.equal(b.h.state().answers.selectedBudget,undefined,'late match cannot cross accounts');
-  const c=harness();c.h.setUser('alice');c.h.setState({...initial,answers:{purchaseMethod:'差旅费'}});
+  const c=harness();c.h.setUser('alice');c.h.setState({...initial,answers:{expenseType:'差旅费',payer:'个人支付',purpose:'业务交流'}});
   const claim=c.h.buildFeishuPayload().claim;
   assert.equal(claim.departmentId,undefined);assert.equal(claim.invoices[0].travel.segments[0].date,'2026-11-22');
   c.window.__purchaseSchema={methods:[]};c.window.ExpensePolicy={quantityUnit:()=>({quantity:1,unit:'份'})};
-  assert.doesNotMatch(c.h.previewMarkup(claim,[]),/所属部门/);assert.equal(c.h.travelMarkup('one'),'','no itinerary input is shown');
+  assert.match(c.h.previewMarkup(claim,[]),/所属部门/);assert.equal(c.h.travelMarkup('one'),'','no itinerary input is shown');
   const e=harness();e.h.setUser('alice');e.h.setState({invoices:[{id:'ocr',status:'parsing'}],answers:{}});
   e.h.applyParsedInvoice(e.h.state().invoices[0],{amount:10,travel:{isTicket:true,passenger:'合成旅客',segments:[]}});
-  assert.equal(e.h.state().answers.purchaseMethod,'差旅费','recognized rail/air ticket prefills travel method');
-  e.h.state().answers.purchaseMethod='个人垫付';e.h.applyParsedInvoice(e.h.state().invoices[0],{amount:10,travel:{isTicket:true}});
-  assert.equal(e.h.state().answers.purchaseMethod,'个人垫付','existing method can be overridden only by user');
-  const f=harness();f.h.setUser('alice');f.h.setState({...JSON.parse(JSON.stringify(initial)),stage:'relation',answers:{purpose:'同一用途',purchaseMethod:'差旅费',costCenter:'软件组'}});
+  assert.equal(e.h.state().answers.expenseType,'差旅费','recognized rail/air ticket prefills travel expense type');
+  e.h.state().answers.expenseType='普通采购';e.h.applyParsedInvoice(e.h.state().invoices[0],{amount:10,travel:{isTicket:true}});
+  assert.equal(e.h.state().answers.expenseType,'普通采购','existing expense type can be overridden only by user');
+  const f=harness();f.h.setUser('alice');f.h.setState({...JSON.parse(JSON.stringify(initial)),stage:'relation',answers:{purpose:'同一用途',expenseType:'差旅费',payer:'个人支付'}});
   const timeouts=[];f.context.AbortSignal={timeout(ms){timeouts.push(ms);return AbortSignal.timeout(ms);}};
   const first=f.h.refreshTravelMatch();
   assert.equal(timeouts[0],60000,'approval reads use their own timeout budget');
@@ -54,7 +54,7 @@ const initial={stage:'upload',draftId:'draft-a',invoices:[{id:'one',amount:10,st
   assert.equal(JSON.parse(f.requests[0].options.body).mode,'candidates','candidate selection must not await AI');
   await f.h.refreshTravelMatch(true);
   assert.equal(f.requests.length,1,'repeated entry does not duplicate in-flight work');
-  f.h.state().answers['purchase:差旅费:shared:银行']='其他银行';
+  f.h.state().answers['expense:差旅费:inv-note:出差备注']='其他说明';
   respond(f.requests[0],{ok:true,owner:'alice',candidates:[{...trip('visible'),recommendation:{evidence:['11月23日深圳餐饮，邻近22日出差'],warnings:[]}}],recommendedId:'visible',groups:[],autoSelectId:'visible',message:'已读取'});
   await first;
   assert.match(f.elements['relation-choice'].innerHTML,/visible/,'unrelated edits cannot discard loaded options');

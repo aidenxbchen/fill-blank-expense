@@ -18,8 +18,9 @@
 .preview-invoice { margin-top:18px; padding:18px 0; border-top:1px solid var(--border); }
 .preview-invoice h4 { margin:0 0 6px; }
 .preview-field-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px 24px; padding:0; list-style:none; }
-.preview-field-list li { display:grid; gap:4px; overflow-wrap:anywhere; }
-.preview-field-list span { font-size:var(--text-sm); color:var(--muted); }
+.preview-field-list li { display:grid; gap:4px; overflow-wrap:break-word; word-break:keep-all; }
+.preview-field-list span { font-size:var(--text-sm); color:var(--muted); overflow-wrap:normal; word-break:keep-all; line-break:strict; }
+.preview-field-list .confirm-flag { white-space:nowrap; }
 .preview-checks { margin:18px 0; padding:16px; border:1px solid var(--border); border-radius:var(--radius-card); }
 .preview-checks ul { padding-left:20px; }
 .preview-checks p { margin-bottom:0; }
@@ -881,13 +882,14 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .submit-card h2 { margin-bottom:var(--space-xs); }
 .submit-preview { margin:var(--space-lg) 0; }
 .submit-stat {
-  display: grid;
-  grid-template-columns: 100px 1fr;
-  gap:var(--space-md);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .2rem;
   padding:var(--space-sm) 0;
   border-bottom: 1px solid var(--border);
 }
-.submit-stat span { color: var(--muted); font-size:var(--text-xs); }
+.submit-stat span { color: var(--muted); font-size:var(--text-xs); white-space: nowrap; }
 .submit-stat strong {
   font-size:var(--text-sm);
   font-weight: 600;
@@ -1069,11 +1071,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 
 /* —— Toast glass —— */
+.draft-footer-actions, .submit-actions, .site-footer, #draft-total { position: relative; z-index: 50; }
 .toast {
   position: fixed;
-  z-index: 90;
+  z-index: 40;
   left: 50%;
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  top: calc(8.75rem + env(safe-area-inset-top));
+  bottom: auto;
   transform: translate(-50%, 12px) scale(.98);
   width: max-content;
   max-width: min(90vw, 520px);
@@ -1275,7 +1279,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   }
   .draft-total { font-size:var(--text-lg); }
   .submit-card { padding:var(--space-control) var(--space-md); }
-  .submit-stat { grid-template-columns: 76px minmax(0, 1fr); gap:var(--space-sm); }
+  .submit-stat { display:flex; flex-direction:column; align-items:flex-start; gap:.2rem; }
   .submit-actions .btn-primary { width: 100%; order: -1; }
   .modal-backdrop {
     padding:max(var(--space-sm), env(safe-area-inset-top)) var(--space-xs) max(var(--space-sm), env(safe-area-inset-bottom));
@@ -1298,10 +1302,15 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .record-card { gap:var(--space-xs); }
   .ai-recommend { padding:var(--space-sm) var(--space-sm); }
   .toast {
-    bottom: calc(80px + env(safe-area-inset-bottom));
-    max-width: min(92vw, 420px);
+    top: calc(10.25rem + env(safe-area-inset-top));
+    bottom: auto;
+    max-width: min(86vw, 360px);
     text-align: center;
+    z-index: 40;
+    pointer-events: none;
   }
+  .draft-footer-actions, .submit-actions, .site-footer, #draft-total { position: relative; z-index: 50; }
+
   .stage-name {
     max-width: 4.8em;
     overflow: hidden;
@@ -1612,9 +1621,13 @@ abbr[title] { text-decoration:none; cursor:inherit; }
 .routine-task-card { display:flex; flex-direction:column; gap:var(--space-sm); padding:var(--space-lg); flex:1; min-width:0; }
 .routine-task-card h2 { font-size:var(--text-lg); margin:0; }
 .routine-task-card p { margin:0; }
-#routine-task-summary { margin:0; padding:0; list-style:none; font-size:var(--text-sm); border-top:var(--rule-hair) solid var(--color-rule); }
-#routine-task-summary li { display:flex; justify-content:space-between; align-items:baseline; gap:var(--space-sm); padding-block:var(--space-sm); }
-#routine-task-summary li p:last-child { color:var(--color-muted); flex-shrink:0; }
+#routine-task-summary,
+.routine-task-summary { margin:0; padding:0; list-style:none; font-size:var(--text-sm); border-top:var(--rule-hair) solid var(--color-rule); }
+#routine-task-summary li,
+.routine-task-summary li { display:flex; justify-content:space-between; align-items:baseline; gap:var(--space-sm); padding-block:var(--space-sm); }
+#routine-task-summary li p:last-child,
+.routine-task-summary li p:last-child { color:var(--color-muted); flex-shrink:0; }
+.routine-task-index { font-variant-numeric:tabular-nums; margin-right:.25em; }
 .upload-triad > .budget-picker.triad-card,.upload-triad > .dropzone.triad-card { height:32rem; min-height:0; }
 .budget-picker.triad-card .budget-grid {
   display:grid; grid-auto-rows:5.5rem; gap:var(--space-xs); flex:0 0 auto;
@@ -1660,3 +1673,46 @@ abbr[title] { text-decoration:none; cursor:inherit; }
 .linked-approval-summary {margin-block:var(--space-lg);padding-block:var(--space-md);border-block:1px solid var(--border);}
 #confirmation-message {font-size:var(--text-md);}
 @media(max-width:640px){.submission-confirmation {padding:var(--space-lg);} .submission-confirmation dl,.linked-approval-summary dl {grid-template-columns:minmax(0,1fr);} .submission-confirmation dt,.linked-approval-summary dt {color:var(--muted);}}
+
+/* Fields the user must visually confirm — not text-only reminders. */
+.needs-check,
+label.needs-check,
+.field.needs-check,
+.preview-field-list li.needs-check,
+.submit-stat.needs-check {
+  position: relative;
+  border: 1.5px solid color-mix(in srgb, #b15d12 55%, var(--line, #d7c4a8));
+  background: color-mix(in srgb, #f3b34a 22%, var(--panel, #fffaf3));
+  box-shadow: inset 5px 0 0 #b15d12;
+  border-radius: var(--radius-md, 12px);
+  padding: .55rem .75rem .55rem .9rem;
+}
+.needs-check > small,
+.needs-check-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: #7a3e00;
+  font-weight: 650;
+}
+td.needs-check, .sheet-table td.needs-check {
+  box-shadow: inset 4px 0 0 #b15d12;
+  background: color-mix(in srgb, #f3b34a 18%, var(--panel, #fffaf3));
+}
+.needs-check-flag::before {
+  content: "";
+  width: .55rem;
+  height: .55rem;
+  border-radius: 50%;
+  background: #b15d12;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #b15d12 25%, transparent);
+}
+.routine-task-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+.routine-task-link:hover p:first-child,
+.routine-task-link:focus-visible p:first-child {
+  text-decoration: underline;
+}
