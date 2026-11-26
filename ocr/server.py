@@ -419,7 +419,7 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _records_request(self, path):
-        if path not in ("/api/drafts", "/api/history") and not path.startswith(("/api/drafts/", "/api/history/")):
+        if path not in ("/api/drafts", "/api/history") and not path.startswith(("/api/drafts/", "/api/history/", "/api/submission-status/")):
             return False
         try:
             owner = self._owner()
@@ -452,6 +452,9 @@ class Handler(BaseHTTPRequestHandler):
                         rev = qs['revision'][0]
                 return rev
             if method == 'GET':
+                if kind=='submission-status':
+                    if not ident or action:raise records.RecordError('无效提交状态查询',404)
+                    self._json(200,{'ok':True,**records.submission_status(owner,ident)});return True
                 if action:
                     raise records.RecordError("此操作不受支持",405)
                 if kind == 'history':
@@ -556,7 +559,7 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/review':
                     form = definition()
                     # Only travel adds OAuth relation checks. Other methods retain production behavior.
-                    if claim.get('purchaseMethod') == '差旅费':
+                    if claim.get('purchaseMethod') == '差旅费' or claim.get('workflowVersion') == 2:
                         sess = auth.ensure_fresh_session(auth.cookie_from_headers(self.headers), auth.get_session(auth.cookie_from_headers(self.headers)))
                         actor = travel_context.actor_for(sess)
                         if actor['openId'] != owner: raise ValueError('OAuth 用户已变更，请重新登录')
@@ -572,8 +575,18 @@ class Handler(BaseHTTPRequestHandler):
                     public_schema(form)
                     from feishu_purchase import validate_connect_definition
                     validate_connect_definition(form, claim, auth.TRAVEL_DEFINITION['approval_code'])
+                    mode=body.get('mode','match')
+                    if mode not in ('candidates','match'): raise ValueError('不支持的出差匹配模式')
                     candidates = travel_context.travel_candidates(sess, actor)
-                    self._json(200, {'ok': True, 'owner': owner, **travel_matching.match(owner, actor, claim, candidates)})
+                    result = travel_matching.match(owner, actor, claim, candidates, use_ai=mode=='match')
+                    if mode=='candidates':
+                        result['autoSelectId']=None
+                        result['message']=f'已读取 {len(candidates)} 条已通过的出差申请，并按商户地点和日期线索排序；请选择确认，无需填写实际行程'
+                    result['phase']=mode
+                    warnings = getattr(candidates, 'warnings', [])
+                    result['notice'] = '；'.join(filter(None, [result.get('notice'), *warnings]))
+                    result['sourceWarnings'] = warnings
+                    self._json(200, {'ok': True, 'owner': owner, **result})
                     return
                 if path == '/api/prefill':
                     result = filling_workflow.prefill(owner, body.get('draftId'), claim, public_schema(definition()))

@@ -1,6 +1,8 @@
 """Fresh OAuth-user travel context. No shared or historical cache."""
 import urllib.parse
 import json
+import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import feishu_oauth as auth
@@ -50,7 +52,7 @@ def participant_instances(sess, actor, definition_codes=None):
     return codes
 
 
-def candidate_from_detail(sess, actor, code, detail, summary=None):
+def candidate_from_detail(sess, actor, code, detail, summary=None, warnings=None):
     if detail.get('definition_code') != auth.TRAVEL_DEFINITION['approval_code'] or not auth.is_approved_status(detail.get('status')) or detail.get('reverted'):
         return None
     form = detail.get('form') or []
@@ -68,13 +70,22 @@ def candidate_from_detail(sess, actor, code, detail, summary=None):
         fields = {**auth.summaries_to_map(summary.get('summaries')), **fields}
     traveler_ids = {detail.get('user_id')} | set(travel.get('peer_open_ids') or [])
     traveler_ids.discard(None)
-    names = []
-    for person in traveler_ids:
-        if person == actor['openId']: names.append(actor['name']); continue
-        user = checked_get('/contact/v3/users/' + urllib.parse.quote(str(person), safe='')
-            + '?user_id_type=open_id', sess['access_token']).get('user') or {}
-        if not user.get('name'): raise ValueError('出差旅客名称无权限读取，请检查通讯录范围')
-        names.append(user['name'])
+    names = [actor['name']] if actor['openId'] in traveler_ids else []
+    # Applicant-visible summaries already carry peer names; reading unrelated
+    # contact profiles must not become a prerequisite for one's own trip.
+    peer_names = re.split(r'[,，、]+', str(auth.summaries_to_map((summary or {}).get('summaries')).get('同行人') or fields.get('同行人') or ''))
+    names.extend(name.strip() for name in peer_names if name.strip())
+    for person in traveler_ids - {actor['openId']}:
+        if any(name.strip() for name in peer_names): break
+        try:
+            user = checked_get('/contact/v3/users/' + urllib.parse.quote(str(person), safe='')
+                + '?user_id_type=open_id', sess['access_token']).get('user') or {}
+        except auth.FeishuAPIError as e:
+            if not auth.is_missing_scope(e) and e.http_status != 403: raise
+            if warnings is not None: warnings.append('部分同行人姓名未能读取，缺少可核验姓名的票据需人工确认')
+            continue
+        if user.get('name'): names.append(user['name'])
+    names = sorted(set(names))
     candidate = auth._friendly_item({'instance_code': code, 'definition_code': detail['definition_code'],
         'definition_name': detail.get('definition_name'), 'instance_status': detail['status']}, None)
     candidate.update(fields=fields, travelerNames=names, periods=[{'start': travel_matching.date_value(s['start']),
@@ -85,16 +96,46 @@ def candidate_from_detail(sess, actor, code, detail, summary=None):
     return candidate
 
 
+class CandidateList(list):
+    """Verified accessible candidates, plus explicit source-coverage warnings."""
+    def __init__(self):
+        super().__init__()
+        self.warnings = []
+
+
 def travel_candidates(sess, actor=None):
     actor = actor or actor_for(sess)
-    # Official OAuth list: the caller's initiated instances. No CLI/tenant fallback.
-    rows = auth.list_initiated(sess['access_token'], auth.TRAVEL_DEFINITION['approval_code'])
-    summaries = {r['instance_code']: r for r in rows if r.get('definition_code') == auth.TRAVEL_DEFINITION['approval_code']}
-    codes = set(summaries) | participant_instances(sess, actor)
-    result = []
-    for code in sorted(codes):
-        candidate = candidate_from_detail(sess, actor, code, user_instance(sess, code), summaries.get(code))
-        if candidate: result.append(candidate)
+    result = CandidateList()
+    sources, failures = 0, []
+    summaries, codes = {}, set()
+    try:
+        rows = auth.list_initiated(sess['access_token'], auth.TRAVEL_DEFINITION['approval_code'])
+        summaries = {r['instance_code']: r for r in rows if r.get('definition_code') == auth.TRAVEL_DEFINITION['approval_code']}
+        codes.update(summaries)
+        sources += 1
+    except auth.FeishuAPIError as e:
+        failures.append(e)
+        result.warnings.append('本人已发起来源暂不可读取，仅展示其他已核验来源的申请')
+    try:
+        codes.update(participant_instances(sess, actor))
+        sources += 1
+    except auth.FeishuAPIError as e:
+        failures.append(e)
+        result.warnings.append('待办、已办、抄送来源暂不可读取；本人已发起的出差申请仍可正常关联')
+    if not sources:
+        raise failures[0]
+    # Bounded parallel reads keep candidate loading independent of list size.
+    # Every request still uses this exact OAuth user and fresh detail checks.
+    def read_candidate(code):
+        warnings=[]
+        candidate=candidate_from_detail(sess,actor,code,user_instance(sess,code),summaries.get(code),warnings)
+        return candidate,warnings
+    if codes:
+        with ThreadPoolExecutor(max_workers=min(4,len(codes))) as pool:
+            for candidate,warnings in pool.map(read_candidate,sorted(codes)):
+                if candidate: result.append(candidate)
+                result.warnings.extend(warnings)
+    result.warnings = list(dict.fromkeys(result.warnings))
     return result
 
 

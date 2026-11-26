@@ -41,6 +41,32 @@ class RecordTests(unittest.TestCase):
             self.assertEqual(data.resolve_file('alice',restored['invoices'][0]['attachment'])[1],b'%PDF-1.7 original')
         self.assertEqual(data.DB_PATH.stat().st_mode & 0o777,0o600)
 
+    def test_titles_follow_purpose_and_keep_explicit_renames(self):
+        self.state['answers']['purpose']='前往香港向高瓴汇报，前往深圳与工程师交流'
+        saved=self.save();self.assertEqual(saved['title'],self.state['answers']['purpose'])
+        self.state['answers']['purpose']='新的实质性事由'
+        saved=self.save(saved['revision']);self.assertEqual(saved['title'],'新的实质性事由')
+        renamed=records.change_draft('alice','draft_test',saved['revision'],title='自定义有效标题')
+        self.state['answers']['purpose']='再修改事由'
+        self.assertEqual(self.save(renamed['revision'])['title'],'自定义有效标题')
+
+    def test_legacy_invoice_titles_are_displayed_as_the_actual_purpose(self):
+        self.state['answers']['purpose']='前往深圳与工程师交流'
+        self.save()
+        with data.database() as con:con.execute("UPDATE drafts SET title='original.pdf · 2026-11-26'")
+        self.assertEqual(records.list_records('alice','drafts')['items'][0]['title'],'前往深圳与工程师交流')
+
+    def test_receipt_status_is_owner_scoped_and_uses_submitted_purpose(self):
+        self.save()
+        claim={'purpose':'前往深圳与工程师交流','invoices':self.state['invoices'],'costCenter':'公共办公'}
+        receipt={'ok':True,'instanceCode':'real-code','requestId':'fixture-request','approvalUrl':'https://fixture.invalid/approval','attachmentCount':1}
+        records.record_submission('alice','draft_test',claim,receipt)
+        status=records.submission_status('alice','draft_test')
+        self.assertTrue(status['submitted']);self.assertEqual(status['receipt']['instanceCode'],'real-code')
+        self.assertEqual(status['title'],claim['purpose'])
+        self.assertEqual(records.list_records('alice','history')['items'][0]['title'],claim['purpose'])
+        with patch.object(purchase,'receipt_for_draft',return_value=None):self.assertFalse(records.submission_status('bob','draft_test')['submitted'])
+
     def test_cross_owner_never_reads_renames_deletes_or_links_original(self):
         self.save()
         self.assertEqual(records.list_records('bob','drafts')['items'],[])
@@ -105,6 +131,22 @@ class RecordsHTTPTests(ExpenseHTTPTests):
         try:res=urllib.request.urlopen(req,timeout=5)
         except urllib.error.HTTPError as e:res=e
         with res:return res.status,json.load(res),res.headers
+
+    def test_submission_status_is_authenticated_owner_scoped_and_read_only(self):
+        receipt={'ok':True,'instanceCode':'created-code','requestId':'created-request','attachmentCount':0,'approvalUrl':'https://fixture.invalid/approval/created-code'}
+        claim={'purpose':'前往深圳与工程师交流','costCenter':'软件组','invoices':[]}
+        records.record_submission('alice','draft_test',claim,receipt)
+        with patch.object(purchase,'recover_history') as repair,patch.object(purchase,'receipt_for_draft',return_value=None),patch.object(purchase,'create_purchase') as create:
+            status,result,headers=self.call('/api/submission-status/draft_test')
+            self.assertEqual(status,200);self.assertTrue(result['submitted'])
+            self.assertEqual(result['receipt'],receipt);self.assertEqual(result['title'],claim['purpose'])
+            self.assertEqual(headers['Cache-Control'],'no-store')
+            with patch.object(purchase.auth,'get_session',return_value=None):
+                self.assertEqual(self.call('/api/submission-status/draft_test')[0],401)
+            bob={'user':{'openId':'bob'}}
+            with patch.object(purchase.auth,'get_session',return_value=bob),patch.object(purchase.auth,'ensure_fresh_session',return_value=bob):
+                self.assertFalse(self.call('/api/submission-status/draft_test')[1]['submitted'])
+            repair.assert_not_called();create.assert_not_called()
 
     def test_crud_authenticated_and_cors(self):
         s=state_for()

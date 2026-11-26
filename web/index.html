@@ -5,7 +5,7 @@
   <meta name="description" content="报了呗，ANEVER 员工的采购工作台：上传发票原件、核对识别汇总、补齐项目信息并发起飞书采购申请。" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>报了呗 | ANEVER 采购工作台</title>
-  <link rel="stylesheet" href="./styles.css?v=20261125t113u-travel1" />
+  <link rel="stylesheet" href="./styles.css?v=20261126submission-confirm1" />
 </head>
 <body class="delight-body">
   <a class="skip-link" href="#main-content">跳到工作区</a>
@@ -64,17 +64,19 @@
   <main class="page delight-page" id="main-content" tabindex="-1">
     <nav class="stage-rail" aria-label="流程进度">
       <ol class="stage-list" id="stage-list">
-        <li class="stage-item is-active" data-stage="upload"><span class="stage-dot">1</span><span class="stage-name">上传发票</span></li>
-        <li class="stage-item" data-stage="interview"><span class="stage-dot">2</span><span class="stage-name">补充信息</span></li>
-        <li class="stage-item" data-stage="draft"><span class="stage-dot">3</span><span class="stage-name">发票清单</span></li>
-        <li class="stage-item" data-stage="submit"><span class="stage-dot">4</span><span class="stage-name">提交前预览</span></li>
+        <li class="stage-item" data-stage="upload"><span class="stage-dot">1</span><span class="stage-name">上传发票</span></li>
+        <li class="stage-item" data-stage="interview"><span class="stage-dot">2</span><span class="stage-name">问问题</span></li>
+        <li class="stage-item" data-stage="budget"><span class="stage-dot">3</span><span class="stage-name">匹配预算</span></li>
+        <li class="stage-item" data-stage="relation"><span class="stage-dot">4</span><span class="stage-name">匹配关联审批</span></li>
+        <li class="stage-item" data-stage="draft"><span class="stage-dot">5</span><span class="stage-name">预览</span></li>
+        <li class="stage-item" data-stage="done"><span class="stage-dot">6</span><span class="stage-name">提交</span></li>
       </ol>
     </nav>
     <!-- STAGE: upload -->
     <section class="stage-panel" id="stage-upload" data-stage-panel="upload">
       <div class="hero">
         <h2 class="hero-title">准备这次采购的发票</h2>
-        <p class="hero-sub">选好项目，上传原件。识别后直接核对表格，再补齐采购信息。</p>
+        <p class="hero-sub">先上传原件并核对识别结果，再问答、匹配预算和关联审批。</p>
         <a class="btn btn-secondary" id="btn-periodic-tasks" href="./automatic-tasks.html?v=20261125t113u-travel1">周期性任务 · 网费预演</a>
         <p class="section-hint">查看任务状态、周期和最近结果；真实审批始终关闭。</p>
       </div>
@@ -118,19 +120,7 @@
         </section>
         </section>
 
-        <section class="budget-picker panel triad-card" id="budget-picker">
-          <div class="triad-card-body">
-            <div class="panel-head-row">
-              <h2>选择关联项目</h2>
-              <span class="pill" id="budget-count-pill">0</span>
-              <button type="button" class="btn btn-ghost btn-sm budget-refresh" id="btn-refresh-budgets" aria-controls="budget-grid" aria-label="刷新可用预算">刷新预算</button>
-            </div>
-            <p class="section-hint" id="budget-picker-hint">用飞书登录后，点选你已通过的立项 / 变更，问答会自动带上项目。</p>
-            <p class="budget-refresh-status" id="budget-refresh-status" role="status" aria-live="polite" aria-atomic="true"></p>
-            <section class="budget-grid" id="budget-grid" tabindex="0" role="region" aria-label="可用预算列表" aria-describedby="budget-scroll-hint"></section>
-            <p class="budget-scroll-hint" id="budget-scroll-hint">显示约 3 条预算；更多可滚动，聚焦列表后用方向键或 Page Down 浏览。</p>
-          </div>
-        </section>
+
 
         <div class="dropzone triad-card" id="dropzone" tabindex="0" role="button" aria-label="拖拽或点击上传发票">
           <div class="dropzone-inner triad-card-body">
@@ -200,17 +190,45 @@
               <input type="text" id="chat-input" aria-label="回答当前问题" placeholder="输入回答，回车发送" autocomplete="off" />
               <button type="button" class="btn btn-primary" id="btn-send-answer">发送</button>
             </div>
+            <button type="button" class="btn btn-primary" id="btn-questions-done" hidden>确认回答，匹配预算</button>
             <button type="button" class="btn btn-ghost btn-sm" id="btn-skip-optional" hidden>跳过（可选）</button>
           </div>
         </div>
       </div>
     </section>
 
+    <section class="stage-panel" id="stage-budget" data-stage-panel="budget" hidden>
+      <h2>匹配预算</h2>
+      <p class="section-hint">根据刚才确认的项目和用途选择支出预算。预算和后续的出差等关联审批分别保留。</p>
+        <section class="budget-picker panel triad-card" id="budget-picker">
+          <div class="triad-card-body">
+            <div class="panel-head-row">
+              <h2>选择匹配预算</h2>
+              <span class="pill" id="budget-count-pill">0</span>
+              <button type="button" class="btn btn-ghost btn-sm budget-refresh" id="btn-refresh-budgets" aria-controls="budget-grid" aria-label="刷新可用预算">刷新预算</button>
+            </div>
+            <p class="section-hint" id="budget-picker-hint">用飞书登录后，点选你已通过的立项 / 变更，问答会自动带上项目。</p>
+            <p class="budget-refresh-status" id="budget-refresh-status" role="status" aria-live="polite" aria-atomic="true"></p>
+            <section class="budget-grid" id="budget-grid" tabindex="0" role="region" aria-label="可用预算列表" aria-describedby="budget-scroll-hint"></section>
+            <p class="budget-scroll-hint" id="budget-scroll-hint">显示约 3 条预算；更多可滚动，聚焦列表后用方向键或 Page Down 浏览。</p>
+          </div>
+        </section>
+      <label><input type="checkbox" id="budget-none" /> 本次无匹配预算</label><label for="no-budget-reason">没有匹配预算？请说明原因后继续</label><textarea id="no-budget-reason" maxlength="1000" placeholder="例如：临时采购尚无对应预算"></textarea>
+      <div class="hero-actions"><button type="button" class="btn btn-ghost" id="btn-budget-back">返回问答</button><button type="button" class="btn btn-primary" id="btn-budget-next">确认预算，匹配关联审批</button></div>
+    </section>
+    <section class="stage-panel" id="stage-relation" data-stage-panel="relation" hidden>
+      <h2>匹配关联审批</h2>
+      <p class="section-hint">关联审批与预算分开确认。差旅必须关联已通过的出差申请；其他采购可确认没有额外关联审批。</p>
+      <div id="relation-status" role="status" aria-live="polite"></div>
+      <label for="relation-choice">关联审批</label><select id="relation-choice"><option value="">无额外关联审批</option></select>
+      <div class="hero-actions"><button type="button" class="btn btn-ghost" id="btn-relation-back">返回预算</button><button type="button" class="btn btn-primary" id="btn-relation-next">确认关联，整理预览</button></div>
+    </section>
+
     <!-- STAGE: draft -->
     <section class="stage-panel" id="stage-draft" data-stage-panel="draft" hidden>
       <div class="draft-head">
         <div>
-          <h2>预填发票清单</h2>
+          <h2>预览并核对发票清单</h2>
           <p class="section-hint" id="draft-summary-line">根据发票与问答生成，可直接改表格。</p>
         </div>
         <div class="draft-head-actions">
@@ -234,7 +252,20 @@
         <div class="submit-preview" id="submit-preview"></div>
         <div class="submit-actions">
           <button type="button" class="btn btn-ghost" id="btn-back-draft">返回清单修改</button>
-          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit">确认清单，发起飞书采购申请</button>
+          <button type="button" class="btn btn-primary btn-lg" id="btn-feishu-submit" aria-describedby="preview-server-status">确认清单，发起飞书采购申请</button>
+        </div>
+        <p id="preview-server-status" class="section-hint" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+    <section class="stage-panel" id="stage-confirmation" data-stage-panel="confirmation" hidden>
+      <div class="panel submission-confirmation" role="status" aria-live="polite">
+        <h2 id="confirmation-title">正在提交报销</h2>
+        <p id="confirmation-message"></p>
+        <div id="confirmation-details"></div>
+        <div class="hero-actions">
+          <button type="button" class="btn btn-secondary" id="btn-check-submission">检查提交结果</button>
+          <button type="button" class="btn btn-ghost" id="btn-confirmation-back" hidden>返回检查</button>
+          <button type="button" class="btn btn-primary" id="btn-confirmation-home" hidden>返回主页面</button>
         </div>
       </div>
     </section>
@@ -377,7 +408,7 @@
 
   <script src="./ui.js?v=20261125t113u-travel1"></script>
   <script src="./ocr-bridge.js?v=20261125t113u-travel1"></script>
-  <script src="./policy.js?v=20261125t113u-travel1"></script>
-  <script src="./app.js?v=20261125t113u-travel1"></script>
+  <script src="./policy.js?v=20261126submission-confirm1"></script>
+  <script src="./app.js?v=20261126submission-confirm1"></script>
 </body>
 </html>

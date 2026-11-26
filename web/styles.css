@@ -1632,3 +1632,31 @@ abbr[title] { text-decoration:none; cursor:inherit; }
   .upload-triad > .budget-picker.triad-card { height:auto; min-height:32rem; }
   .upload-triad > .dropzone.triad-card { height:18rem; }
 }
+
+/* Six-stage workflow: budget selection follows the interview. */
+#stage-upload .upload-triad {grid-template-columns:minmax(0,1fr) minmax(0,2fr);}
+#stage-budget .budget-picker {width:100%;height:auto;max-height:none;margin:24px 0;}
+#stage-budget .budget-grid {max-height:50vh;overflow:auto;}
+#no-budget-reason {display:block;width:100%;min-height:90px;margin:12px 0;}
+#relation-choice {width:100%;margin:16px 0;}
+.stage-list {flex-wrap:wrap;}
+@media(max-width:640px){.stage-item {flex-basis:30%;} #stage-upload .upload-triad {grid-template-columns:minmax(0,1fr);}}
+
+#stage-budget .budget-picker.triad-card .budget-grid {grid-auto-rows:auto;min-height:0;height:auto;max-height:50vh;}
+#stage-budget .budget-grid .budget-card {height:auto;min-height:5rem;justify-content:center;}
+#stage-budget label {display:block;margin-top:var(--space-md);}
+#budget-none {width:auto;min-height:0;margin-right:var(--space-xs);}
+@media(max-width:640px){
+  .stage-list {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-sm);}
+  .stage-item {flex-direction:row;min-width:0;gap:var(--space-2xs);}
+  .stage-item .stage-name {white-space:normal;overflow:visible;text-overflow:clip;line-height:1.4;}
+  .stage-dot {flex:none;}
+}
+
+.submission-confirmation {max-width:54rem;margin:auto;padding:var(--space-xl);}
+.submission-confirmation h2 {margin-bottom:var(--space-lg);}
+.submission-confirmation dl,.linked-approval-summary dl {display:grid;grid-template-columns:minmax(6rem,auto) minmax(0,1fr);gap:var(--space-xs) var(--space-lg);}
+.submission-confirmation dd,.linked-approval-summary dd {margin:0;overflow-wrap:anywhere;}
+.linked-approval-summary {margin-block:var(--space-lg);padding-block:var(--space-md);border-block:1px solid var(--border);}
+#confirmation-message {font-size:var(--text-md);}
+@media(max-width:640px){.submission-confirmation {padding:var(--space-lg);} .submission-confirmation dl,.linked-approval-summary dl {grid-template-columns:minmax(0,1fr);} .submission-confirmation dt,.linked-approval-summary dt {color:var(--muted);}}

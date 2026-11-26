@@ -144,6 +144,21 @@ class CreateTests(unittest.TestCase):
             self.assertTrue(p.create_purchase(self.sess,{'claim':self.claim()})['ok'])
             self.assertEqual(call.call_count,1)
 
+    def test_durable_receipt_is_readable_before_optional_detail_and_history(self):
+        body={'draftId':'draft_pending_detail','claim':self.claim()}
+        def during_detail(*args):
+            status=p.expense_records.submission_status(ACTOR['openId'],body['draftId'])
+            self.assertTrue(status['submitted'])
+            self.assertEqual(status['receipt']['instanceCode'],'real-early')
+            self.assertEqual(status['title'],body['claim']['purpose'])
+            self.assertIsNone(p.receipt_for_draft('another-user',body['draftId']))
+            return {'serial_number':'202611260001'}
+        with patch.object(auth,'fetch_instance',side_effect=during_detail) as detail,patch.object(auth,'http_json',return_value={'code':0,'data':{'instance_code':'real-early'}}) as create:
+            receipt=p.create_purchase(self.sess,body)
+            detail.assert_called_once()
+            create.assert_called_once()
+            self.assertEqual(receipt['serialNumber'],'202611260001')
+
 
 class HandlerTests(unittest.TestCase):
     class Handler:

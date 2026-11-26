@@ -26,10 +26,17 @@ def record_id(value):
 
 
 def title_for(state):
-    answers = state.get('answers') or {}
-    first = next(iter(state.get('invoices') or []), {})
-    title = answers.get('costCenter') or (state.get('draft') or {}).get('costCenter') or first.get('merchant') or first.get('fileName') or '未命名采购'
-    return f'{str(title)[:100]} · {datetime.now():%Y-%m-%d}'
+    answers=state.get('answers') or {}
+    purpose=answers.get('purpose') or (state.get('draft') or {}).get('purpose') or state.get('purpose')
+    return str(purpose).strip()[:160] if purpose and str(purpose).strip() else '待补充报销事由'
+
+
+def draft_title(stored, state):
+    answers=state.get('answers') or {};first=next(iter(state.get('invoices') or []),{})
+    legacy={str(v) for v in (answers.get('costCenter'),(state.get('draft') or {}).get('costCenter'),first.get('merchant'),first.get('fileName'),'未命名采购') if v}
+    prefix=re.sub(r' · \d{4}-\d{2}-\d{2}$','',str(stored or ''))
+    if not stored or prefix in legacy or stored=='待补充报销事由':return title_for(state)
+    return stored
 
 
 def clean_title(value):
@@ -41,7 +48,7 @@ def clean_title(value):
 def validate_state(owner, id, state):
     if not isinstance(state, dict) or state.get('draftId') != id:
         raise RecordError('草稿状态与编号不一致')
-    if state.get('stage') not in ('upload', 'interview', 'draft', 'submit'):
+    if state.get('stage') not in ('upload', 'interview', 'budget', 'relation', 'draft', 'submit'):
         raise RecordError('无效填写步骤')
     if not isinstance(state.get('answers'), dict) or not isinstance(state.get('chat'), list):
         raise RecordError('无效问答状态')
@@ -68,6 +75,7 @@ def draft_view(row, detail=False):
     raw = obj.pop('state_json')
     state = json.loads(raw)
     invoices = state.get('invoices') or []
+    obj['title']=draft_title(obj.get('title'),state)
     obj.update(project=(state.get('answers') or {}).get('costCenter') or (state.get('draft') or {}).get('costCenter') or '',
                invoiceCount=len(invoices))
     if detail:
@@ -110,7 +118,11 @@ def save_draft(owner, id, body):
             raise RecordError('草稿已在其他页面修改、删除或提交，请从我的报销重新打开；当前内容仍保留在本机',409)
         if not row and revision != 0:
             raise RecordError('草稿不存在，请从我的报销重新打开',404)
-        title = clean_title(body['title']) if body.get('title') is not None else (row['title'] if row else title_for(body['state']))
+        if body.get('title') is not None:title=clean_title(body['title'])
+        elif row:
+            previous=json.loads(row['state_json'])
+            title=title_for(body['state']) if draft_title(row['title'],previous)==title_for(previous) else draft_title(row['title'],body['state'])
+        else:title=title_for(body['state'])
         try:
             registry.sync_draft(con,owner,id,body['state']['invoices'],project=(body['state'].get('answers') or {}).get('costCenter') or '')
         except registry.DuplicateError as e: raise RecordError(str(e),409)
@@ -150,11 +162,14 @@ def history_view(row, detail=False):
     obj=dict(row)
     receipt=json.loads(obj.pop('receipt_json'))
     snapshot=obj.pop('snapshot_json')
+    parsed=json.loads(snapshot)
+    claim=parsed.get('claim') or {}
+    obj['title']=title_for({'purpose':claim.get('purpose'),'answers':claim.get('answers') or {}})
     obj.pop('owner',None)
     obj['serialNumber']=receipt.get('serialNumber','')
     if detail:
         obj['receipt']=receipt
-        obj['snapshot']=json.loads(snapshot)
+        obj['snapshot']=parsed
     return obj
 
 
@@ -164,6 +179,17 @@ def get_history(owner, code):
     if not row:
         raise RecordError('提交记录不存在',404)
     return history_view(row,True)
+
+
+def submission_status(owner,draft_id):
+    record_id(draft_id)
+    with data.database() as con:
+        row=con.execute('SELECT * FROM submission_history WHERE owner=? AND draft_id=? ORDER BY submitted_at DESC LIMIT 1',(owner,draft_id)).fetchone()
+    if not row:
+        import feishu_purchase
+        return feishu_purchase.receipt_for_draft(owner,draft_id) or {'submitted':False}
+    item=history_view(row,True)
+    return {'submitted':True,'receipt':item['receipt'],'title':item['title'],'claim':item['snapshot']['claim']}
 
 
 def record_submission(owner, draft_id, claim, receipt, submitted_at=None):
@@ -181,7 +207,7 @@ def record_submission(owner, draft_id, claim, receipt, submitted_at=None):
             return  # Successful snapshots and occupancy are immutable on replay.
         row=con.execute('SELECT * FROM drafts WHERE owner=? AND id=?',(owner,draft_id)).fetchone()
         state=json.loads(row['state_json']) if row and row['status']!='deleted' else None
-        title=row['title'] if row else title_for({'answers':{'costCenter':claim.get('costCenter')},'invoices':invoices})
+        title=title_for({'purpose':claim.get('purpose'),'answers':claim.get('answers') or {}})
         snapshot={'claim':claim,'state':state,'attachmentNames':[i.get('attachment',{}).get('name') or i.get('fileName','') for i in invoices]}
         con.execute('INSERT OR IGNORE INTO submission_history VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                     (owner,receipt['instanceCode'],receipt['requestId'],draft_id,title,claim.get('costCenter') or '',total,

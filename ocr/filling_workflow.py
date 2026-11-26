@@ -149,6 +149,9 @@ def baseline_diff(baseline, final):
                for k in sorted(keys) if before.get(k, '') != after.get(k, '')]
     if baseline.get('selectedBudget') != final.get('selectedBudget'):
         changes.append({'field': 'selectedBudget', 'prefilled': baseline.get('selectedBudget'), 'submitted': final.get('selectedBudget')})
+    for key in ('matchedBudget','relatedApproval','noBudgetReason'):
+        if baseline.get(key) != final.get(key):
+            changes.append({'field':key,'prefilled':baseline.get(key),'submitted':final.get(key)})
     old_rows = {i['id']: i for i in baseline.get('invoices', [])}
     for inv in final.get('invoices', []):
         old = old_rows.get(inv['id'], {})

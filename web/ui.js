@@ -37,7 +37,7 @@
       const menu = doc.querySelector(".workspace-menu");
       if (menu) menu.open = false;
       origin = doc.activeElement;
-      background = [...doc.querySelectorAll('body > header, body > nav, body > main, body > .save-strip')].map(el => [el, el.inert]);
+      background = [...doc.querySelectorAll('body > header, body > nav, body > main, body > #astryx-root, body > .save-strip')].map(el => [el, el.inert]);
       background.forEach(([el]) => { el.inert = true; });
       doc.body.classList.add("has-modal");
       active.tabIndex = -1;

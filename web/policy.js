@@ -87,12 +87,6 @@
     ask("costCenter", "这笔采购属于哪个项目？", schema.projects, "已选预算的项目会自动带入；名称不一致时请选实际项目。");
     const method = schema.methods.find(m=>m.name === answers.purchaseMethod);
     if (!method) return q;
-    if (method.name !== "预付款项") {
-      const budgets = (global.__approvedBudgets || []).filter(b=>method.name!=='差旅费' || b.kind==='travel');
-      if (!answers.selectedBudget || !budgets.some(b=>b.instanceId === answers.selectedBudget.instanceId)) {
-        q.push({id:"selectBudget", text:"这次采购关联哪一条已通过的预算或出差申请？", hint:budgets.length ? "点选后会关联该审批；同日多申请请按日期地点核对。":"暂无可用关联，请检查出差读取/匹配提示与权限。预付款项以外必须有关联审批。", chips:budgets.map((b,i)=>`${i+1}. ${b.title || b.project} · ${b.serialId || b.instanceId.slice(0,8)}`), required:true, input:"chips", budgetIds:budgets.map(b=>b.instanceId)});
-      }
-    }
     for (const side of ['counterparty','ours']) {
       const fields=method.fields.filter(w=>bankRole(w.name) && bankSide(w.name)===side);
       if(fields.some(w=>w.required && !present(answers[`purchase:${method.name}:shared:${w.name}`])))

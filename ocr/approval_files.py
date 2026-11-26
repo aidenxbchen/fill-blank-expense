@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import expense_data as data
 import feishu_oauth as auth
@@ -57,15 +58,17 @@ def resolve_invoices(owner, claim):
 
 
 def file_codes(owner, files):
-    codes=[]
-    for record,raw in files:
+    def prepare(item):
+        record,raw=item
         code=record.get('remote_code')
         if not code or record.get('remote_app_id') != auth.app_id() or time.time()-(record.get('uploaded_at') or 0)>3600:
-            if raw is None: record,raw=data.resolve_file(owner,{'file_id':record['file_id']})
+            if raw is None:record,raw=data.resolve_file(owner,{'file_id':record['file_id']})
             code=upload_file(record,raw)
             data.cache_upload(record['file_id'],owner,auth.app_id(),code)
-        codes.append(code)
-    return codes
+        return code
+    if not files:return []
+    with ThreadPoolExecutor(max_workers=min(4,len(files))) as pool:
+        return list(pool.map(prepare,files))
 
 
 def add_attachment(form, schema, codes):

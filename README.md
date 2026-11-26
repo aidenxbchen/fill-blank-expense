@@ -1,5 +1,9 @@
 # 填空报销
 
+当前流程（2026-11-26）：**上传发票 → 问问题 → 匹配预算 → 匹配关联审批 → 预览 → 提交**。预算与额外关联审批独立保存；无预算须说明原因，非差旅可无额外关联，差旅必须关联已通过出差申请。预览仍核验飞书实时表单；上游必填限制不会静默绕过。实现与兼容说明见 [docs/workflow-six-step.md](docs/workflow-six-step.md)。
+
+提交后保留成功确认页；刷新可恢复服务器成功回执，返回首页后开始新报销。预览直接展示已关联审批，记录按报销事由命名。详见 [提交确认与恢复](docs/submission-confirmation.md)。
+
 把报销从「对着表格填空」变成「**把发票全丢进来 → 补充整单信息 → 预填清单 → 检查完整预览 → 提交飞书**」。
 
 公网演示：https://baoxiao.xbchen.top （硬刷新；资源带 `?v=` 防缓存）
@@ -96,7 +100,7 @@ node --check web/app.js
 
 ## 技术
 
-纯 HTML / CSS / JS。入口 `web/index.html`；样式 `web/styles.css`；逻辑 `web/app.js`；政策 `web/policy.js`；OCR `web/ocr-bridge.js` + `ocr/server.py`。
+当前线上使用原生 HTML / CSS / JS 蓝色工作台。仓库保留 Astryx 0.7.17 + React 19 的组件、模板与构建工具，当前入口未加载该界面。官方安装与 init、模板来源、构建和验证见 [docs/ASTRYX_UI.md](docs/ASTRYX_UI.md)。修改 `src/astryx/` 后运行 `npm run build`，静态产物位于 `web/astryx/`，由现有 Python 服务直接提供。入口 `web/index.html`；样式 `web/styles.css`；逻辑 `web/app.js`；政策 `web/policy.js`；OCR `web/ocr-bridge.js` + `ocr/server.py`。
 
 ## 尚未实现
 

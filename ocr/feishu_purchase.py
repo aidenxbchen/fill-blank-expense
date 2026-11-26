@@ -115,6 +115,11 @@ def number(value, label, money=False):
 def build_form(form, claim):
     if not isinstance(claim, dict):
         raise ValidationError("缺少采购申请数据")
+    if claim.get('workflowVersion') == 2:
+        if not claim.get('matchedBudget') and not str(claim.get('noBudgetReason') or '').strip():
+            raise ValidationError('请确认匹配预算，或填写无预算原因')
+        if claim.get('purchaseMethod') == '差旅费' and not claim.get('relatedApproval'):
+            raise ValidationError('差旅必须关联已通过的出差申请')
     answers = claim.get("answers") or {}
     method = claim.get("purchaseMethod") or answers.get("purchaseMethod")
     method_widget, selected, group, values = active_group(form, method)
@@ -172,15 +177,25 @@ def build_form(form, claim):
         name = w["name"]
         if name == "采购方式": val = selected
         elif name == "项目": val = option_value(w, project)
-        elif name == "采购事由": val = purpose
+        elif name == "采购事由":
+            val = purpose
+            if claim.get('workflowVersion') == 2 and not claim.get('matchedBudget'):
+                val += '\n无预算说明：' + str(claim.get('noBudgetReason') or '').strip()
         elif w["id"] == group["id"]: val = rows
         elif w["type"] == "connect":
-            b = claim.get("selectedBudget") or {}
-            code = b.get("instanceId") or b.get("instanceCode")
-            if not code: raise ValidationError("除预付款项外，请先选择一条已通过的预算或出差申请")
-            try: uuid.UUID(code)
-            except (ValueError, TypeError): raise ValidationError("关联审批实例编号无效")
-            val = [code]
+            links = [claim.get('matchedBudget'),claim.get('relatedApproval')] if claim.get('workflowVersion') == 2 else [claim.get('selectedBudget')]
+            val = []
+            for b in links:
+                if not b: continue
+                code=b.get('instanceId') or b.get('instanceCode')
+                try: uuid.UUID(code)
+                except (ValueError,TypeError,AttributeError): raise ValidationError('关联审批实例编号无效')
+                if code not in val: val.append(code)
+            if not val:
+                if w.get('required'):
+                    if claim.get('workflowVersion') != 2: raise ValidationError('请选择一条已通过的预算或出差申请')
+                    raise ValidationError('已记录无预算且无额外审批，但当前飞书表单将关联审批设为必填；需调整飞书表单后才能提交')
+                continue
         elif w["type"] == "attachmentV2":
             continue  # Always populated from owned originals after upload.
         elif w.get("required"):
@@ -191,6 +206,27 @@ def build_form(form, claim):
 
 
 def validate_relation(claim, actor, token, sess=None, schema=None):
+    if claim.get('workflowVersion') != 2:
+        return _validate_link(claim,actor,token,sess,schema)
+    budget=claim.get('matchedBudget')
+    if budget:
+        code=budget.get('instanceId') or budget.get('instanceCode')
+        budgets,warning=auth.list_approved_budgets(actor,refresh=True)
+        if warning: raise ValidationError(warning)
+        verified=next((b for b in budgets if b['instanceId']==code and b.get('kind')!='travel'),None)
+        if not verified: raise ValidationError('匹配预算不在当前用户已通过的立项或变更预算范围内')
+        if claim.get('purchaseMethod') != '预付款项':
+            validate_connect_definition(schema or definition(),claim,verified['approvalCode'])
+    elif not str(claim.get('noBudgetReason') or '').strip():
+        raise ValidationError('请填写无预算原因')
+    relation=claim.get('relatedApproval')
+    if claim.get('purchaseMethod')=='差旅费' and not relation:
+        raise ValidationError('差旅必须关联已通过的出差申请')
+    if relation:
+        return _validate_link({**claim,'selectedBudget':relation},actor,token,sess,schema)
+
+
+def _validate_link(claim, actor, token, sess=None, schema=None):
     b = claim.get("selectedBudget") or {}
     code = b.get("instanceId") or b.get("instanceCode")
     if not code:
@@ -244,6 +280,19 @@ def _db():
     return db
 
 
+def receipt_for_draft(owner,draft_id):
+    """Read only durable successes; never waits on the create/network lock."""
+    if not DB_PATH.exists():return None
+    with closing(sqlite3.connect(f'file:{DB_PATH}?mode=ro',uri=True)) as db:
+        rows=db.execute("SELECT receipt,history_source FROM submissions WHERE status='created' AND history_source!='' ORDER BY rowid DESC").fetchall()
+    for raw,meta in rows:
+        source=json.loads(meta)
+        if source.get('owner')==owner and source.get('draftId')==draft_id:
+            receipt=json.loads(raw)
+            if receipt.get('ok') and receipt.get('instanceCode'):return {'submitted':True,'receipt':receipt,'claim':source['claim'],'title':expense_records.title_for({'purpose':source['claim'].get('purpose')})}
+    return None
+
+
 def save_history(source, receipt):
     expense_records.record_submission(source['owner'],source.get('draftId'),source['claim'],receipt,source.get('submittedAt'))
     import filling_workflow
@@ -274,7 +323,7 @@ def create_purchase(sess, body):
     form = build_form(schema, claim)
     files = approval_files.resolve_invoices(actor["openId"], claim)
     token = auth.get_tenant_access_token()
-    if (claim.get("purchaseMethod") or (claim.get("answers") or {}).get("purchaseMethod")) != "预付款项":
+    if (claim.get("purchaseMethod") or (claim.get("answers") or {}).get("purchaseMethod")) != "预付款项" or claim.get("workflowVersion") == 2:
         validate_relation(claim, actor, token, sess, schema)
     # Content-addressed idempotency survives reloads, repeated clicks and server restarts.
     canonical = json.dumps([actor["openId"], form, [{"sha256":r["sha256"],"name":r["name"]} for r,raw in files]], ensure_ascii=False, sort_keys=True)
@@ -337,6 +386,12 @@ def create_purchase(sess, body):
                    "feishuApprovalId": code, "approvalUrl": link, "serialNumber": data.get("serial_number") or "",
                    "requestId": request_id, "initiator": actor["name"],
                    "attachmentCount": len(codes), "attachmentsConfirmed": False}
+        source={'owner':actor['openId'],'draftId':body.get('draftId'),'claim':json.loads(json.dumps(claim)),'submittedAt':int(time.time())}
+        for invoice,(meta,_) in zip(source['claim']['invoices'],files): invoice['attachment']=expense_data.public_file(meta)
+        # Publish durable success immediately; optional detail verification must
+        # not hide an already-created approval from status polling or recovery.
+        db.execute("UPDATE submissions SET status='created', receipt=?,history_source=? WHERE id=?", (json.dumps(receipt,ensure_ascii=False),json.dumps(source,ensure_ascii=False),request_id))
+        db.commit()
         # Creation is already successful. A detail-read failure must never trigger another create.
         try:
             detail = auth.fetch_instance(token, code)
@@ -346,8 +401,6 @@ def create_purchase(sess, body):
             receipt["attachmentsConfirmed"] = any(w.get("type")=="attachmentV2" and len(w.get("value") or []) >= len(codes) for w in saved_form)
         except Exception:
             pass
-        source={'owner':actor['openId'],'draftId':body.get('draftId'),'claim':json.loads(json.dumps(claim)),'submittedAt':int(time.time())}
-        for invoice,(meta,_) in zip(source['claim']['invoices'],files): invoice['attachment']=expense_data.public_file(meta)
         db.execute("UPDATE submissions SET status='created', receipt=?,history_source=? WHERE id=?", (json.dumps(receipt, ensure_ascii=False),json.dumps(source,ensure_ascii=False),request_id))
         db.commit()
         try: save_history(source,receipt)

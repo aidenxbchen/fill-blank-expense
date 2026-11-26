@@ -23,8 +23,7 @@ for (const method of methods) {
     else if(q.input==='bank-profile')window.ExpensePolicy.applyBankProfile(method,answers,{fields:{account:'622200000000',bank:'合成测试支行',holder:'合成测试户名'}},q.bankSide);
     else answers[q.id]=q.chips.length?q.chips[0]:'用户填写';
   }
-  if(method.name!=='预付款项')assert.ok(answers.selectedBudget);
-  else assert.equal(answers.selectedBudget,undefined);
+  assert.equal(answers.selectedBudget,undefined,'budget matching follows the questions');
 }
 assert.equal(window.ExpensePolicy.nextQuestion(inv,{}).id,'purpose');
 assert.equal(window.ExpensePolicy.nextQuestion(inv,{purpose:'研发试制',purchaseMethod:'错误方式'}).id,'purchaseMethod');

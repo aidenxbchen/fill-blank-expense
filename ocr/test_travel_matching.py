@@ -59,6 +59,17 @@ class MatchingTests(unittest.TestCase):
         layout['raw'] = '铁路电子客票\n广州南站 G123 深圳北站\n2026年11月22日 10:00 开\n4401**********1234 合成旅客甲'
         self.assertEqual(self.decide([layout], [candidate()])['autoSelectId'], CODE)
 
+    def test_fullwidth_railway_reparses_generated_facts_and_preserves_manual_edits(self):
+        inv={'id':'fullwidth','fileName':'火车票.pdf','raw':'铁路电子客票 发票号码:12345678901234567890 广东\n深圳北站 Ｇ６２１８ 南沙北站\n２０２６年１１月１８日 １８：３６开\n44123419900101＊＊＊＊ 陈曦斌',
+             'travel':{'isTicket':True,'passenger':'广东','segments':[]}}
+        fact=travel.facts(inv)
+        self.assertEqual(fact['passenger'],'陈曦斌')
+        self.assertEqual(fact['segments'][0]['date'],'2026-11-18')
+        self.assertEqual(fact['segments'][0]['destinationCity'],'广州')
+        inv['_travelEdited']=True
+        inv['travel']['passenger']='手动旅客'
+        self.assertEqual(travel.facts(inv)['passenger'],'手动旅客')
+
     def test_cross_month_return_and_multi_day_multi_city(self):
         route = [ticket('2026-10-31'), ticket('2026-11-02', '深圳北', '广州南', identifier='return')]
         self.assertEqual(self.decide(route, [candidate(start='2026-10-31', end='2026-11-02')])['autoSelectId'], CODE)
@@ -82,13 +93,43 @@ class MatchingTests(unittest.TestCase):
         self.assertIsNone(result['autoSelectId'])
         self.assertIn('真实候选编号', result['notice'])
 
-    def test_mixed_trip_grouping_never_blanket_links(self):
+    def test_mixed_invoices_need_confirmation_but_no_manual_itinerary(self):
         mix = [ticket(), {'id': 'meal', 'category': 'meal', 'amount': 10}]
         self.assertIsNone(self.decide(mix, [candidate()])['autoSelectId'])
-        with self.assertRaisesRegex(ValueError, '混合'): travel.validate_grouping(claim(*mix), candidate())
-        with self.assertRaisesRegex(ValueError, '分组'):
-            travel.validate_grouping(claim(ticket(), ticket('2026-11-23', destination='北京南', identifier='other')), candidate())
+        self.assertIsNone(travel.validate_grouping(claim(*mix), candidate()))
+        self.assertIsNone(travel.validate_grouping(claim(ticket(), ticket('2026-11-23', destination='北京南', identifier='other')), candidate()))
         travel.validate_grouping(claim(ticket(), ticket(origin='深圳北', destination='广州南', identifier='return')), candidate())
+
+    def test_meal_dates_near_shenzhen_trip_recommend_without_itinerary(self):
+        invoices=[{'id':'meal1','category':'meal','merchant':'荣遇（深圳）餐饮有限公司','date':'2026-11-23'},
+                  {'id':'meal2','category':'meal','merchant':'深圳市君悦莱餐饮管理有限公司','date':'2026-11-24'},
+                  ticket('2026-11-18')]
+        other=candidate('22222222-2222-2222-2222-222222222222',start='2026-11-16',end='2026-11-17',destination='上海')
+        result=travel.match(ACTOR['openId'],ACTOR,claim(*invoices),[other,candidate()],use_ai=False)
+        self.assertEqual(result['recommendedId'],CODE)
+        self.assertEqual(result['candidates'][0]['instanceId'],CODE)
+        self.assertIsNone(result['autoSelectId'])
+        self.assertTrue(result['candidates'][0]['recommendation']['warnings'])
+        self.assertEqual(result['groups'][0]['facts']['segments'],[])
+        self.assertEqual(result['groups'][0]['facts']['expenseClues']['issueDate'],'2026-11-23')
+        self.assertIsNone(travel.validate_grouping(claim(*invoices),candidate()))
+
+    def test_old_empty_itinerary_does_not_turn_a_meal_into_a_ticket(self):
+        inv={'id':'meal','category':'meal','merchant':'深圳餐厅','_travelEdited':True,
+             'travel':{'isTicket':False,'segments':[{'date':'','origin':'','destination':''}]}}
+        self.assertFalse(travel.facts(inv)['isTicket'])
+
+    def test_buyer_city_is_not_used_as_a_merchant_location(self):
+        invoice={'id':'meal','category':'meal','merchant':'某餐厅','date':'2026-11-23','raw':'购买方：深圳某科技有限公司'}
+        result=travel.match(ACTOR['openId'],ACTOR,claim(invoice),[candidate()],use_ai=False)
+        self.assertIsNone(result['recommendedId'])
+
+    def test_ambiguous_or_distant_meal_clues_do_not_pick_an_application(self):
+        invoice={'id':'meal','category':'meal','merchant':'深圳餐厅','date':'2026-11-23'}
+        result=travel.match(ACTOR['openId'],ACTOR,claim(invoice),[candidate(),candidate('22222222-2222-2222-2222-222222222222')],use_ai=False)
+        self.assertIsNone(result['recommendedId'])
+        invoice['date']='2026-11-30'
+        self.assertIsNone(travel.match(ACTOR['openId'],ACTOR,claim(invoice),[candidate()],use_ai=False)['recommendedId'])
 
     def test_manual_travel_without_tickets_calls_ai_but_cannot_auto_link(self):
         with patch.object(travel, 'ai_rank', return_value=({'instanceId': CODE}, '')) as ai:
@@ -121,8 +162,38 @@ class OAuthContextTests(unittest.TestCase):
     def test_cross_user_identity_and_scope_errors_are_not_empty(self):
         with patch.object(auth, 'fetch_user_info', return_value={'openId': 'ou_other'}):
             with self.assertRaisesRegex(ValueError, '身份不匹配'):ctx.actor_for(SESSION)
-        with patch.object(auth, 'list_initiated', side_effect=auth.FeishuAPIError(403, {'code': 99991672, 'msg': 'scope required'})):
+        with patch.object(auth, 'list_initiated', side_effect=auth.FeishuAPIError(403, {'code': 99991672, 'msg': 'scope required'})), patch.object(ctx, 'participant_instances', side_effect=auth.FeishuAPIError(403, {'code':99991679,'msg':'scope required'})):
             with self.assertRaises(auth.FeishuAPIError):ctx.travel_candidates(SESSION, ACTOR)
+
+    def test_optional_tasks_denial_preserves_verified_initiated_trip(self):
+        rows = [{'instance_code': CODE, 'definition_code': auth.TRAVEL_DEFINITION['approval_code']}]
+        detail = {'definition_code': auth.TRAVEL_DEFINITION['approval_code'], 'status':'APPROVED',
+                  'user_id':ACTOR['openId'], 'form':[]}
+        with patch.object(auth,'list_initiated',return_value=rows), patch.object(ctx,'participant_instances',side_effect=auth.FeishuAPIError(403,{'code':99991679})), patch.object(ctx,'user_instance',return_value=detail):
+            result=ctx.travel_candidates(SESSION,ACTOR)
+        self.assertEqual([c['instanceId'] for c in result],[CODE])
+        self.assertIn('已发起',result.warnings[0])
+
+    def test_initiated_denial_can_use_verified_participant_source(self):
+        detail = {'definition_code': auth.TRAVEL_DEFINITION['approval_code'], 'status':'APPROVED',
+                  'user_id':ACTOR['openId'], 'form':[]}
+        with patch.object(auth,'list_initiated',side_effect=auth.FeishuAPIError(403,{'code':99991679})), patch.object(ctx,'participant_instances',return_value={CODE}), patch.object(ctx,'user_instance',return_value=detail):
+            result=ctx.travel_candidates(SESSION,ACTOR)
+        self.assertEqual(len(result),1)
+        self.assertTrue(result.warnings)
+
+    def test_peer_contact_denial_cannot_hide_applicants_own_trip(self):
+        detail={'definition_code':auth.TRAVEL_DEFINITION['approval_code'],'status':'APPROVED',
+                'user_id':ACTOR['openId'],'form':[{'type':'tripGroup','value':{'peer_open_ids':['ou_peer']}}]}
+        warnings=[]
+        with patch.object(ctx,'checked_get',side_effect=auth.FeishuAPIError(403,{'code':99991679})):
+            c=ctx.candidate_from_detail(SESSION,ACTOR,CODE,detail,warnings=warnings)
+        self.assertEqual(c['travelerNames'],[ACTOR['name']])
+        self.assertTrue(warnings)
+        summary={'summaries':[{'key':'同行人','value':'合成旅客乙, 合成旅客丙'}]}
+        with patch.object(ctx,'checked_get',side_effect=AssertionError('No contact scope needed')):
+            c=ctx.candidate_from_detail(SESSION,ACTOR,CODE,detail,summary)
+        self.assertIn('合成旅客乙',c['travelerNames'])
 
     def test_incomplete_task_pagination_fails_instead_of_partial_list(self):
         with patch.object(ctx, 'checked_get', return_value={'has_more': True, 'tasks': []}):
@@ -214,6 +285,14 @@ class ContextHTTPTests(unittest.TestCase):
             status,result,_ = self.request('/api/travel-match',json.dumps({'claim':c}).encode())
         self.assertEqual(status,200);read.assert_called_once();ai.assert_called_once()
         self.assertEqual(result['owner'],'alice');self.assertIsNone(result['autoSelectId'])
+
+    def test_candidate_mode_exposes_options_without_waiting_for_ai(self):
+        with patch.object(ctx,'travel_candidates',return_value=[candidate()]), patch.object(travel,'ai_rank',side_effect=AssertionError('Candidate listing must not invoke AI')):
+            status,result,_=self.request('/api/travel-match',json.dumps({'claim':claim(),'mode':'candidates'}).encode())
+        self.assertEqual(status,200,result)
+        self.assertEqual(result['phase'],'candidates')
+        self.assertEqual(len(result['candidates']),1)
+        self.assertIsNone(result['autoSelectId'])
 
     def test_permission_error_is_403_not_empty_candidate_success(self):
         with patch.object(ctx,'travel_candidates',side_effect=auth.FeishuAPIError(400,{'code':99991672,'msg':'scope required'})):
