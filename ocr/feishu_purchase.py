@@ -521,7 +521,7 @@ def create_purchase(sess, body):
         db.execute("UPDATE submissions SET status='created', receipt=?,history_source=? WHERE id=?", (json.dumps(receipt, ensure_ascii=False),json.dumps(source,ensure_ascii=False),request_id))
         db.commit()
         try: save_history(source,receipt)
-        except Exception: receipt['historyWarning']='费用报销已发起，历史同步暂失败；请稍后在我的报销刷新' 
+        except Exception: receipt['historyWarning']='费用报销已发起，历史同步暂失败；请稍后在我的报销刷新'
         try:
             if body.get("draftId"):
                 expense_data.record_fills(actor["openId"], body["draftId"], claim, public_schema(schema))
