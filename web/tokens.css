@@ -58,6 +58,7 @@
   --ease-spring: cubic-bezier(.22, 1, .36, 1);
   --ease-out-soft: cubic-bezier(.32, .72, 0, 1);
   --blessing-warm:#fffcf8; --blessing-cool:#ecf4ff; --blessing-lilac:#f7f0ff;
+  --anever-red:#81312F; --anever-ink:#242625; --anever-paper:#F5F2ED; --anever-peach:#F3E5D7; --anever-quote-ink:#4A231E;
   --field-edge:#73849b; --disabled-paper:#e4eaf2; --placeholder:#53677f;
   --space-hairline:1px; --space-control:20px; --space-wide:32px; --space-page:48px;
   --surface-control:rgba(255,255,255,.88); --surface-secondary:rgba(255,255,255,.78);
