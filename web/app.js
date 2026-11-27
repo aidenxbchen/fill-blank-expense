@@ -6,7 +6,7 @@
   "use strict";
 
   const STORAGE_KEY = "fill-blank-expense:delight:v1";
-  const ASSET_V = "20261126rework3";
+  const ASSET_V = "20261127amount-check1";
 
   function apiBase() {
     return location.hostname === "127.0.0.1" || location.hostname === "localhost"
@@ -1609,7 +1609,7 @@
     if(reviewRequest && reviewRequest.target===target && reviewRequest.owner===owner && reviewRequest.context===context)return;
     const request={target,owner,context,epoch:++reviewEpoch};reviewRequest=request;
     session.reviewContext='';
-    setReviewState('checking',`正在核验表单与 ${c.invoices.length} 份原件…`);
+    setReviewState('checking',`正在核验表单、金额与 ${c.invoices.length} 份原件…`);
     const current=()=>target===session && owner===ownerId() && session.stage==='submit' && request.epoch===reviewEpoch;
     try {
       const cached=warmProof?.target===target && warmProof.owner===owner && warmProof.context===context && Date.now()-warmProof.at<30000;
@@ -1619,7 +1619,7 @@
         setReviewState('retry','内容已更新，点击重新核验','本次内容已变化，重新核验通过后才能提交。');return;
       }
       session.reviewContext=context;
-      setReviewState('ready','确认清单，发起飞书费用报销',`核验通过：已确认当前表单和 ${result.attachmentCount} 份原件。`);
+      setReviewState('ready','确认清单，发起飞书费用报销',`核验通过：已确认当前表单、逐票金额和 ${result.attachmentCount} 份原件。`);
     } catch(e) {
       if(!current())return;
       const timeout=['AbortError','TimeoutError'].includes(e.name) || /aborted|timed? out/i.test(e.message || '');

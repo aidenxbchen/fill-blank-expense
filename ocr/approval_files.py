@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import expense_data as data
 import feishu_oauth as auth
+import invoice_amounts
 
 UPLOAD_URL = 'https://www.feishu.cn/approval/openapi/v2/file/upload'
 
@@ -45,14 +46,20 @@ def upload_file(record, raw):
     return code
 
 
-def resolve_invoices(owner, claim):
+def resolve_invoices(owner, claim, *, verify_amounts=False):
     """Require and hash-verify an owned original for every submitted invoice."""
-    files=[];seen=set()
+    files=[];seen=set();amount_errors=[]
     for inv in claim['invoices']:
         record,raw=data.resolve_file(owner,inv.get('attachment'))
+        if verify_amounts:
+            try:
+                invoice_amounts.validate_amount(record, raw, inv.get('amount'))
+            except invoice_amounts.AmountVerificationError as e:
+                amount_errors.append(str(e))
         # One file may legitimately be referenced more than once, attach it once.
         if record['file_id'] not in seen:
             files.append((record,None));seen.add(record['file_id'])
+    if amount_errors:raise data.DataError('；'.join(amount_errors))
     if not files:raise data.DataError('必须附上发票原文件才能发起费用报销')
     return files
 

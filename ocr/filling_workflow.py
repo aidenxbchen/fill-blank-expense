@@ -9,6 +9,7 @@ import json
 import re
 import threading
 import time
+from decimal import Decimal
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -164,8 +165,9 @@ def review(owner, claim, form):
     from feishu_purchase import build_form
     validate_claim(claim)
     build_form(form, claim)  # Unknown required fields/options fail closed here too. assert_row_in_group runs inside build_form.
-    files = approval_files.resolve_invoices(owner, claim)
-    return {'ok': True, 'attachmentCount': len(files)}
+    files = approval_files.resolve_invoices(owner, claim, verify_amounts=True)
+    total = sum((Decimal(str(inv['amount'])) for inv in claim['invoices']), Decimal('0'))
+    return {'ok': True, 'attachmentCount': len(files), 'amountVerifiedCount': len(claim['invoices']), 'verifiedTotal': f'{total:.2f}'}
 
 
 def baseline_diff(baseline, final):

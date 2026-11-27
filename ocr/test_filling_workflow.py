@@ -187,7 +187,7 @@ class FillingWorkflowTests(unittest.TestCase):
         c = claim_for()
         ref = data.save_file('alice', b'%PDF fixture original', 'fixture.pdf', 'application/pdf')
         c['invoices'][0]['attachment'] = ref
-        with patch.object(purchase.approval_files, 'file_codes') as upload, patch.object(auth, 'http_json') as network:
+        with patch('invoice_extract.extract_pdf_text',return_value='价税合计（小写）¥123.45'), patch.object(purchase.approval_files, 'file_codes') as upload, patch.object(auth, 'http_json') as network:
             self.assertEqual(flow.review('alice', c, SCHEMA)['attachmentCount'], 1)
             upload.assert_not_called()
             network.assert_not_called()

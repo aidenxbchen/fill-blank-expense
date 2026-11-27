@@ -10,6 +10,8 @@ Pipeline:
 from __future__ import annotations
 
 import base64
+from decimal import Decimal
+from invoice_amounts import MONEY, normalize_money_text, money_tokens, total_evidence
 import json
 import os
 import re
@@ -162,7 +164,8 @@ def pdf_to_png_bytes(pdf_bytes: bytes) -> tuple[bytes, str]:
             if doc.page_count < 1:
                 raise ValueError("PDF 无页面")
             page = doc.load_page(0)
-            mat = fitz.Matrix(200 / 72, 200 / 72)
+            scale = min(200 / 72, MAX_IMAGE_EDGE / max(page.rect.width, page.rect.height))
+            mat = fitz.Matrix(scale, scale)
             pix = page.get_pixmap(matrix=mat, alpha=False)
             return pix.tobytes("png"), "image/png"
         finally:
@@ -187,7 +190,7 @@ def pdf_to_png_bytes(pdf_bytes: bytes) -> tuple[bytes, str]:
         with open(pdf_path, "wb") as f:
             f.write(pdf_bytes)
         proc = subprocess.run(
-            [pdftoppm, "-png", "-f", "1", "-l", "1", "-r", "200", pdf_path, out_prefix],
+            [pdftoppm, "-png", "-f", "1", "-l", "1", "-r", "200", "-scale-to", str(MAX_IMAGE_EDGE), pdf_path, out_prefix],
             capture_output=True,
             timeout=60,
         )
@@ -317,19 +320,11 @@ def extract_invoice_no(text: str) -> str:
 
 
 def _parse_amount(text: str) -> tuple[float | None, str]:
-    t_norm = (text or "").replace("￥", "¥").replace(",", "")
-    for pat in (
-        r"价税合计[^\d]{0,80}[（(]小写[）)]\s*¥?\s*(\d+(?:\.\d+)?)",
-        r"[（(]小写[）)]\s*¥\s*(\d+(?:\.\d+)?)",
-        r"价税合计[^\n]{0,80}?¥\s*(\d+(?:\.\d+)?)",
-        r"价税合计[：:]\s*¥?\s*(\d+(?:\.\d+)?)",
-        r"合计金额[：:]\s*¥?\s*(\d+(?:\.\d+)?)",
-        r"实付[：:]\s*¥?\s*(\d+(?:\.\d+)?)",
-    ):
-        m = re.search(pat, t_norm, re.S)
-        if m:
-            return float(m.group(1)), "tax_inclusive"
-    amounts = [float(x) for x in re.findall(r"¥\s*(\d+(?:\.\d+)?)", t_norm)]
+    t_norm = normalize_money_text(text)
+    evidence = total_evidence(t_norm)
+    if evidence:
+        return float(evidence[0]), 'tax_inclusive'
+    amounts = [float(x.replace(',', '')) for x in re.findall(r"¥\s*(" + MONEY + ")", t_norm)]
     if amounts:
         return max(amounts), "fallback_max"
     return None, ""
@@ -427,7 +422,10 @@ def coerce_fields(obj: dict[str, Any]) -> dict[str, Any]:
     amount_raw = obj.get("amount", 0)
     try:
         if isinstance(amount_raw, str):
-            amount_raw = amount_raw.replace("¥", "").replace("￥", "").replace(",", "").replace("元", "").strip()
+            amount_raw = normalize_money_text(amount_raw).replace("¥", "").replace("元", "").strip()
+            if not re.fullmatch(MONEY, amount_raw):
+                raise ValueError('金额格式不明确')
+            amount_raw = amount_raw.replace(',', '')
         amount = float(amount_raw) if amount_raw not in (None, "") else 0.0
     except (TypeError, ValueError):
         raise ValueError("模型返回的 amount 无法解析为数字") from None
@@ -565,11 +563,9 @@ def call_ollama_vision(image_b64: str, mime: str) -> tuple[dict[str, Any], str]:
 def _value_in_text(value: Any, text: str) -> bool:
     if value is None:
         return False
-    t = (text or "").replace(",", "").replace(" ", "").replace("￥", "¥")
-    if isinstance(value, float):
-        candidates = {f"{value:.2f}", f"{value:.1f}", str(int(value)) if value == int(value) else "", str(value)}
-        candidates.discard("")
-        return any(c in t or c.replace(".", "") in t.replace(".", "") for c in candidates)
+    t = normalize_money_text(text).replace(" ", "")
+    if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+        return Decimal(str(value)) in money_tokens(text)
     s = str(value).strip()
     if not s:
         return False

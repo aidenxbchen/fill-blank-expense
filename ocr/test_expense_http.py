@@ -28,6 +28,7 @@ class ExpenseHTTPTests(unittest.TestCase):
         self.addCleanup(self.close_server)
         self.base='http://127.0.0.1:'+str(self.http.server_port)
         self.session={'access_token':'private-not-printed','user':{'openId':'alice'}}
+        original=patch('invoice_extract.extract_pdf_text',return_value='价税合计（小写）¥123.45');original.start();self.addCleanup(original.stop)
         sync=patch.object(server.filling_workflow,'start_sync');sync.start();self.addCleanup(sync.stop)
         env=patch.dict('os.environ',{'BAOXIAO_SECRETS_KEY':'http-test-secret','ORG_JEV_OWNER_OPEN_ID':'alice'},clear=False)
         env.start();self.addCleanup(env.stop)
@@ -86,6 +87,17 @@ class ExpenseHTTPTests(unittest.TestCase):
         status,result,_=self.request('/api/fill-history',json.dumps(body).encode(),'application/json')
         self.assertEqual(status,200);self.assertEqual(result['suggestions']['rows']['inv1']['科目'], [], 'unapproved draft is never positive evidence')
         self.assertEqual(self.request('/api/fill-suggestions',json.dumps(body).encode(),'application/json')[0],200)
+
+    def test_review_rejects_original_amount_mismatch_and_accepts_exact_fen(self):
+        from test_feishu_purchase import claim_for
+        c=claim_for();c['invoices'][0].update(amount='69',raw='票价:¥69.00',attachment=data.save_file('alice',b'%PDF money fixture','money.pdf','application/pdf'))
+        with patch('invoice_extract.extract_pdf_text',return_value='票价：￥６９．５０'),patch.object(server,'handle_create') as create:
+            status,result,_=self.request('/api/review',json.dumps({'claim':c}).encode())
+            self.assertEqual(status,422);self.assertIn('差额 ¥0.50',result['error'])
+            c['invoices'][0]['amount']='69.50'
+            status,result,_=self.request('/api/review',json.dumps({'claim':c}).encode())
+            self.assertEqual(status,200,result);self.assertEqual(result['verifiedTotal'],'69.50')
+            create.assert_not_called()
 
     def test_batch_prefill_and_preview_are_authenticated_and_do_not_create(self):
         from test_feishu_purchase import claim_for

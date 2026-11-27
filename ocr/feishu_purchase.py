@@ -435,7 +435,7 @@ def create_purchase(sess, body):
     filling_workflow.validate_claim(claim or {})
     schema = definition()
     form = build_form(schema, claim, actor)
-    files = approval_files.resolve_invoices(actor["openId"], claim)
+    files = approval_files.resolve_invoices(actor["openId"], claim, verify_amounts=True)
     token = auth.get_tenant_access_token()
     if claim_type(claim) == "差旅费":
         validate_relation(claim, actor, token, sess, schema)

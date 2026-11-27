@@ -215,6 +215,7 @@ class OAuthContextTests(unittest.TestCase):
 
 class PayloadRegressionTests(unittest.TestCase):
     def setUp(self):
+        original=patch('invoice_extract.extract_pdf_text',side_effect=lambda raw:raw.decode().split('%PDF fixture ',1)[-1]);original.start();self.addCleanup(original.stop)
         self.tmp = tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         for obj, key, value in [(data, 'DB_PATH', Path(self.tmp.name)/'data.db'), (data, 'FILE_ROOT', Path(self.tmp.name)/'files'),
                                 (purchase, 'DB_PATH', Path(self.tmp.name)/'receipts.db')]:
@@ -233,7 +234,7 @@ class PayloadRegressionTests(unittest.TestCase):
                 c['answers'][f'expense:差旅费:inv1:{field}'] = value
             c['relatedApproval']={'instanceId':CODE,'kind':'travel','title':'出差夹具'}
         c['invoices'][0]['invoiceNo'] = 'fixture-' + method
-        c['invoices'][0]['attachment'] = data.save_file(ACTOR['openId'], ('%PDF fixture '+method).encode(), 'test.pdf', 'application/pdf')
+        c['invoices'][0]['attachment'] = data.save_file(ACTOR['openId'], ('%PDF fixture 价税合计（小写）¥'+str(c['invoices'][0]['amount'])+'\n'+method).encode(), 'test.pdf', 'application/pdf')
         return c
 
     def test_multidepartment_all_nontravel_methods_keep_original_create_path(self):
@@ -313,7 +314,7 @@ class ContextHTTPTests(unittest.TestCase):
         c['invoices'][0]['attachment']=data.save_file('alice',b'%PDF fixture preview','preview.pdf','application/pdf')
         for field,value in filling_workflow.hard_values(c,c['invoices'][0]).items():c['answers'][f'expense:差旅费:inv1:{field}']=value
         travel_detail={'approval_code':auth.TRAVEL_DEFINITION['approval_code'],'status':'APPROVED','form':[]}
-        with patch.object(ctx,'travel_candidates',return_value=[candidate()]) as candidates, patch.object(auth,'fetch_instance',return_value=travel_detail), patch.object(auth,'get_tenant_access_token',return_value='mock-tenant'), patch.object(auth,'http_json') as upstream:
+        with patch('invoice_extract.extract_pdf_text',return_value='票价:¥100.00'), patch.object(ctx,'travel_candidates',return_value=[candidate()]) as candidates, patch.object(auth,'fetch_instance',return_value=travel_detail), patch.object(auth,'get_tenant_access_token',return_value='mock-tenant'), patch.object(auth,'http_json') as upstream:
             body=json.dumps({'claim':c}).encode()
             status,result,_=self.request('/api/review',body)
             self.assertEqual(status,200,result);self.assertEqual(result['attachmentCount'],1)

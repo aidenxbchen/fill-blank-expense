@@ -117,6 +117,8 @@ class CreateTests(unittest.TestCase):
         for name,value in [('DB_PATH',Path(self.tmp.name)/'data.db'),('FILE_ROOT',Path(self.tmp.name)/'files')]:
             x=patch.object(p.expense_data,name,value);x.start();self.addCleanup(x.stop)
         x=patch.object(p.approval_files,'upload_file',return_value='approval-native-file-code');x.start();self.addCleanup(x.stop)
+        # This fixture is not a real PDF; give its original text an explicit total.
+        x=patch('invoice_extract.extract_pdf_text',return_value='价税合计（小写）¥123.45');x.start();self.addCleanup(x.stop)
         self.attachment=p.expense_data.save_file(ACTOR['openId'],b'%PDF-1.7 fixture','invoice.pdf','application/pdf')
         self.sess={'access_token':'oauth-token','user':ACTOR}
 
@@ -147,6 +149,13 @@ class CreateTests(unittest.TestCase):
             self.assertEqual(call.call_count,2)
         self.assertEqual(p.permission_error(err)['requiredScopes'],['approval:instance'])
         self.assertFalse(p.permission_error(err)['ok'])
+
+    def test_amount_mismatch_stops_before_upload_or_approval_creation(self):
+        c=self.claim();c['invoices'][0]['amount']='69'
+        with patch('invoice_extract.extract_pdf_text',return_value='票价：￥６９．５０'),patch.object(p.approval_files,'file_codes') as upload,patch.object(auth,'http_json') as create:
+            with self.assertRaisesRegex(ValueError,'清单 ¥69.00.*原件票价 ¥69.50.*差额 ¥0.50'):
+                p.create_purchase(self.sess,{'claim':c})
+            upload.assert_not_called();create.assert_not_called()
 
     def test_unknown_transport_outcome_blocks_repeat(self):
         with patch.object(auth,'http_json',side_effect=TimeoutError) as call:
